@@ -1,11 +1,14 @@
 import { Router, Response } from 'express';
-import { RequestWithUser, requirePermission } from '../auth/rbac';
+import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { InventoryItemEntity, StockMovementEntity } from '../types/db';
 
 export const inventoryRouter = Router();
+
+// Exigir autenticação para todas as rotas de estoque
+inventoryRouter.use(requireAuth);
 
 // Listar itens do estoque
 inventoryRouter.get('/items', (req: RequestWithUser, res: Response) => {

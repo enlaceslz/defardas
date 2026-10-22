@@ -1,11 +1,14 @@
 import { Router, Response } from 'express';
-import { RequestWithUser, requirePermission } from '../auth/rbac';
+import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { FinancialTransactionEntity } from '../types/db';
 
 export const financeRouter = Router();
+
+// Exigir autenticação para todas as rotas financeiras
+financeRouter.use(requireAuth);
 
 // Listar transações financeiras
 financeRouter.get('/transactions', (req: RequestWithUser, res: Response) => {

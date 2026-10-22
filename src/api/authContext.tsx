@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { api } from './client';
+import { api, UserSessionData } from './client';
 
 export type UserRole = 
   | 'admin' 
@@ -17,21 +17,19 @@ export interface UserSession {
 }
 
 interface AuthContextType {
-  user: UserSession;
+  user: UserSession | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
   availableRoles: { role: UserRole; label: string; name: string }[];
   isServerOnline: boolean;
-  switchRole: (role: UserRole) => Promise<void>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
+  switchRoleDev: (role: UserRole) => Promise<boolean>;
+  refreshAuth: () => Promise<void>;
   refreshHealth: () => Promise<void>;
 }
 
-const DEFAULT_SESSION: UserSession = {
-  id: '11111111-1111-1111-1111-111111111111',
-  fullName: 'Carlos Eduardo Silva',
-  email: 'admin@defardas.com.br',
-  role: 'admin',
-};
-
-const AVAILABLE_ROLES: { role: UserRole; label: string; name: string }[] = [
+export const AVAILABLE_ROLES: { role: UserRole; label: string; name: string }[] = [
   { role: 'admin', label: 'Administrador (Alçada Total)', name: 'Carlos Eduardo Silva' },
   { role: 'gerente_comercial', label: 'Gerente Comercial', name: 'Roberto Mendes' },
   { role: 'vendedor', label: 'Vendedora Comercial', name: 'Mariana Alencar' },
@@ -43,7 +41,8 @@ const AVAILABLE_ROLES: { role: UserRole; label: string; name: string }[] = [
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserSession>(DEFAULT_SESSION);
+  const [user, setUser] = useState<UserSession | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isServerOnline, setIsServerOnline] = useState<boolean>(true);
 
   const refreshHealth = async () => {
@@ -51,30 +50,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsServerOnline(health.status === 200);
   };
 
+  const refreshAuth = async () => {
+    setIsLoading(true);
+    try {
+      const res = await api.getMe();
+      if (res.status === 200 && res.data?.user) {
+        setUser(res.data.user as UserSession);
+      } else {
+        setUser(null);
+      }
+    } catch {
+      setUser(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     refreshHealth();
-    api.getMe().then((res) => {
-      if (res.data?.user) {
-        setUser(res.data.user);
-      }
-    });
+    refreshAuth();
   }, []);
 
-  const switchRole = async (targetRole: UserRole) => {
-    const res = await api.switchRole(targetRole);
-    if (res.data?.user) {
-      setUser(res.data.user);
-    } else {
-      const fallback = AVAILABLE_ROLES.find((r) => r.role === targetRole);
-      if (fallback) {
-        setUser({
-          id: `usr-${targetRole}`,
-          fullName: fallback.name,
-          email: `${targetRole}@defardas.com.br`,
-          role: targetRole,
-        });
-        api.setRole(targetRole);
+  const login = async (email: string, password: string) => {
+    setIsLoading(true);
+    try {
+      const res = await api.login(email, password);
+      if (res.status === 200 && res.data?.user) {
+        setUser(res.data.user as UserSession);
+        return { success: true };
       }
+      return { success: false, error: res.error || 'Credenciais inválidas.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Falha de comunicação com o servidor.' };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    setIsLoading(true);
+    try {
+      await api.logout();
+    } finally {
+      setUser(null);
+      setIsLoading(false);
+    }
+  };
+
+  // Alternador de perfil seguro para desenvolvimento (exige admin)
+  const switchRoleDev = async (targetRole: UserRole): Promise<boolean> => {
+    try {
+      const res = await api.switchRoleDev(targetRole);
+      if (res.status === 200 && res.data?.user) {
+        setUser(res.data.user as UserSession);
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
     }
   };
 
@@ -82,9 +115,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
+        isAuthenticated: !!user,
+        isLoading,
         availableRoles: AVAILABLE_ROLES,
         isServerOnline,
-        switchRole,
+        login,
+        logout,
+        switchRoleDev,
+        refreshAuth,
         refreshHealth,
       }}
     >

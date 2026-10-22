@@ -1,10 +1,13 @@
 import { Router, Response } from 'express';
-import { RequestWithUser, requirePermission } from '../auth/rbac';
+import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { auditService } from '../services/auditService';
 import { ProductionOrderEntity } from '../types/db';
 
 export const ordersRouter = Router();
+
+// Exigir autenticação para todas as rotas de Ordens de Produção
+ordersRouter.use(requireAuth);
 
 // Listar Ordens de Produção
 ordersRouter.get('/', (req: RequestWithUser, res: Response) => {

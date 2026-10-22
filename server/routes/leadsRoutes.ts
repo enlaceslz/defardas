@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
@@ -6,8 +7,8 @@ import { LeadEntity, ClientEntity } from '../types/db';
 
 export const leadsRouter = Router();
 
-// Listar todos os leads centralizados para o CRM da confecção
-leadsRouter.get('/', (_req: Request, res: Response) => {
+// Listar todos os leads centralizados para o CRM da confecção (Apenas equipe interna autenticada)
+leadsRouter.get('/', requireAuth, requirePermission('crm:view_leads'), (req: RequestWithUser, res: Response) => {
   const allLeads = Array.from(db.leads.values());
   res.json(allLeads);
 });
@@ -89,8 +90,8 @@ leadsRouter.post('/', (req: Request, res: Response) => {
   });
 });
 
-// Atualizar status do lead
-leadsRouter.patch('/:id/status', (req: Request, res: Response) => {
+// Atualizar status do lead (Apenas vendedores, gerentes e admin)
+leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clients'), (req: RequestWithUser, res: Response) => {
   const lead = db.leads.get(req.params.id);
   if (!lead) {
     return res.status(404).json({ error: 'Lead não encontrado' });

@@ -1,38 +1,62 @@
 /**
  * DE FARDAS ERP — Client API Layer
  * Camada unificada de comunicação com o backend modular Express/PostgreSQL.
+ * Autenticação via credenciais reais (HttpOnly Cookies + Bearer Token).
+ * Não aceita nem envia cabeçalhos controlados x-user-role ou x-user-id.
  */
 
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
+  code?: string;
   status: number;
+}
+
+export interface UserSessionData {
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
 }
 
 class ApiClient {
   private baseUrl: string = '/api';
-  private currentRole: string = 'admin';
-  private currentUserId: string = '11111111-1111-1111-1111-111111111111';
+  private sessionToken: string | null = null;
 
-  public setRole(role: string, userId?: string) {
-    this.currentRole = role;
-    if (userId) this.currentUserId = userId;
+  constructor() {
+    // Carregar token salvo em memória do navegador caso exista
+    try {
+      this.sessionToken = localStorage.getItem('defardas_auth_token');
+    } catch {
+      this.sessionToken = null;
+    }
   }
 
-  public getRole(): string {
-    return this.currentRole;
+  public setToken(token: string | null) {
+    this.sessionToken = token;
+    try {
+      if (token) {
+        localStorage.setItem('defardas_auth_token', token);
+      } else {
+        localStorage.removeItem('defardas_auth_token');
+      }
+    } catch {
+      // Ignorar indisponibilidade de localStorage
+    }
   }
 
-  public getUserId(): string {
-    return this.currentUserId;
+  public getToken(): string | null {
+    return this.sessionToken;
   }
 
   private getHeaders(): Record<string, string> {
-    return {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'x-user-role': this.currentRole,
-      'x-user-id': this.currentUserId,
     };
+    if (this.sessionToken) {
+      headers['Authorization'] = `Bearer ${this.sessionToken}`;
+    }
+    return headers;
   }
 
   // Health
@@ -40,18 +64,61 @@ class ApiClient {
     return this.request<any>('/health', { method: 'GET' });
   }
 
-  // Auth
-  public async getMe() {
-    return this.request<any>('/auth/me', { method: 'GET' });
+  // Auth: Login real com bcrypt no backend
+  public async login(email: string, password: string) {
+    const res = await this.request<{ success: boolean; user: UserSessionData; token: string }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    if (res.data?.token) {
+      this.setToken(res.data.token);
+    }
+    return res;
   }
 
-  public async switchRole(role: string, userId?: string) {
+  // Auth: Logout seguro
+  public async logout() {
+    const res = await this.request<{ success: boolean; message: string }>('/auth/logout', {
+      method: 'POST',
+    });
+    this.setToken(null);
+    return res;
+  }
+
+  // Auth: Sessão atual
+  public async getMe() {
+    return this.request<{ authenticated: boolean; user: UserSessionData }>('/auth/me', { method: 'GET' });
+  }
+
+  // Auth: Credenciais de teste locais (apenas desenvolvimento)
+  public async getDevCredentials() {
+    return this.request<any>('/auth/dev-credentials', { method: 'GET' });
+  }
+
+  // Auth: Recuperação segura de senha
+  public async recoverPassword(email: string) {
+    return this.request<any>('/auth/recover-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  // Auth: Redefinição com token
+  public async resetPassword(token: string, newPassword: string) {
+    return this.request<any>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, newPassword }),
+    });
+  }
+
+  // Auth: Alternador de perfil seguro em desenvolvimento (exige sessão admin)
+  public async switchRoleDev(targetRole: string, targetEmail?: string) {
     const res = await this.request<any>('/auth/switch-role', {
       method: 'POST',
-      body: JSON.stringify({ role, userId }),
+      body: JSON.stringify({ targetRole, targetEmail }),
     });
-    if (res.data?.user) {
-      this.setRole(res.data.user.role, res.data.user.id);
+    if (res.data?.token) {
+      this.setToken(res.data.token);
     }
     return res;
   }
@@ -203,6 +270,7 @@ class ApiClient {
       const res = await fetch(`${this.baseUrl}${path}`, {
         ...options,
         headers: mergedHeaders,
+        credentials: 'include', // Envia cookies HttpOnly para a mesma origem
       });
 
       const contentType = res.headers.get('content-type');
@@ -217,6 +285,7 @@ class ApiClient {
         return {
           status: res.status,
           error: data?.error || (typeof data === 'string' ? data : 'Erro na requisição à API'),
+          code: data?.code,
           data,
         };
       }

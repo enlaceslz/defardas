@@ -1,11 +1,14 @@
 import { Router, Response } from 'express';
-import { RequestWithUser } from '../auth/rbac';
+import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { ClientEntity } from '../types/db';
 
 export const clientsRouter = Router();
+
+// Exigir autenticação para todas as rotas de clientes
+clientsRouter.use(requireAuth);
 
 // Listar clientes
 clientsRouter.get('/', (req: RequestWithUser, res: Response) => {

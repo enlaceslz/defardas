@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { RequestWithUser, requirePermission } from '../auth/rbac';
+import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
@@ -7,6 +7,9 @@ import { PricingEngine } from '../services/pricingEngine';
 import { QuoteEntity, QuoteItemEntity, ProductionOrderEntity, FinancialTransactionEntity } from '../types/db';
 
 export const quotesRouter = Router();
+
+// Exigir autenticação para todas as rotas de orçamentos
+quotesRouter.use(requireAuth);
 
 // Listar orçamentos
 quotesRouter.get('/', (req: RequestWithUser, res: Response) => {
@@ -90,13 +93,23 @@ quotesRouter.post('/', (req: RequestWithUser, res: Response) => {
       belowSuggestedAuthorized = true;
       authorizedById = actor.id;
       authorizedByName = `${actor.fullName} (Administrador)`;
-    } else if (payload.belowSuggestedAuthorized && payload.authorizedByName) {
-      // Autorização passada por administrador
-      belowSuggestedAuthorized = true;
-      authorizedByName = payload.authorizedByName;
     } else {
+      // Bloqueio rigoroso: O cliente não pode forjar autorização via payload
+      auditService.log({
+        actorId: actor.id,
+        actorName: actor.fullName,
+        actorRole: actor.role,
+        entityName: 'crm.quotes',
+        entityId: 'new_quote',
+        action: 'UNAUTHORIZED_DISCOUNT_ATTEMPT',
+        notes: `Vendedor tentou emitir proposta com valor (R$ ${negotiatedTotalAmount.toFixed(2)}) abaixo do sugerido (R$ ${suggestedTotalAmount.toFixed(2)}) sem aprovação de admin.`,
+      });
+
       return res.status(403).json({
         error: `Alçada violada: O valor negociado (R$ ${negotiatedTotalAmount.toFixed(2)}) é inferior ao preço sugerido (R$ ${suggestedTotalAmount.toFixed(2)}). Exige autorização formal de Administrador conforme PRD v1.6 Adendo B.2.5.`,
+        code: 'DISCOUNT_REQUIRES_ADMIN_APPROVAL',
+        negotiatedTotalAmount,
+        suggestedTotalAmount,
       });
     }
   }

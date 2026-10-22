@@ -1,9 +1,12 @@
 import { Router, Response } from 'express';
-import { RequestWithUser } from '../auth/rbac';
+import { RequestWithUser, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { auditService } from '../services/auditService';
 
 export const migrationRouter = Router();
+
+// Apenas administradores autenticados podem acionar importação de dados
+migrationRouter.use(requirePermission('system:import_data'));
 
 // Endpoint seguro e idempotente para migrar dados do localStorage
 migrationRouter.post('/import-local-storage', (req: RequestWithUser, res: Response) => {

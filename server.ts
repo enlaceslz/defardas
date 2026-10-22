@@ -3,6 +3,7 @@
  * Conecta o backend modular Express com PostgreSQL / Data Store e monta o Vite dev server.
  */
 import express from 'express';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
@@ -30,6 +31,7 @@ async function bootstrap() {
   // Middlewares básicos
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(cookieParser());
 
   // Middleware de Autenticação / RBAC em todas as rotas de API
   app.use('/api', authMiddleware);
