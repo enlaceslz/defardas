@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, Plus, AlertTriangle, Calendar, Building2, Bell } from 'lucide-react';
+import { Menu, Plus, AlertTriangle, Calendar, Building2, HelpCircle } from 'lucide-react';
 import { formatDateBR } from '../utils/formatters';
 
 interface HeaderProps {
@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenNewOrderModal: () => void;
   onToggleMobileSidebar: () => void;
   lowStockCount: number;
+  onOpenHelpManual?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,6 +17,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNewOrderModal,
   onToggleMobileSidebar,
   lowStockCount,
+  onOpenHelpManual,
 }) => {
   const getTabTitle = (tab: string): string => {
     switch (tab) {
@@ -79,6 +81,17 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="hidden sm:inline font-mono">{lowStockCount} alertas</span>
+              </button>
+            )}
+
+            {onOpenHelpManual && (
+              <button
+                onClick={onOpenHelpManual}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                title="Manual Operacional e Regras de Negócio PRD v1.6"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span className="hidden sm:inline">Ajuda & Manual</span>
               </button>
             )}
 

@@ -14,6 +14,7 @@ import { NewOrderModal } from './components/NewOrderModal';
 import { NewQuoteModal } from './components/NewQuoteModal';
 import { PrintOrderTicketModal } from './components/PrintOrderTicketModal';
 import { PrintQuoteModal } from './components/PrintQuoteModal';
+import { HelpManualModal } from './components/HelpManualModal';
 
 import { 
   ERPState, 
@@ -48,6 +49,7 @@ export default function App() {
 
   const [selectedOrderForTicket, setSelectedOrderForTicket] = useState<ProductionOrder | null>(null);
   const [selectedQuoteForPrint, setSelectedQuoteForPrint] = useState<Quote | null>(null);
+  const [isHelpManualOpen, setIsHelpManualOpen] = useState(false);
 
   // Sync to localStorage
   useEffect(() => {
@@ -504,6 +506,7 @@ export default function App() {
           setEditingOrder(null);
           setIsNewOrderModalOpen(true);
         }}
+        onOpenHelpManual={() => setIsHelpManualOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -519,6 +522,7 @@ export default function App() {
           }}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
           lowStockCount={lowStockCount}
+          onOpenHelpManual={() => setIsHelpManualOpen(true)}
         />
 
         {/* Viewport Content */}
@@ -651,6 +655,13 @@ export default function App() {
           profile={state.profile}
           onClose={() => setSelectedQuoteForPrint(null)}
           onApproveAndConvertToOrder={handleConvertQuoteToOrder}
+        />
+      )}
+
+      {/* Modal: Interactive Operating Manual & Business Rules PRD v1.6 */}
+      {isHelpManualOpen && (
+        <HelpManualModal
+          onClose={() => setIsHelpManualOpen(false)}
         />
       )}
 

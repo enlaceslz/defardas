@@ -13,7 +13,8 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
-  X
+  X,
+  HelpCircle
 } from 'lucide-react';
 import { CompanyProfile } from '../types/erp';
 
@@ -29,6 +30,7 @@ interface SidebarProps {
   isMobileOpen: boolean;
   onCloseMobile: () => void;
   onOpenNewOrderModal: () => void;
+  onOpenHelpManual: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -43,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
   onOpenNewOrderModal,
+  onOpenHelpManual,
 }) => {
   const menuGroups = [
     {
@@ -103,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      groupTitle: 'Controladoria & Sistema',
+      groupTitle: 'Controladoria & Ajuda',
       items: [
         {
           id: 'finance',
@@ -118,6 +121,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Settings,
           badge: null,
           badgeColor: '',
+        },
+        {
+          id: 'help_manual',
+          label: 'Manual & Ajuda PRD',
+          icon: HelpCircle,
+          badge: 'Guia',
+          badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
         },
       ],
     },
@@ -191,7 +201,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={item.id}
                     onClick={() => {
-                      onSelectTab(item.id);
+                      if (item.id === 'help_manual') {
+                        onOpenHelpManual();
+                      } else {
+                        onSelectTab(item.id);
+                      }
                       onCloseMobile();
                     }}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left relative ${
