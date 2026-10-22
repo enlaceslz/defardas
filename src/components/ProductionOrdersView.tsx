@@ -19,7 +19,8 @@ import {
   AlertTriangle,
   ShieldAlert,
   CheckCircle,
-  FileCheck
+  FileCheck,
+  X
 } from 'lucide-react';
 import { ProductionOrder, OperationalStage, PriorityLevel, UniformCategory } from '../types/erp';
 import { formatDateBR, getStageLabel, getPriorityBadge, getFinancialStatusBadge, formatCurrencyBRL } from '../utils/formatters';
@@ -49,6 +50,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [stageFilter, setStageFilter] = useState<string>('all');
+  const [gateModalOrder, setGateModalOrder] = useState<ProductionOrder | null>(null);
 
   const stagesList: { id: OperationalStage; label: string; icon: any; color: string }[] = [
     { id: 'aguardando_liberacao', label: '0. Bloqueado (Entrada/Arte)', icon: ShieldAlert, color: 'border-t-rose-500' },
@@ -360,17 +362,17 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                                 <button
                                   onClick={() => {
                                     if (order.stage === 'aguardando_liberacao' && isBlocked) {
-                                      alert('Atenção: Conforme o PRD v1.6, a produção só pode ser liberada após confirmação do recebimento da entrada e aprovação da arte.');
+                                      setGateModalOrder(order);
                                       return;
                                     }
                                     onUpdateOrderStage(order.id, nextStage);
                                   }}
-                                  disabled={order.stage === 'aguardando_liberacao' && isBlocked}
                                   className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded transition-colors ${
                                     order.stage === 'aguardando_liberacao' && isBlocked
-                                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                      ? 'bg-rose-100 text-rose-800 hover:bg-rose-200 cursor-pointer'
                                       : 'text-white bg-blue-600 hover:bg-blue-500 cursor-pointer'
                                   }`}
+                                  title={order.stage === 'aguardando_liberacao' && isBlocked ? 'Clique para ver os requisitos do Gate A.3.2' : undefined}
                                 >
                                   <span>Avançar</span>
                                   <ChevronRight className="w-3 h-3" />
@@ -483,6 +485,119 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Bloqueio do Portão Fabril (Gate A.3.2 do PRD) */}
+      {gateModalOrder && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+              <div className="flex items-center gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-rose-400" />
+                <div>
+                  <h3 className="text-base font-bold">Portão Fabril Bloqueado (Gate A.3.2)</h3>
+                  <p className="text-[11px] text-slate-400">{gateModalOrder.orderNumber} · {gateModalOrder.clientName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setGateModalOrder(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 leading-relaxed">
+                <strong>Regra Inegociável do PRD v1.6:</strong> Uma Ordem de Produção <strong>não pode avançar para a mesa de corte</strong> enquanto os dois requisitos abaixo não forem formalmente cumpridos:
+              </div>
+
+              {/* Checklist dos 2 Gates */}
+              <div className="space-y-3">
+                {/* Gate 1: Sinal 50% */}
+                <div className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 ${
+                  gateModalOrder.entryPaymentConfirmed
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 font-bold">
+                      {gateModalOrder.entryPaymentConfirmed ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      )}
+                      <span>1. Confirmação do Sinal de 50%</span>
+                    </div>
+                    <p className="text-[11px] text-slate-600">
+                      {gateModalOrder.entryPaymentConfirmed
+                        ? `Sinal liquidado com comprovante autenticado.`
+                        : 'Aguardando quitação do sinal no Financeiro com registro do comprovante bancário.'}
+                    </p>
+                  </div>
+                  {!gateModalOrder.entryPaymentConfirmed && onConfirmEntryPayment && (
+                    <button
+                      onClick={() => {
+                        onConfirmEntryPayment(gateModalOrder.id);
+                        setGateModalOrder(null);
+                      }}
+                      className="px-2.5 py-1 bg-amber-600 text-white font-semibold rounded text-[11px] hover:bg-amber-500 transition-colors shrink-0 cursor-pointer"
+                    >
+                      Confirmar Sinal
+                    </button>
+                  )}
+                </div>
+
+                {/* Gate 2: Arte Aprovada */}
+                <div className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 ${
+                  gateModalOrder.artApproved
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 font-bold">
+                      {gateModalOrder.artApproved ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      )}
+                      <span>2. Aprovação Formal da Arte / Layout</span>
+                    </div>
+                    <p className="text-[11px] text-slate-600">
+                      {gateModalOrder.artApproved
+                        ? `Aprovada por ${gateModalOrder.artApprovedBy || 'Cliente'}.`
+                        : 'A arte final precisa ser formalmente aprovada pelo cliente antes do corte.'}
+                    </p>
+                  </div>
+                  {!gateModalOrder.artApproved && onApproveArt && (
+                    <button
+                      onClick={() => {
+                        onApproveArt(gateModalOrder.id);
+                        setGateModalOrder(null);
+                      }}
+                      className="px-2.5 py-1 bg-blue-600 text-white font-semibold rounded text-[11px] hover:bg-blue-500 transition-colors shrink-0 cursor-pointer"
+                    >
+                      Aprovar Arte
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="text-[11px] text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                Assim que ambos os requisitos forem satisfeitos, o botão de avanço para a etapa <strong>1. Corte & Enfesto</strong> será liberado automaticamente.
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                onClick={() => setGateModalOrder(null)}
+                className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Entendido
+              </button>
+            </div>
           </div>
         </div>
       )}

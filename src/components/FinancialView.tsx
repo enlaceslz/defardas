@@ -20,6 +20,7 @@ interface FinancialViewProps {
   onSaveTransaction: (trx: FinancialTransaction) => void;
   onDeleteTransaction: (trxId: string) => void;
   onToggleStatus: (trxId: string) => void;
+  onConfirmPaymentWithVoucher?: (trxId: string, voucherNumber: string, notes: string) => void;
 }
 
 export const FinancialView: React.FC<FinancialViewProps> = ({
@@ -27,10 +28,16 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   onSaveTransaction,
   onDeleteTransaction,
   onToggleStatus,
+  onConfirmPaymentWithVoucher,
 }) => {
   const [typeFilter, setTypeFilter] = useState<'all' | 'receber' | 'pagar'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pendente' | 'pago'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Voucher Confirmation Modal
+  const [selectedTrxForVoucher, setSelectedTrxForVoucher] = useState<FinancialTransaction | null>(null);
+  const [voucherNumber, setVoucherNumber] = useState('');
+  const [voucherNotes, setVoucherNotes] = useState('');
 
   // Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -277,13 +284,21 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                     </td>
                     <td className="py-3 px-4 text-center">
                       <button
-                        onClick={() => onToggleStatus(t.id)}
+                        onClick={() => {
+                          if (!isPaid) {
+                            setSelectedTrxForVoucher(t);
+                            setVoucherNumber(`COMPR-PIX-${Date.now().toString().slice(-6)}`);
+                            setVoucherNotes('Comprovante bancário conferido via extrato.');
+                          } else {
+                            onToggleStatus(t.id);
+                          }
+                        }}
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer transition-colors ${
                           isPaid
                             ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                             : 'bg-amber-100 text-amber-800 hover:bg-amber-200'
                         }`}
-                        title="Clique para alternar status (Pendente / Pago)"
+                        title={isPaid ? 'Liquidado com comprovante (Clique para alterar)' : 'Clique para anexar comprovante e liquidar'}
                       >
                         {isPaid ? <CheckCircle className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
                         <span>{isPaid ? 'Liquidado' : 'Pendente'}</span>
@@ -410,6 +425,99 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                   className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer"
                 >
                   Lançar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Quitação com Comprovante Bancário Auditável (PRD v1.6) */}
+      {selectedTrxForVoucher && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <h3 className="text-base font-bold">Liquidação com Comprovante</h3>
+                  <p className="text-[11px] text-slate-400">Auditoria Financeira e Liberação de Sinal</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedTrxForVoucher(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (onConfirmPaymentWithVoucher) {
+                  onConfirmPaymentWithVoucher(selectedTrxForVoucher.id, voucherNumber, voucherNotes);
+                } else {
+                  onToggleStatus(selectedTrxForVoucher.id);
+                }
+                setSelectedTrxForVoucher(null);
+              }}
+              className="p-6 space-y-4 text-xs"
+            >
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                <div className="font-bold text-slate-900">{selectedTrxForVoucher.description}</div>
+                <div className="flex justify-between items-center text-slate-600 font-mono pt-1 border-t border-slate-200">
+                  <span>Valor do Título:</span>
+                  <span className="text-emerald-700 font-bold text-sm">
+                    {formatCurrencyBRL(selectedTrxForVoucher.amount)}
+                  </span>
+                </div>
+                {selectedTrxForVoucher.subType === 'entrada_pedido' && (
+                  <div className="text-[11px] font-bold text-blue-700 pt-1">
+                    ★ Este título é o sinal de 50%. A liquidação liberará o portão de corte da Ordem de Produção!
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Número / Código do Comprovante Bancário *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={voucherNumber}
+                  onChange={(e) => setVoucherNumber(e.target.value)}
+                  placeholder="Ex: AUT-PIX-849102"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 font-mono text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Notas de Conferência do Recebimento / Extrato
+                </label>
+                <textarea
+                  rows={2}
+                  value={voucherNotes}
+                  onChange={(e) => setVoucherNotes(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-200 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTrxForVoucher(null)}
+                  className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-500 transition-colors shadow-xs cursor-pointer"
+                >
+                  Confirmar e Liquidar
                 </button>
               </div>
             </form>

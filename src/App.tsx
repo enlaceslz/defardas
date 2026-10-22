@@ -15,6 +15,8 @@ import { NewQuoteModal } from './components/NewQuoteModal';
 import { PrintOrderTicketModal } from './components/PrintOrderTicketModal';
 import { PrintQuoteModal } from './components/PrintQuoteModal';
 import { HelpManualModal } from './components/HelpManualModal';
+import { FoundationAuditModal } from './components/FoundationAuditModal';
+import { api } from './api/client';
 
 import { 
   ERPState, 
@@ -50,6 +52,7 @@ export default function App() {
   const [selectedOrderForTicket, setSelectedOrderForTicket] = useState<ProductionOrder | null>(null);
   const [selectedQuoteForPrint, setSelectedQuoteForPrint] = useState<Quote | null>(null);
   const [isHelpManualOpen, setIsHelpManualOpen] = useState(false);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
   // Sync to localStorage
   useEffect(() => {
@@ -160,13 +163,18 @@ export default function App() {
 
   // Conversão Idempotente de Orçamento em Pedido (PRD A.3.1 e B.3)
   const handleConvertQuoteToOrder = (quote: Quote) => {
-    // Idempotência: Se já foi convertido, não recriar
-    if (quote.status === 'convertido_em_pedido') {
-      alert(`Este orçamento já foi convertido anteriormente (OP: ${quote.convertedToOrderId || 'Existente'}). Ação idempotente mantida.`);
+    // Idempotência Rígida: Se já foi convertido ou OP com este quoteId já existe, não recriar
+    const alreadyConverted = state.orders.some((o) => o.quoteId === quote.id) || quote.status === 'convertido_em_pedido';
+    if (alreadyConverted) {
+      alert(`Esta proposta já foi convertida anteriormente (OP vinculada: ${quote.convertedToOrderId || 'Existente'}). Ação idempotente mantida.`);
       return;
     }
 
-    const opId = `OP-2026-${Math.floor(200 + Math.random() * 700)}`;
+    // Disparar sincronização com o backend
+    api.convertQuoteToOrder(quote.id).catch((err) => console.warn('Erro ao sincronizar conversão no backend:', err));
+
+    const opSeq = String(Math.floor(100 + Math.random() * 900)).padStart(4, '0');
+    const opId = `OP-2026-${opSeq}`;
 
     const newOrders: ProductionOrder[] = quote.items.map((item, idx) => {
       const orderSpecificId = idx === 0 ? opId : `${opId}-${idx + 1}`;
@@ -185,7 +193,7 @@ export default function App() {
         estimatedMarginPercentage: 31.0,
       };
 
-      const canStart = Boolean(quote.artApproved); // Requer confirmação de sinal após emissão
+      const canStart = Boolean(quote.artApproved);
 
       return {
         id: orderSpecificId,
@@ -214,23 +222,24 @@ export default function App() {
           }
         ],
         commercialStatus: 'aprovado',
-        financialStatus: 'entrada_pendente', // Bloqueia produção até comprovar sinal!
-        stage: canStart ? 'aguardando_liberacao' : 'aguardando_liberacao',
+        financialStatus: 'entrada_pendente', // Bloqueia produção até comprovar sinal de 50%!
+        stage: 'aguardando_liberacao',       // Portão de liberação fabril Gate A.3.2
         artApproved: quote.artApproved,
         artApprovalDate: quote.artApproved ? new Date().toISOString().split('T')[0] : undefined,
-        entryPaymentConfirmed: false, // Portão de segurança do PRD!
+        entryPaymentConfirmed: false,        // Sinal de 50% pendente
         canStartProduction: false,
         priority: 'normal',
         creationDate: new Date().toISOString().split('T')[0],
         targetDeliveryDate: new Date(Date.now() + quote.productionLeadDays * 86400000).toISOString().split('T')[0],
-        technicalNotes: `Gerado a partir da Proposta Comercial ${quote.id} v${quote.version}. ${quote.notes}`,
+        technicalNotes: `Gerado a partir da Proposta Comercial ${quote.id} v${quote.version}. ${quote.notes || ''}`,
         assignedTeam: 'Mesa de Corte & Facção Terceirizada',
       };
     });
 
     // Lançamento do Sinal de 50% no Financeiro
+    const finSinalId = `FIN-2026-${Math.floor(5000 + Math.random() * 500)}`;
     const newReceivableEntry: FinancialTransaction = {
-      id: `fin-sinal-${Date.now()}`,
+      id: finSinalId,
       type: 'receber',
       subType: 'entrada_pedido',
       description: `Sinal 50% - Proposta ${quote.id} (${quote.clientName})`,
@@ -239,12 +248,13 @@ export default function App() {
       dueDate: new Date().toISOString().split('T')[0],
       status: 'pendente',
       paymentMethod: 'pix',
-      referenceId: quote.id,
+      referenceId: opId,
     };
 
     // Lançamento do Saldo para a data da entrega
+    const finSaldoId = `FIN-2026-${Math.floor(6000 + Math.random() * 500)}`;
     const newReceivableBalance: FinancialTransaction = {
-      id: `fin-saldo-${Date.now()}`,
+      id: finSaldoId,
       type: 'receber',
       subType: 'saldo_entrega',
       description: `Saldo 50% na Entrega - Proposta ${quote.id} (${quote.clientName})`,
@@ -253,7 +263,7 @@ export default function App() {
       dueDate: new Date(Date.now() + quote.productionLeadDays * 86400000).toISOString().split('T')[0],
       status: 'pendente',
       paymentMethod: 'boleto',
-      referenceId: quote.id,
+      referenceId: opId,
     };
 
     setState((prev) => ({
@@ -267,7 +277,7 @@ export default function App() {
       setSelectedQuoteForPrint(null);
     }
 
-    alert(`Proposta ${quote.id} convertida em OP com sucesso! A OP ${opId} foi criada com status Bloqueado, aguardando confirmação do sinal de 50% conforme o PRD.`);
+    alert(`Proposta ${quote.id} convertida em OP com sucesso! A OP ${opId} foi criada no estágio 'Aguardando Liberação', com bloqueio ativo até quitação do sinal de 50% e aprovação de arte.`);
     setCurrentTab('orders');
   };
 
@@ -290,14 +300,18 @@ export default function App() {
     estimatedQty: number;
     notes: string;
   }) => {
+    // Sincronizar lead com persistência centralizada no backend (crm.leads)
+    api.submitPublicLead(req).catch((err) => console.warn('Erro ao sincronizar lead no backend:', err));
+
     // 1. Cadastrar cliente se for novo
     let matchedClient = state.clients.find(
       (c) => c.phone === req.phone || c.companyName.toLowerCase() === req.companyName.toLowerCase()
     );
 
     if (!matchedClient) {
+      const cliNum = Math.floor(200 + Math.random() * 800);
       matchedClient = {
-        id: `cli-${Date.now()}`,
+        id: `CLI-2026-${String(cliNum).padStart(4, '0')}`,
         companyName: req.companyName.toUpperCase(),
         tradeName: req.companyName,
         cnpj: "00.000.000/0001-00",
@@ -316,9 +330,10 @@ export default function App() {
       setState((prev) => ({ ...prev, clients: [matchedClient!, ...prev.clients] }));
     }
 
-    // 2. Criar Orçamento rascunho/enviado no CRM
+    // 2. Criar Orçamento no CRM com numeração segura
+    const orcNum = Math.floor(1000 + Math.random() * 900);
     const newQuote: Quote = {
-      id: `ORC-${Math.floor(930 + Math.random() * 60)}`,
+      id: `ORC-2026-${orcNum}`,
       version: 1,
       clientId: matchedClient.id,
       clientName: matchedClient.tradeName,
@@ -467,6 +482,56 @@ export default function App() {
     }));
   };
 
+  // Quitação de título com comprovante bancário e liberação automática do sinal da OP (Portão A.3.2)
+  const handleConfirmPaymentWithVoucher = (trxId: string, voucherNumber: string, notes: string) => {
+    // Sincronizar com o backend
+    api.confirmPayment(trxId, { receiptVoucherNumber: voucherNumber, confirmationNotes: notes })
+      .catch((err) => console.warn('Erro ao sincronizar pagamento no backend:', err));
+
+    setState((prev) => {
+      const targetTrx = prev.finance.find((f) => f.id === trxId);
+      if (!targetTrx) return prev;
+
+      const updatedFinance = prev.finance.map((f) => {
+        if (f.id === trxId) {
+          return {
+            ...f,
+            status: 'pago' as const,
+            paidDate: new Date().toISOString().split('T')[0],
+            receiptEvidenceUrl: `comprovante_${voucherNumber}.pdf`,
+          };
+        }
+        return f;
+      });
+
+      // Se for sinal de 50%, atualizar automaticamente a OP vinculada!
+      let updatedOrders = prev.orders;
+      if (targetTrx.subType === 'entrada_pedido') {
+        updatedOrders = prev.orders.map((o) => {
+          const matches = o.id === targetTrx.referenceId || o.orderNumber === targetTrx.referenceId || o.quoteId === targetTrx.referenceId;
+          if (matches) {
+            const canStart = Boolean(o.artApproved);
+            return {
+              ...o,
+              entryPaymentConfirmed: true,
+              financialStatus: 'entrada_confirmada' as const,
+              entryReceiptUrl: `comprovante_${voucherNumber}.pdf`,
+              canStartProduction: canStart,
+              stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
+            };
+          }
+          return o;
+        });
+      }
+
+      return {
+        ...prev,
+        finance: updatedFinance,
+        orders: updatedOrders,
+      };
+    });
+  };
+
   // Profile & Reset
   const handleSaveProfile = (profile: CompanyProfile) => {
     setState((prev) => ({ ...prev, profile }));
@@ -523,6 +588,7 @@ export default function App() {
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
           lowStockCount={lowStockCount}
           onOpenHelpManual={() => setIsHelpManualOpen(true)}
+          onOpenAuditModal={() => setIsAuditModalOpen(true)}
         />
 
         {/* Viewport Content */}
@@ -600,6 +666,7 @@ export default function App() {
                 onSaveTransaction={handleSaveTransaction}
                 onDeleteTransaction={handleDeleteTransaction}
                 onToggleStatus={handleToggleTransactionStatus}
+                onConfirmPaymentWithVoucher={handleConfirmPaymentWithVoucher}
               />
             )}
 
@@ -662,6 +729,14 @@ export default function App() {
       {isHelpManualOpen && (
         <HelpManualModal
           onClose={() => setIsHelpManualOpen(false)}
+        />
+      )}
+
+      {/* Modal: Foundation P0 Audit, Tests & Database Invariants */}
+      {isAuditModalOpen && (
+        <FoundationAuditModal
+          isOpen={isAuditModalOpen}
+          onClose={() => setIsAuditModalOpen(false)}
         />
       )}
 

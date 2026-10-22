@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { X, Plus, Trash2, Calculator, FileText, CheckCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { X, Plus, Trash2, Calculator, FileText, CheckCircle, AlertTriangle, ShieldCheck, Lock } from 'lucide-react';
 import { Quote, Client, QuoteItem, SizeGrid, CustomizationItem, UniformCategory, CostBreakdown } from '../types/erp';
 import { initialPublicCatalog } from '../data/initialData';
 import { getTotalFromSizeGrid, formatCurrencyBRL } from '../utils/formatters';
+import { useAuth } from '../api/authContext';
 
 interface NewQuoteModalProps {
   clients: Client[];
@@ -15,12 +16,13 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
   onClose,
   onSaveQuote,
 }) => {
+  const { user } = useAuth();
   const [selectedClient, setSelectedClient] = useState<Client | null>(clients[0] || null);
-  const [sellerName, setSellerName] = useState('Patrícia Viana (Consultora Comercial)');
+  const [sellerName, setSellerName] = useState(user.fullName || 'Mariana Alencar (Comercial)');
   const [validUntilDays, setValidUntilDays] = useState(15);
   
-  // Regra do PRD: Entrada percentual fixa e saldo na entrega
-  const [entryPercentage, setEntryPercentage] = useState(50);
+  // Regra do PRD: Entrada percentual fixa em 50% (Adendo A.3.2)
+  const entryPercentage = 50;
   const [paymentTerms, setPaymentTerms] = useState('50% Sinal (Liberação de Corte) + 50% na Entrega das Peças');
   const [productionLeadDays, setProductionLeadDays] = useState(16);
   const [artApproved, setArtApproved] = useState(false);
@@ -46,14 +48,13 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
         calculatedBaseCost: 42.84,
         markupPercentage: 50.0, // Markup sobre custo (Regra B.2.1)
         suggestedUnitPrice: 64.26,
-        negotiatedUnitPrice: 64.00,
-        discountPercentage: 0.4,
-        belowSuggestedAuthorized: true,
-        authorizerName: 'Carlos Eduardo (Gerente Comercial)',
-        estimatedMarginPercentage: 33.0,
+        negotiatedUnitPrice: 64.26,
+        discountPercentage: 0,
+        belowSuggestedAuthorized: false,
+        estimatedMarginPercentage: 33.3,
       },
-      unitFinalPrice: 64.00,
-      totalPrice: 64.00 * 130,
+      unitFinalPrice: 64.26,
+      totalPrice: 64.26 * 130,
       customizations: [
         {
           id: 'c-1',
@@ -207,15 +208,16 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
     );
 
     if (unauthorizedItem) {
-      alert(`O item "${unauthorizedItem.modelName}" está com preço negociado abaixo do preço sugerido. Requer autorização de gerente/administrador conforme o PRD.`);
+      alert(`Alçada Violada: O item "${unauthorizedItem.modelName}" está com preço negociado (R$ ${unauthorizedItem.costBreakdown.negotiatedUnitPrice.toFixed(2)}) abaixo do sugerido (R$ ${unauthorizedItem.costBreakdown.suggestedUnitPrice.toFixed(2)}). Requer autorização formal de Administrador conforme o PRD v1.6 Adendo B.2.5.`);
       return;
     }
 
     const today = new Date();
     const validUntilDate = new Date(today.getTime() + validUntilDays * 86400000);
+    const seqNum = Math.floor(1000 + Math.random() * 900);
 
     const newQuote: Quote = {
-      id: `ORC-${Math.floor(920 + Math.random() * 70)}`,
+      id: `ORC-${today.getFullYear()}-${seqNum}`,
       version: 1,
       clientId: selectedClient.id,
       clientName: selectedClient.companyName || selectedClient.tradeName,
@@ -511,32 +513,37 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Preço Abaixo do Sugerido: Alçada & Autorização */}
+                    {/* Preço Abaixo do Sugerido: Alçada & Autorização Auditável (Adendo B.2.5) */}
                     {isBelow && (
                       <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-900">
                         <div className="flex items-center gap-2">
                           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                          <span>
-                            <strong>Preço abaixo do sugerido!</strong> Requer registro da alçada de autorização (PRD A.3.1).
-                          </span>
+                          <div className="text-[11px]">
+                            <strong>Preço abaixo do sugerido!</strong> Sugerido: {formatCurrencyBRL(cb.suggestedUnitPrice)} | Praticado: {formatCurrencyBRL(cb.negotiatedUnitPrice)}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs">
-                            <input
-                              type="checkbox"
-                              checked={cb.belowSuggestedAuthorized}
-                              onChange={(e) => updateItemCostComponent(index, 'belowSuggestedAuthorized', e.target.checked)}
-                              className="rounded text-blue-600 focus:ring-blue-500"
-                            />
-                            <span>Autorizar Desconto</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={cb.authorizerName || ''}
-                            onChange={(e) => updateItemCostComponent(index, 'authorizerName', e.target.value)}
-                            placeholder="Nome do Gerente/Admin"
-                            className="px-2 py-1 bg-white border border-amber-300 rounded text-xs w-44"
-                          />
+                          {user.role === 'admin' ? (
+                            <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-md border border-amber-300 transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={cb.belowSuggestedAuthorized}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  updateItemCostComponent(index, 'belowSuggestedAuthorized', checked);
+                                  updateItemCostComponent(index, 'authorizerName', checked ? `${user.fullName} (Administrador)` : '');
+                                }}
+                                className="rounded text-blue-600 focus:ring-blue-500"
+                              />
+                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>{cb.belowSuggestedAuthorized ? `Autorizado por ${cb.authorizerName}` : 'Autorizar como Administrador'}</span>
+                            </label>
+                          ) : (
+                            <div className="flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded border border-rose-200">
+                              <Lock className="w-3 h-3 text-rose-600" />
+                              <span>Alçada restrita a Administrador ({user.role})</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -561,17 +568,23 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Percentual de Entrada (%)
-                  </label>
-                  <input
-                    type="number"
-                    min="10"
-                    max="100"
-                    value={entryPercentage}
-                    onChange={(e) => setEntryPercentage(parseFloat(e.target.value) || 50)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-mono font-bold"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-semibold text-slate-700">
+                      Sinal de Entrada (%)
+                    </label>
+                    <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded border border-blue-200">
+                      Fixado 50% (PRD A.3.2)
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      readOnly
+                      value="50.00%"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-100 text-slate-700 font-mono font-bold cursor-not-allowed"
+                    />
+                    <Lock className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3" />
+                  </div>
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">

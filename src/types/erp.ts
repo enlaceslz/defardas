@@ -92,6 +92,9 @@ export interface MaterialRequirement {
 
 export interface ProductionOrder {
   id: string; // Ex: OP-2026-101
+  orderNumber?: string;
+  idempotencyKey?: string;
+  isDemo?: boolean;
   quoteId?: string; // Idempotência: vinculado à versão exata do orçamento
   quoteVersion?: number;
   clientId: string;
@@ -161,6 +164,8 @@ export interface QuoteItem {
 
 export interface Quote {
   id: string; // Ex: ORC-904
+  quoteNumber?: string;
+  isDemo?: boolean;
   version: number;
   clientId: string;
   clientName: string;
@@ -232,6 +237,7 @@ export interface InventoryItem {
 
 export interface Client {
   id: string;
+  code?: string;
   companyName: string;
   tradeName: string;
   cnpj: string;
@@ -246,11 +252,13 @@ export interface Client {
   standardUniformNotes: string;
   totalOrdersCount: number;
   totalSpent: number;
+  isDemo?: boolean;
   createdAt: string;
 }
 
 export interface FinancialTransaction {
   id: string;
+  transactionNumber?: string;
   type: 'receber' | 'pagar';
   subType: 'entrada_pedido' | 'saldo_entrega' | 'compra_tecido' | 'servico_terceirizado' | 'despesa_geral';
   description: string;
@@ -262,6 +270,8 @@ export interface FinancialTransaction {
   paymentMethod: 'boleto' | 'pix' | 'transferencia' | 'cartao';
   referenceId?: string; // OP ou Pedido vinculado
   receiptEvidenceUrl?: string; // Comprovante obrigatório
+  receiptVoucherNumber?: string;
+  isDemo?: boolean;
 }
 
 export interface CompanyProfile {

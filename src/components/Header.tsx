@@ -1,6 +1,7 @@
 import React from 'react';
-import { Menu, Plus, AlertTriangle, Calendar, Building2, HelpCircle, Shirt } from 'lucide-react';
+import { Menu, Plus, AlertTriangle, Calendar, Building2, HelpCircle, Shirt, ShieldCheck, Users } from 'lucide-react';
 import { formatDateBR } from '../utils/formatters';
+import { useAuth } from '../api/authContext';
 
 interface HeaderProps {
   currentTab: string;
@@ -9,6 +10,7 @@ interface HeaderProps {
   onToggleMobileSidebar: () => void;
   lowStockCount: number;
   onOpenHelpManual?: () => void;
+  onOpenAuditModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -18,7 +20,9 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMobileSidebar,
   lowStockCount,
   onOpenHelpManual,
+  onOpenAuditModal,
 }) => {
+  const { user } = useAuth();
   const getTabTitle = (tab: string): string => {
     switch (tab) {
       case 'portal': return 'Portal Público & Portfólio Digital';
@@ -84,6 +88,17 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="hidden sm:inline font-mono">{lowStockCount} alertas</span>
+              </button>
+            )}
+
+            {onOpenAuditModal && (
+              <button
+                onClick={onOpenAuditModal}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap shadow-2xs"
+                title="Auditoria da Fundação P0, Schemas PostgreSQL, Invariantes e RBAC"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span className="hidden sm:inline">Fundação P0</span>
               </button>
             )}
 

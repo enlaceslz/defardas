@@ -168,9 +168,21 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
           >
             <div className="flex items-start justify-between">
               <div>
-                <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                  {client.segment}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
+                    {client.segment}
+                  </span>
+                  {client.isDemo !== false && (
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                      Demonstração
+                    </span>
+                  )}
+                  {client.code && (
+                    <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                      {client.code}
+                    </span>
+                  )}
+                </div>
                 <h3 className="text-base font-bold text-slate-900 mt-1.5">
                   {client.tradeName}
                 </h3>
