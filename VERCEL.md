@@ -44,9 +44,9 @@ A Vercel lerá automaticamente o arquivo `vercel.json` e o `package.json`. Verif
 | **Root Directory** | `./` |
 | **Build Command** | `npm run build` |
 | **Output Directory** | `dist` |
-| **Install Command** | `npm install` |
+| **Install Command** | `npm install --legacy-peer-deps` (definido no `vercel.json` e `.npmrc`) |
 
-*Normalmente não é necessário alterar nenhum desses valores, pois a Vercel detecta tudo perfeitamente.*
+*A Vercel utilizará automaticamente o comando de instalação otimizado com `--legacy-peer-deps` configurado no arquivo `vercel.json` e `.npmrc`, garantindo que não ocorra conflito de dependências entre o Vite 8 e o ecossistema React 19.*
 
 ---
 
