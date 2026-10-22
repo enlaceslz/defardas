@@ -203,21 +203,22 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
               return (
                 <div
                   key={stg.id}
-                  className={`bg-slate-100/70 border border-slate-200 rounded-xl flex flex-col border-t-4 ${stg.color}`}
+                  className="bg-slate-100/60 border border-slate-200/90 rounded-xl flex flex-col shadow-2xs overflow-hidden"
                 >
                   {/* Column Header */}
-                  <div className="p-3 border-b border-slate-200/80 bg-white/70 rounded-t-lg flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
-                      <StageIcon className="w-3.5 h-3.5 text-slate-600" />
+                  <div className="p-3 border-b border-slate-200 bg-white/90 rounded-t-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-bold text-xs text-slate-800">
+                      <StageIcon className="w-4 h-4 text-slate-600 shrink-0" />
                       <span className="truncate">{stg.label}</span>
                     </div>
-                    <div className="text-[11px] font-mono text-slate-500">
-                      <span className="font-bold text-slate-800">{stageOrders.length}</span>
+                    <div className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
+                      {stageOrders.length}
                     </div>
                   </div>
 
-                  <div className="px-3 py-1 bg-slate-50 border-b border-slate-200/60 text-[11px] text-slate-500 font-mono">
-                    Volume: <span className="font-bold text-slate-700">{stagePieces} pçs</span>
+                  <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-200/60 text-[11px] text-slate-500 font-mono flex items-center justify-between">
+                    <span>Volume Total:</span>
+                    <span className="font-bold text-slate-800">{stagePieces.toLocaleString('pt-BR')} pçs</span>
                   </div>
 
                   {/* Orders Cards Container */}
@@ -239,8 +240,8 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                         return (
                           <div
                             key={order.id}
-                            className={`bg-white p-3 rounded-lg border shadow-xs hover:border-blue-300 transition-all space-y-2 text-xs ${
-                              isBlocked ? 'border-rose-300 bg-rose-50/20' : 'border-slate-200'
+                            className={`bg-white p-3.5 rounded-lg border shadow-xs hover:border-blue-400 hover:shadow-sm transition-all space-y-2.5 text-xs ${
+                              isBlocked ? 'border-rose-300/90 bg-rose-50/20' : 'border-slate-200/90'
                             }`}
                           >
                             {/* Card Top: Code + Priority */}
