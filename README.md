@@ -98,7 +98,17 @@ npm run build
 
 ---
 
-## 5. Documentos Complementares
+## 5. Como Fazer Deploy na Vercel via GitHub
 
+O projeto está totalmente configurado para deploy instantâneo na Vercel:
+1. Conecte o repositório na [Vercel](https://vercel.com).
+2. O arquivo `vercel.json` já configura o preset **Vite**, o comando `npm run build`, pasta `dist` e reescritas de rota SPA.
+3. Consulte o guia detalhado em [`VERCEL.md`](./VERCEL.md).
+
+---
+
+## 6. Documentos Complementares
+
+- `VERCEL.md`: Guia passo a passo de deploy na Vercel diretamente pelo GitHub com CI/CD automático.
 - `AGENTS.md`: Diretrizes normativas e invariantes do PRD para desenvolvedores e agentes autônomos de IA.
-- `DEPLOY.md`: Manual de infraestrutura, implantação em servidor dedicado, configuração do PostgreSQL e rotinas de backup.
+- `DEPLOY.md`: Manual de infraestrutura, implantação em servidor dedicado Linux, configuração do PostgreSQL e rotinas de backup.
