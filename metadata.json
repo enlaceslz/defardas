@@ -1,0 +1,6 @@
+{
+  "name": "DE FARDAS ERP - Gestão de Confecção & Uniformes (São Luís - MA)",
+  "description": "Sistema ERP e Portal Comercial para confecção e comercialização de uniformes profissionais (DE FARDAS - São Luís, Maranhão). Ficha técnica, motor de precificação por markup, PCP com portões de liberação, estoque e financeiro conforme PRD v1.6.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
