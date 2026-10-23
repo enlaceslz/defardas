@@ -69,18 +69,41 @@ A aplicação unifica três ambientes complementares:
 
 ---
 
-## 3. Arquitetura e Tecnologias
-
 - **Frontend:** React 19, TypeScript, Vite.
+- **Backend Modular:** Node.js Express montado em `server.ts` com rotas modulares de API (`/api/*`).
+- **Segurança & Autenticação (Fase 1 Homologada):**
+  - Criptografia de senhas com `bcrypt` (12 salt rounds).
+  - Sessões criptograficamente seguras (tokens de 256 bits CSPRNG) com cookies `HttpOnly`, `SameSite: Lax` e suporte a cabeçalho `Authorization: Bearer`.
+  - Controle de Acesso Baseado em Função (RBAC) com 6 perfis normativos: `admin`, `gerente_comercial`, `vendedor`, `pcp_producao`, `financeiro`, `expedicao_qualidade`.
+  - Rejeição absoluta de cabeçalhos manipulados pelo cliente (`x-user-role` / `x-user-id`) e eliminação total do administrador automático.
+  - Retorno estrito de `HTTP 401 Unauthorized` para acessos não autenticados e `HTTP 403 Forbidden` para violações de alçada.
+  - Trilha de auditoria persistente gravando tentativas de acesso não autorizado e bypass de portões.
 - **Estilização:** Tailwind CSS v4, seguindo tipografia estruturada (*Plus Jakarta Sans* e *DM Sans*) e numerais tabulares (*JetBrains Mono / tabular-nums*).
 - **Ícones:** Lucide React.
-- **Armazenamento de Estado:** Persistência em LocalStorage (`v2`) com exportação/importação JSON para backup e restauração de dados demonstrativos.
+- **Armazenamento de Estado:** Banco PostgreSQL próprio da DE FARDAS via `DATABASE_URL` com fallback transacional resiliente e migração segura de dados locais.
 - **Layout:** Barra lateral (Sidebar) expansível/recolhível com navegação por agrupamentos operacionais e suporte a gaveta responsiva (mobile drawer).
 - **Estilos de Impressão:** Folhas de estilo dedicadas (`@media print`) para fichas técnicas e propostas comerciais formatadas para folha A4.
 
 ---
 
-## 4. Como Executar Localmente
+## 4. Credenciais de Desenvolvimento (Seed RBAC)
+
+Para fins de teste e auditoria de alçadas em ambiente local/desenvolvimento, o sistema disponibiliza os seguintes perfis pré-cadastrados (senha padrão: `DeFardas@2026!`):
+
+| Perfil | E-mail | Nome | Alçada / Responsabilidade |
+| :--- | :--- | :--- | :--- |
+| **Administrador** | `admin@defardas.com.br` | Carlos Eduardo Silva | Alçada total, aprovação de descontos, auditoria e migração |
+| **Vendedor** | `vendas@defardas.com.br` | Mariana Alencar | Emissão de propostas comerciais e cadastro de clientes |
+| **PCP & Produção** | `pcp@defardas.com.br` | Raimundo Nonato | Gestão da mesa de corte, chão de fábrica e estoque |
+| **Financeiro** | `financeiro@defardas.com.br` | Juliana Rocha | Quitação de sinal (50%), conciliação e fluxo de caixa |
+| **Gerente Comercial** | `gerente@defardas.com.br` | Roberto Mendes | Gestão de equipe de vendas e esteira de orçamentos |
+| **Qualidade & Expedição** | `qualidade@defardas.com.br` | Patrícia Soares | Inspeção final, aprovação de peças e romaneio |
+
+> **Nota de Segurança:** Em ambiente de produção (`NODE_ENV=production`), senhas devem ser alteradas imediatamente e endpoints de simulação/dev são automaticamente desativados.
+
+---
+
+## 5. Como Executar Localmente
 
 ```bash
 # 1. Instalar as dependências

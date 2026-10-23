@@ -24,7 +24,7 @@ interface FoundationAuditModalProps {
 }
 
 export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOpen, onClose }) => {
-  const { user, availableRoles, switchRole } = useAuth();
+  const { user, availableRoles, switchRoleDev } = useAuth();
   const [activeTab, setActiveTab] = useState<'tests' | 'architecture' | 'audit_logs'>('tests');
   const [testResults, setTestResults] = useState<TestResultItem[]>([]);
   const [isRunningTests, setIsRunningTests] = useState(false);
@@ -95,30 +95,39 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
           </button>
         </div>
 
-        {/* Role Switcher Toolbar (Para Testes de Alçadas e Permissões) */}
+        {/* Role & Session Toolbar */}
         <div className="bg-slate-800 px-6 py-3 border-b border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-white">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-blue-400" />
-            <span className="text-slate-400">Operando como:</span>
-            <span className="font-bold text-white bg-slate-700 px-2.5 py-1 rounded-md border border-slate-600">
-              {user.fullName} ({user.role})
-            </span>
+            <span className="text-slate-400">Sessão Autenticada:</span>
+            {user ? (
+              <span className="font-bold text-white bg-slate-700 px-2.5 py-1 rounded-md border border-slate-600 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+                {user.fullName} ({user.role})
+              </span>
+            ) : (
+              <span className="font-bold text-amber-300 bg-amber-950/60 px-2.5 py-1 rounded-md border border-amber-800/60">
+                Sessão Anônima / Não Autenticada
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400">Simular Perfil:</span>
-            <select
-              value={user.role}
-              onChange={(e) => switchRole(e.target.value as UserRole)}
-              className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
-            >
-              {availableRoles.map((r) => (
-                <option key={r.role} value={r.role}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {user && (
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400">[DEV] Simular Perfil:</span>
+              <select
+                value={user.role}
+                onChange={(e) => switchRoleDev(e.target.value as UserRole)}
+                className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+              >
+                {availableRoles.map((r) => (
+                  <option key={r.role} value={r.role}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Navigation Tabs */}

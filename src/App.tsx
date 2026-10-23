@@ -9,6 +9,7 @@ import { ClientsView } from './components/ClientsView';
 import { FinancialView } from './components/FinancialView';
 import { SettingsView } from './components/SettingsView';
 import { PublicPortalView } from './components/PublicPortalView';
+import { LoginView } from './components/LoginView';
 
 import { NewOrderModal } from './components/NewOrderModal';
 import { NewQuoteModal } from './components/NewQuoteModal';
@@ -17,6 +18,7 @@ import { PrintQuoteModal } from './components/PrintQuoteModal';
 import { HelpManualModal } from './components/HelpManualModal';
 import { FoundationAuditModal } from './components/FoundationAuditModal';
 import { api } from './api/client';
+import { useAuth } from './api/authContext';
 
 import { 
   ERPState, 
@@ -38,6 +40,7 @@ import {
 } from './types/erp';
 
 export default function App() {
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [state, setState] = useState<ERPState>(() => loadERPState());
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -551,6 +554,21 @@ export default function App() {
   const activeOrdersCount = state.orders.filter((o) => o.stage !== 'entregue').length;
   const lowStockCount = state.inventory.filter((i) => i.currentStock <= i.minStock).length;
   const pendingQuotesCount = state.quotes.filter((q) => q.status === 'enviado' || q.status === 'aprovado').length;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white select-none">
+        <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-sm text-slate-300 font-semibold tracking-wide">DE FARDAS ERP</p>
+        <p className="text-xs text-slate-500 mt-1">Verificando sessão segura...</p>
+      </div>
+    );
+  }
+
+  // Se o usuário não está autenticado e não está navegando na vitrine pública, exige login
+  if (!isAuthenticated && currentTab !== 'portal') {
+    return <LoginView onGoToPortal={() => setCurrentTab('portal')} />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex text-slate-900 antialiased">

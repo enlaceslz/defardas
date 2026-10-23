@@ -1,5 +1,4 @@
-import React from 'react';
-import { Menu, Plus, AlertTriangle, Calendar, Building2, HelpCircle, Shirt, ShieldCheck, Users } from 'lucide-react';
+import { Menu, Plus, AlertTriangle, Calendar, Building2, HelpCircle, Shirt, ShieldCheck, Users, LogOut } from 'lucide-react';
 import { formatDateBR } from '../utils/formatters';
 import { useAuth } from '../api/authContext';
 
@@ -22,7 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenHelpManual,
   onOpenAuditModal,
 }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const getTabTitle = (tab: string): string => {
     switch (tab) {
       case 'portal': return 'Portal Público & Portfólio Digital';
@@ -120,6 +119,26 @@ export const Header: React.FC<HeaderProps> = ({
               <Plus className="w-4 h-4" />
               <span>+ Nova OP</span>
             </button>
+
+            {user && (
+              <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+                <div className="hidden xl:flex flex-col text-right">
+                  <span className="text-xs font-semibold text-slate-900 leading-tight truncate max-w-[120px]">
+                    {user.fullName}
+                  </span>
+                  <span className="text-[10px] font-mono text-blue-600 uppercase font-bold">
+                    {user.role}
+                  </span>
+                </div>
+                <button
+                  onClick={() => logout()}
+                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                  title={`Encerrar Sessão (${user.email})`}
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
 
         </div>

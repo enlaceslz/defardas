@@ -18,7 +18,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
 }) => {
   const { user } = useAuth();
   const [selectedClient, setSelectedClient] = useState<Client | null>(clients[0] || null);
-  const [sellerName, setSellerName] = useState(user.fullName || 'Mariana Alencar (Comercial)');
+  const [sellerName, setSellerName] = useState(user?.fullName || 'Mariana Alencar (Comercial)');
   const [validUntilDays, setValidUntilDays] = useState(15);
   
   // Regra do PRD: Entrada percentual fixa em 50% (Adendo A.3.2)
@@ -523,7 +523,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {user.role === 'admin' ? (
+                          {user?.role === 'admin' ? (
                             <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-md border border-amber-300 transition-colors">
                               <input
                                 type="checkbox"
@@ -531,7 +531,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                                 onChange={(e) => {
                                   const checked = e.target.checked;
                                   updateItemCostComponent(index, 'belowSuggestedAuthorized', checked);
-                                  updateItemCostComponent(index, 'authorizerName', checked ? `${user.fullName} (Administrador)` : '');
+                                  updateItemCostComponent(index, 'authorizerName', checked ? `${user?.fullName || 'Admin'} (Administrador)` : '');
                                 }}
                                 className="rounded text-blue-600 focus:ring-blue-500"
                               />
@@ -541,7 +541,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                           ) : (
                             <div className="flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded border border-rose-200">
                               <Lock className="w-3 h-3 text-rose-600" />
-                              <span>Alçada restrita a Administrador ({user.role})</span>
+                              <span>Alçada restrita a Administrador ({user?.role || 'não autenticado'})</span>
                             </div>
                           )}
                         </div>
