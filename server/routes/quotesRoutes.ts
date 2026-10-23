@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
@@ -38,20 +39,20 @@ quotesRouter.post('/', (req: RequestWithUser, res: Response) => {
     });
   }
 
-  // 2. Processar itens através do motor de cálculo de markup
-  const processedItems: QuoteItemEntity[] = (payload.items || []).map((it: any, idx: number) => {
+  // 2. Processar itens através do motor de cálculo de markup (Correção P1-007: suporte estrito a 0 via ??)
+  const processedItems: QuoteItemEntity[] = (payload.items || []).map((it: any) => {
     const pricing = PricingEngine.calculateItemPricing({
-      materialUnitCost: it.costBreakdown?.materialUnitCost || it.materialUnitCost,
-      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost || it.outsourcedSewingUnitCost,
-      customizationUnitCost: it.costBreakdown?.customizationUnitCost || it.customizationUnitCost,
-      freightUnitCost: it.costBreakdown?.freightPerUnit || it.freightUnitCost,
-      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage || it.technicalLossPercentage || 2.0,
-      markupPercentage: it.costBreakdown?.markupPercentage || it.markupPercentage || 50.0,
-      negotiatedUnitPrice: it.unitFinalPrice || it.negotiatedUnitPrice,
+      materialUnitCost: it.costBreakdown?.materialUnitCost ?? it.materialUnitCost ?? 0,
+      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost ?? it.outsourcedSewingUnitCost ?? 0,
+      customizationUnitCost: it.costBreakdown?.customizationUnitCost ?? it.customizationUnitCost ?? 0,
+      freightUnitCost: it.costBreakdown?.freightPerUnit ?? it.freightUnitCost ?? 0,
+      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage ?? it.technicalLossPercentage ?? 2.0,
+      markupPercentage: it.costBreakdown?.markupPercentage ?? it.markupPercentage ?? 50.0,
+      negotiatedUnitPrice: it.unitFinalPrice ?? it.negotiatedUnitPrice,
     });
 
     return {
-      id: it.id || `qi-${Date.now()}-${idx}`,
+      id: it.id || crypto.randomUUID(),
       quoteId: '',
       category: it.category || 'polos',
       modelName: it.modelName || 'Uniforme Profissional',
@@ -60,12 +61,12 @@ quotesRouter.post('/', (req: RequestWithUser, res: Response) => {
       sizes: it.sizes || { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
       totalQuantity: it.totalQuantity || 1,
       materialUnitCost: pricing.directUnitCost,
-      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost || 0,
-      customizationUnitCost: it.costBreakdown?.customizationUnitCost || 0,
-      freightUnitCost: it.costBreakdown?.freightPerUnit || 0,
-      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage || 2.0,
+      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost ?? 0,
+      customizationUnitCost: it.costBreakdown?.customizationUnitCost ?? 0,
+      freightUnitCost: it.costBreakdown?.freightPerUnit ?? 0,
+      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage ?? 2.0,
       calculatedBaseUnitCost: pricing.calculatedBaseUnitCost,
-      markupPercentage: it.costBreakdown?.markupPercentage || 50.0,
+      markupPercentage: it.costBreakdown?.markupPercentage ?? 50.0,
       suggestedUnitPrice: pricing.suggestedUnitPrice,
       negotiatedUnitPrice: pricing.negotiatedUnitPrice,
       totalItemPrice: Math.round(pricing.negotiatedUnitPrice * (it.totalQuantity || 1) * 100) / 100,
@@ -235,7 +236,7 @@ quotesRouter.post('/:id/convert-to-order', (req: RequestWithUser, res: Response)
   }
 
   const orderNumber = sequenceService.nextOrderNumber();
-  const orderId = `op-${Date.now()}`;
+  const orderId = crypto.randomUUID();
   const firstItem = quote.items[0] || {
     modelName: 'Fardamento Confeccionado',
     category: 'polos',

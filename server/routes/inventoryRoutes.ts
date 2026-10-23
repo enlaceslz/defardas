@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
@@ -23,7 +24,7 @@ inventoryRouter.post('/items', requirePermission('inventory:adjust'), (req: Requ
 
   const code = sequenceService.nextInventoryCode();
   const newItem: InventoryItemEntity = {
-    id: `mat-${Date.now()}`,
+    id: crypto.randomUUID(),
     code,
     name: payload.name || 'Insumo Têxtil',
     category: payload.category || 'tecido',
@@ -104,8 +105,13 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
       item.physicalStock -= qty;
       item.inPartnersCustodyStock += qty;
       break;
-    case 'retorno_parceiro': // Retorno de sobras ou peças prontas da facção
-      item.inPartnersCustodyStock = Math.max(0, item.inPartnersCustodyStock - qty);
+    case 'retorno_parceiro': // Retorno de sobras ou peças prontas da facção (Correção P0-003)
+      if (qty > item.inPartnersCustodyStock) {
+        return res.status(400).json({
+          error: `Quantidade de retorno (${qty} ${item.unit}) excede o saldo em custódia do parceiro (${item.inPartnersCustodyStock} ${item.unit}). Operação rejeitada.`,
+        });
+      }
+      item.inPartnersCustodyStock -= qty;
       item.physicalStock += qty;
       break;
     case 'perda_tecnica':
@@ -122,7 +128,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
 
   const movementNumber = sequenceService.nextMovementNumber();
   const movement: StockMovementEntity = {
-    id: `mov-${Date.now()}`,
+    id: crypto.randomUUID(),
     movementNumber,
     itemId: item.id,
     productionOrderId,

@@ -24,24 +24,22 @@ class ApiClient {
   private sessionToken: string | null = null;
 
   constructor() {
-    // Carregar token salvo em memória do navegador caso exista
+    // P1-005: Não persistir tokens sensíveis em localStorage (prevenção contra XSS)
+    this.sessionToken = null;
     try {
-      this.sessionToken = localStorage.getItem('defardas_auth_token');
+      localStorage.removeItem('defardas_auth_token');
     } catch {
-      this.sessionToken = null;
+      // Ignorar indisponibilidade
     }
   }
 
   public setToken(token: string | null) {
+    // Armazena estritamente na memória da sessão do cliente; cookies HttpOnly cuidam da persistência segura
     this.sessionToken = token;
     try {
-      if (token) {
-        localStorage.setItem('defardas_auth_token', token);
-      } else {
-        localStorage.removeItem('defardas_auth_token');
-      }
+      localStorage.removeItem('defardas_auth_token');
     } catch {
-      // Ignorar indisponibilidade de localStorage
+      // Ignorar indisponibilidade
     }
   }
 

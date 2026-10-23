@@ -17,10 +17,10 @@ import {
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 
-const { Pool } = pg;
+import { pool, db as drizzleDb } from './index';
 
 export class DatabaseManager {
-  private pgPool: pg.Pool | null = null;
+  private pgPool: pg.Pool = pool;
   private isConnectedToPostgres: boolean = false;
 
   // Repositórios em memória transacionais com integridade referencial
@@ -40,16 +40,16 @@ export class DatabaseManager {
     const dbUrl = process.env.DATABASE_URL;
     if (dbUrl) {
       try {
-        this.pgPool = new Pool({
-          connectionString: dbUrl,
-          ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-        });
         const client = await this.pgPool.connect();
         this.isConnectedToPostgres = true;
         client.release();
-        console.log('✅ [DATABASE] Conectado com sucesso ao PostgreSQL próprio da DE FARDAS.');
+        console.log('✅ [DATABASE] Conectado com sucesso ao PostgreSQL próprio da DE FARDAS via Drizzle ORM.');
       } catch (err) {
-        console.warn('⚠️ [DATABASE] Conexão com PostgreSQL falhou ou não configurada. Operando no modo transacional resiliente.', err);
+        if (process.env.NODE_ENV === 'production') {
+          console.error('❌ [DATABASE] Falha crítica de conexão com o PostgreSQL em produção (P0-001):', err);
+        } else {
+          console.warn('⚠️ [DATABASE] Conexão com PostgreSQL não disponível no ambiente local. Inicializando estrutura transacional de desenvolvimento.', err);
+        }
         this.isConnectedToPostgres = false;
       }
     } else {
@@ -57,6 +57,10 @@ export class DatabaseManager {
     }
 
     this.seedInitialDemoData();
+  }
+
+  public getDrizzle() {
+    return drizzleDb;
   }
 
   public isConnected(): boolean {

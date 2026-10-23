@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { sequenceService } from '../services/sequenceService';
@@ -23,7 +24,7 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
 
   const trxNumber = sequenceService.nextFinanceNumber();
   const newTrx: FinancialTransactionEntity = {
-    id: `fin-${Date.now()}`,
+    id: crypto.randomUUID(),
     transactionNumber: trxNumber,
     productionOrderId: payload.productionOrderId,
     quoteId: payload.quoteId,
@@ -67,11 +68,18 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
 
   const { receiptVoucherNumber, receiptEvidenceUrl, confirmationNotes } = req.body;
 
+  // Invariante P0-004 / AUD-05: Rejeitar dados fictícios e exigir comprovante real
+  if (!receiptVoucherNumber || !receiptEvidenceUrl) {
+    return res.status(422).json({
+      error: 'Invariante violada: A confirmação de pagamento exige número de autenticação bancária e URL do comprovante real. Dados fictícios são proibidos.',
+    });
+  }
+
   // Registrar quitação na transação
   trx.status = 'pago';
   trx.paidDate = new Date().toISOString().split('T')[0];
-  trx.receiptVoucherNumber = receiptVoucherNumber || `COMPR-${Date.now().toString().slice(-6)}`;
-  trx.receiptEvidenceUrl = receiptEvidenceUrl || 'https://storage.defardas.com.br/comprovantes/sinal_recibo.pdf';
+  trx.receiptVoucherNumber = receiptVoucherNumber;
+  trx.receiptEvidenceUrl = receiptEvidenceUrl;
   trx.confirmedById = actor.id;
   trx.confirmedByName = `${actor.fullName} (${actor.role})`;
   trx.confirmationNotes = confirmationNotes || 'Comprovante bancário conferido e autenticado.';
