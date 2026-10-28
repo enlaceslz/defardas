@@ -1,3 +1,4 @@
+import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
 import { 
   Boxes, 
@@ -18,7 +19,7 @@ import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
 
 interface InventoryViewProps {
   inventory: InventoryItem[];
-  onSaveItem: (item: InventoryItem) => void;
+  onSaveItem: (item: InventoryItem) => Promise<boolean>;
   onDeleteItem: (itemId: string) => void;
 }
 
@@ -74,7 +75,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const { submit, isSaving } = useSubmission();
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const itemToSave: InventoryItem = {
       id: editingItem?.id || `inv-${Date.now()}`,
@@ -91,18 +93,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       location,
       lastRestocked: new Date().toISOString().split('T')[0],
     };
-    onSaveItem(itemToSave);
+    if (!(await submit(() => onSaveItem(itemToSave)))) return;
     setIsModalOpen(false);
   };
 
   // Adjust stock count quickly
-  const handleQuickStockAdjustment = (item: InventoryItem, delta: number) => {
+  const handleQuickStockAdjustment = async (item: InventoryItem, delta: number) => {
     const updated: InventoryItem = {
       ...item,
       currentStock: Math.max(0, item.currentStock + delta),
       lastRestocked: new Date().toISOString().split('T')[0],
     };
-    onSaveItem(updated);
+    await submit(() => onSaveItem(updated));
   };
 
   // Filter items
@@ -474,6 +476,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </button>
                 <button
                   type="submit"
+                  disabled={isSaving}
                   className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer"
                 >
                   Salvar

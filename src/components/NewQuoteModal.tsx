@@ -1,3 +1,4 @@
+import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Calculator, FileText, CheckCircle, AlertTriangle, ShieldCheck, Lock } from 'lucide-react';
 import { Quote, Client, QuoteItem, SizeGrid, CustomizationItem, UniformCategory, CostBreakdown } from '../types/erp';
@@ -8,7 +9,7 @@ import { useAuth } from '../api/authContext';
 interface NewQuoteModalProps {
   clients: Client[];
   onClose: () => void;
-  onSaveQuote: (quote: Quote) => void;
+  onSaveQuote: (quote: Quote) => Promise<boolean>;
 }
 
 export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
@@ -189,7 +190,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
   const entryAmount = (totalAmount * entryPercentage) / 100;
   const balanceDue = totalAmount - entryAmount;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const { submit, isSaving } = useSubmission();
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!selectedClient) {
@@ -248,7 +250,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
       notes,
     };
 
-    onSaveQuote(newQuote);
+    if (!(await submit(() => onSaveQuote(newQuote)))) return;
     onClose();
   };
 
@@ -662,6 +664,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
             </button>
             <button
               type="submit"
+                  disabled={isSaving}
               className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 transition-colors shadow-sm cursor-pointer"
             >
               Salvar & Emitir Proposta (Versão 1)

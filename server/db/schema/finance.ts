@@ -1,4 +1,5 @@
-import { pgSchema, uuid, varchar, text, numeric, boolean, date, timestamp, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgSchema, uuid, varchar, text, numeric, boolean, date, timestamp, index, uniqueIndex, check } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { quotes } from './quotes';
 import { productionOrders } from './orders';
@@ -37,6 +38,8 @@ export const transactions = financeiroSchema.table('transactions', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
+  uniqueIndex('uq_quote_receivable_kind').on(table.quoteId, table.subType).where(sql`${table.type} = 'receber' AND ${table.subType} IN ('entrada_pedido', 'saldo_entrega')`),
+  check('transactions_positive_amount', sql`${table.amount} > 0`),
   index('idx_finance_status').on(table.status),
   index('idx_finance_due_date').on(table.dueDate),
   index('idx_finance_order').on(table.productionOrderId),

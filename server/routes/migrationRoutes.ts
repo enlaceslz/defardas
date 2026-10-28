@@ -9,7 +9,7 @@ export const migrationRouter = Router();
 migrationRouter.use(requirePermission('system:import_data'));
 
 // Endpoint seguro e idempotente para migrar dados do localStorage
-migrationRouter.post('/import-local-storage', (req: RequestWithUser, res: Response) => {
+migrationRouter.post('/import-local-storage', async (req: RequestWithUser, res: Response) => {
   if (process.env.NODE_ENV === 'production') {
     return res.status(501).json({ error: 'Importação persistente ainda não implementada. Nenhum dado foi importado.' });
   }
@@ -127,7 +127,7 @@ migrationRouter.post('/import-local-storage', (req: RequestWithUser, res: Respon
     }
   }
 
-  auditService.log({
+  await auditService.log({
     actorId: actor.id,
     actorName: actor.fullName,
     actorRole: actor.role,

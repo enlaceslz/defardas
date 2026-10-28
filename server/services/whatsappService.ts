@@ -116,7 +116,7 @@ export class WhatsAppService {
     conv.updatedAt = new Date().toISOString();
     await communicationRepository.saveConversation(conv);
 
-    auditService.log({
+    await auditService.log({
       actorName: options.senderName || 'DE FARDAS',
       actorRole: 'atendimento',
       entityName: 'communication.messages',
@@ -195,7 +195,7 @@ export class WhatsAppService {
 
     await communicationRepository.saveMessage(newMsg);
 
-    auditService.log({
+    await auditService.log({
       actorName: payload.fromName || cleanPhone,
       actorRole: 'cliente_whatsapp',
       entityName: 'communication.messages',

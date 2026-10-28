@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "test": "NODE_ENV=test node --import tsx --test tests/*.test.ts"
+    "test": "NODE_ENV=test node --import tsx --test tests/*.test.ts",
+    "test:integration": "NODE_ENV=production node --import tsx --test tests/postgres.integration.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -1,133 +1,31 @@
-/**
- * DE FARDAS ERP — Atomic Sequence Service
- * Correção P1-001: Sequenciamento persistente com sequences do PostgreSQL.
- * Fornece numeração segura contra concorrência e idempotente para orçamentos,
- * pedidos (OPs), clientes, lançamentos financeiros e materiais.
- */
-import { pool } from '../db/index';
+import { query } from '../db/index';
 
+// Contadores são transacionais e inicializados pela migração 0001.
+const definitions = {
+  quote: ['ORC', 1002], order: ['OP', 102], client: ['CLI', 203],
+  finance: ['FIN', 5002], inventory: ['MAT', 303], lead: ['LEAD', 102], movement: ['MOV', 102],
+} as const;
 class SequenceService {
-  private currentYear: number;
-  private inMemoryFallback: Map<string, number>;
-
-  constructor() {
-    this.currentYear = new Date().getFullYear();
-    this.inMemoryFallback = new Map<string, number>([
-      ['quote', 1001],
-      ['order', 101],
-      ['client', 201],
-      ['finance', 5001],
-      ['inventory', 301],
-      ['lead', 101],
-      ['movement', 101],
-      ['partner', 101],
-    ]);
-  }
-
-  /**
-   * Obtém o próximo valor sequencial atomicamente do PostgreSQL
-   */
-  public async getNextSequenceValue(sequenceName: string, fallbackKey: string): Promise<number> {
-    try {
-      const result = await pool.query<{ nextval: string }>(`SELECT nextval('core.${sequenceName}') as nextval`);
-      if (result.rows && result.rows.length > 0 && result.rows[0].nextval) {
-        return parseInt(result.rows[0].nextval, 10);
-      }
-    } catch {
-      // Se a sequence ainda não existir ou banco estiver em inicialização, avança fallback atômico local
+  private memory = new Map<string, number>();
+  private async next(type: keyof typeof definitions): Promise<string> {
+    let value: number;
+    if (process.env.DATABASE_URL || process.env.NODE_ENV === 'production') {
+      const result = await query<{ value: string }>(`UPDATE core.number_counters SET value = value + 1 WHERE kind = $1 RETURNING value`, [type]);
+      if (!result.rows[0]) throw new Error(`Contador ${type} ausente. Execute as migrações.`);
+      value = Number(result.rows[0].value);
+    } else {
+      value = this.memory.get(type) ?? definitions[type][1];
+      this.memory.set(type, value + 1);
     }
-    const current = this.inMemoryFallback.get(fallbackKey) || 1000;
-    this.inMemoryFallback.set(fallbackKey, current + 1);
-    return current;
+    const year = new Intl.DateTimeFormat('en', { timeZone: 'America/Sao_Paulo', year: 'numeric' }).format(new Date());
+    return `${definitions[type][0]}-${year}-${String(value).padStart(4, '0')}`;
   }
-
-  public async nextQuoteNumberAsync(): Promise<string> {
-    const val = await this.getNextSequenceValue('seq_quote_number', 'quote');
-    return `ORC-${this.currentYear}-${val}`;
-  }
-
-  public async nextOrderNumberAsync(): Promise<string> {
-    const val = await this.getNextSequenceValue('seq_order_number', 'order');
-    const padded = String(val).padStart(4, '0');
-    return `OP-${this.currentYear}-${padded}`;
-  }
-
-  public async nextClientCodeAsync(): Promise<string> {
-    const val = await this.getNextSequenceValue('seq_client_number', 'client');
-    const padded = String(val).padStart(4, '0');
-    return `CLI-${this.currentYear}-${padded}`;
-  }
-
-  public async nextFinanceNumberAsync(): Promise<string> {
-    const val = await this.getNextSequenceValue('seq_finance_number', 'finance');
-    return `FIN-${this.currentYear}-${val}`;
-  }
-
-  public async nextInventoryCodeAsync(): Promise<string> {
-    const val = await this.getNextSequenceValue('seq_inventory_number', 'inventory');
-    const padded = String(val).padStart(4, '0');
-    return `MAT-${this.currentYear}-${padded}`;
-  }
-
-  public async nextLeadNumberAsync(): Promise<string> {
-    const val = await this.getNextSequenceValue('seq_lead_number', 'lead');
-    const padded = String(val).padStart(4, '0');
-    return `LEAD-${this.currentYear}-${padded}`;
-  }
-
-  // Métodos síncronos mantidos para compatibilidade com código existente
-  public nextQuoteNumber(): string {
-    const nextVal = this.increment('quote');
-    return `ORC-${this.currentYear}-${nextVal}`;
-  }
-
-  public nextOrderNumber(): string {
-    const nextVal = this.increment('order');
-    const padded = String(nextVal).padStart(4, '0');
-    return `OP-${this.currentYear}-${padded}`;
-  }
-
-  public nextClientCode(): string {
-    const nextVal = this.increment('client');
-    const padded = String(nextVal).padStart(4, '0');
-    return `CLI-${this.currentYear}-${padded}`;
-  }
-
-  public nextFinanceNumber(): string {
-    const nextVal = this.increment('finance');
-    return `FIN-${this.currentYear}-${nextVal}`;
-  }
-
-  public nextInventoryCode(): string {
-    const nextVal = this.increment('inventory');
-    const padded = String(nextVal).padStart(4, '0');
-    return `MAT-${this.currentYear}-${padded}`;
-  }
-
-  public nextLeadNumber(): string {
-    const nextVal = this.increment('lead');
-    const padded = String(nextVal).padStart(4, '0');
-    return `LEAD-${this.currentYear}-${padded}`;
-  }
-
-  public nextMovementNumber(): string {
-    const nextVal = this.increment('movement');
-    const padded = String(nextVal).padStart(4, '0');
-    return `MOV-${this.currentYear}-${padded}`;
-  }
-
-  public setSequenceStartingPoint(type: string, lastUsedNumber: number): void {
-    const current = this.inMemoryFallback.get(type) || 0;
-    if (lastUsedNumber >= current) {
-      this.inMemoryFallback.set(type, lastUsedNumber + 1);
-    }
-  }
-
-  private increment(type: string): number {
-    const current = this.inMemoryFallback.get(type) || 1000;
-    this.inMemoryFallback.set(type, current + 1);
-    return current;
-  }
+  nextQuoteNumber() { return this.next('quote'); }
+  nextOrderNumber() { return this.next('order'); }
+  nextClientCode() { return this.next('client'); }
+  nextFinanceNumber() { return this.next('finance'); }
+  nextInventoryCode() { return this.next('inventory'); }
+  nextLeadNumber() { return this.next('lead'); }
+  nextMovementNumber() { return this.next('movement'); }
 }
-
 export const sequenceService = new SequenceService();

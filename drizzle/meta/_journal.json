@@ -8,6 +8,20 @@
       "when": 1792793334660,
       "tag": "0000_natural_spacker_dave",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793206935846,
+      "tag": "0001_overrated_speed",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793207132384,
+      "tag": "0002_condemned_mysterio",
+      "breakpoints": true
     }
   ]
 }

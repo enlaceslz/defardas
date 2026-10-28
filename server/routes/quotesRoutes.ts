@@ -1,396 +1,137 @@
 import { Router, Response } from 'express';
-import crypto from 'crypto';
+import crypto from 'node:crypto';
+import { atomic } from '../db/unitOfWork';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { quoteRepository } from '../repositories/quoteRepository';
+import { clientRepository } from '../repositories/clientRepository';
 import { orderRepository } from '../repositories/orderRepository';
 import { financeRepository } from '../repositories/financeRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { PricingEngine } from '../services/pricingEngine';
 import { QuoteEntity, QuoteItemEntity, ProductionOrderEntity, FinancialTransactionEntity } from '../types/db';
+import { InputError, text, number, date, oneOf, money, sizes } from '../validation/input';
 
 export const quotesRouter = Router();
-
-// Exigir autenticação para todas as rotas de orçamentos
 quotesRouter.use(requireAuth);
-
-// Listar orçamentos
-quotesRouter.get('/', async (_req: RequestWithUser, res: Response) => {
-  const allQuotes = await quoteRepository.findAll();
-  res.json(allQuotes);
-});
-
-// Buscar orçamento por ID
-quotesRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
+quotesRouter.get('/', async (_req, res) => { res.json(await quoteRepository.findAll()); });
+quotesRouter.get('/:id', async (req, res) => {
   const quote = await quoteRepository.findById(req.params.id);
-  if (!quote) {
-    return res.status(404).json({ error: 'Orçamento não encontrado' });
-  }
-  res.json(quote);
+  res.status(quote ? 200 : 404).json(quote || { error: 'Orçamento não encontrado.' });
 });
-
-// Criar nova proposta comercial
-quotesRouter.post('/', requirePermission('quotes:create'), async (req: RequestWithUser, res: Response) => {
+quotesRouter.post('/', requirePermission('quotes:create'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
-
-  // 1. Validar Portão Comercial: Sinal de 50% obrigatório e fixado (Regra A.3.2)
-  if (payload.entryPercentage !== undefined && !PricingEngine.validateEntryPercentage(payload.entryPercentage)) {
-    return res.status(400).json({
-      error: 'Invariante violada: O percentual de sinal está fixado em 50.00% conforme o PRD v1.6 e Adendo A.3.2. Não é permitida alteração sem autorização formal da diretoria.',
-    });
-  }
-
-  // 2. Processar itens através do motor de cálculo de markup (Correção P1-007: suporte estrito a 0 via ??)
-  const processedItems: QuoteItemEntity[] = (payload.items || []).map((it: any) => {
-    const pricing = PricingEngine.calculateItemPricing({
-      materialUnitCost: it.costBreakdown?.materialUnitCost ?? it.materialUnitCost ?? 0,
-      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost ?? it.outsourcedSewingUnitCost ?? 0,
-      customizationUnitCost: it.costBreakdown?.customizationUnitCost ?? it.customizationUnitCost ?? 0,
-      freightUnitCost: it.costBreakdown?.freightPerUnit ?? it.freightUnitCost ?? 0,
-      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage ?? it.technicalLossPercentage ?? 2.0,
-      markupPercentage: it.costBreakdown?.markupPercentage ?? it.markupPercentage ?? 50.0,
-      negotiatedUnitPrice: it.unitFinalPrice ?? it.negotiatedUnitPrice,
-    });
-
-    return {
-      id: it.id || crypto.randomUUID(),
-      quoteId: '',
-      category: it.category || 'polos',
-      modelName: it.modelName || 'Uniforme Profissional',
-      fabricName: it.fabricName || 'Padrão DE FARDAS',
-      fabricColor: it.fabricColor || 'Padrão',
-      sizes: it.sizes || { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
-      totalQuantity: it.totalQuantity || 1,
-      materialUnitCost: pricing.directUnitCost,
-      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost ?? 0,
-      customizationUnitCost: it.costBreakdown?.customizationUnitCost ?? 0,
-      freightUnitCost: it.costBreakdown?.freightPerUnit ?? 0,
-      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage ?? 2.0,
-      calculatedBaseUnitCost: pricing.calculatedBaseUnitCost,
-      markupPercentage: it.costBreakdown?.markupPercentage ?? 50.0,
-      suggestedUnitPrice: pricing.suggestedUnitPrice,
-      negotiatedUnitPrice: pricing.negotiatedUnitPrice,
-      totalItemPrice: Math.round(pricing.negotiatedUnitPrice * (it.totalQuantity || 1) * 100) / 100,
-      customizations: it.customizations || [],
-    };
-  });
-
-  const totalBaseCost = processedItems.reduce((sum, item) => sum + (item.calculatedBaseUnitCost * item.totalQuantity), 0);
-  const suggestedTotalAmount = processedItems.reduce((sum, item) => sum + (item.suggestedUnitPrice * item.totalQuantity), 0);
-  const negotiatedTotalAmount = processedItems.reduce((sum, item) => sum + item.totalItemPrice, 0);
-  const discountAmount = Math.max(0, suggestedTotalAmount - negotiatedTotalAmount);
-  
-  const estimatedMarginPercentage = negotiatedTotalAmount > 0
-    ? Math.round(((negotiatedTotalAmount - totalBaseCost) / negotiatedTotalAmount) * 10000) / 100
-    : 0;
-
-  // 3. Validação de Alçada para Preço Negociado < Preço Sugerido (Adendo B.2.5)
-  const isBelowSuggested = negotiatedTotalAmount < suggestedTotalAmount;
-  let belowSuggestedAuthorized = false;
-  let authorizedById = undefined;
-  let authorizedByName = undefined;
-
-  if (isBelowSuggested) {
-    if (actor.role === 'admin') {
-      belowSuggestedAuthorized = true;
-      authorizedById = actor.id;
-      authorizedByName = `${actor.fullName} (Administrador)`;
-    } else {
-      // Bloqueio rigoroso: O cliente não pode forjar autorização via payload
-      auditService.log({
-        actorId: actor.id,
-        actorName: actor.fullName,
-        actorRole: actor.role,
-        entityName: 'crm.quotes',
-        entityId: 'new_quote',
-        action: 'UNAUTHORIZED_DISCOUNT_ATTEMPT',
-        notes: `Vendedor tentou emitir proposta com valor (R$ ${negotiatedTotalAmount.toFixed(2)}) abaixo do sugerido (R$ ${suggestedTotalAmount.toFixed(2)}) sem aprovação de admin.`,
-      });
-
-      return res.status(403).json({
-        error: `Alçada violada: O valor negociado (R$ ${negotiatedTotalAmount.toFixed(2)}) é inferior ao preço sugerido (R$ ${suggestedTotalAmount.toFixed(2)}). Exige autorização formal de Administrador conforme PRD v1.6 Adendo B.2.5.`,
-        code: 'DISCOUNT_REQUIRES_ADMIN_APPROVAL',
-        negotiatedTotalAmount,
-        suggestedTotalAmount,
-      });
-    }
-  }
-
+  const client = await clientRepository.findById(text(payload.clientId, 'Cliente', 60));
+  if (!client) throw new InputError('Cliente não encontrado. Cadastre o cliente antes da proposta.');
+  if (payload.entryPercentage !== undefined && payload.entryPercentage !== 50) throw new InputError('O sinal deve ser de 50%, conforme PRD.');
+  if (!Array.isArray(payload.items) || payload.items.length < 1 || payload.items.length > 100) throw new InputError('Informe de 1 a 100 itens.');
   const quoteId = crypto.randomUUID();
-  const quoteNumber = sequenceService.nextQuoteNumber();
-  const entryAmount = Math.round((negotiatedTotalAmount * 0.5) * 100) / 100;
-  const balanceAmount = negotiatedTotalAmount - entryAmount;
-
-  const newQuote: QuoteEntity = {
-    id: quoteId,
-    quoteNumber,
-    version: 1,
-    clientId: payload.clientId || 'c1111111-1111-1111-1111-111111111111',
-    clientName: payload.clientName || 'Cliente Modelo',
-    clientCnpj: payload.clientCnpj || '00.000.000/0001-00',
-    sellerId: actor.id,
-    sellerName: actor.fullName,
-    commercialStatus: payload.commercialStatus || 'enviado',
-    date: payload.date || new Date().toISOString().split('T')[0],
-    validUntil: payload.validUntil || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-    totalBaseCost,
-    markupPercentage: 50.0,
-    suggestedTotalAmount,
-    negotiatedTotalAmount,
-    discountAmount,
-    estimatedMarginPercentage,
-    belowSuggestedAuthorized,
-    authorizedById,
-    authorizedByName,
-    authorizationDate: belowSuggestedAuthorized ? new Date().toISOString() : undefined,
-    authorizationNotes: payload.authorizationNotes,
-    entryPercentage: 50.00,
-    entryAmount,
-    balanceAmount,
-    paymentTerms: '50% Sinal (Liberação de Corte) + 50% na Entrega',
-    productionLeadDays: payload.productionLeadDays || 16,
-    artApproved: !!payload.artApproved,
-    artApprovedBy: payload.artApprovedBy,
-    artApprovalDate: payload.artApproved ? new Date().toISOString() : undefined,
-    acceptanceChannel: payload.acceptanceChannel || 'whatsapp',
-    acceptanceNotes: payload.acceptanceNotes,
-    notes: payload.notes || '',
-    isLocked: false,
-    isDemo: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    items: processedItems.map((it) => ({ ...it, quoteId })),
-  };
-
-  await quoteRepository.save(newQuote);
-
-  auditService.log({
-    actorId: actor.id,
-    actorName: actor.fullName,
-    actorRole: actor.role,
-    entityName: 'crm.quotes',
-    entityId: newQuote.quoteNumber,
-    action: 'CREATE_QUOTE',
-    newData: {
-      quoteNumber: newQuote.quoteNumber,
-      totalAmount: newQuote.negotiatedTotalAmount,
-      entryAmount: newQuote.entryAmount,
-      isBelowSuggested,
-      belowSuggestedAuthorized,
-    },
-    notes: `Proposta comercial ${newQuote.quoteNumber} criada para ${newQuote.clientName}.`,
+  const items: QuoteItemEntity[] = payload.items.map((item: any) => {
+    const costs = item.costBreakdown || item;
+    const materialUnitCost = number(costs.materialUnitCost, 'Material');
+    const outsourcedSewingUnitCost = number(costs.outsourcedSewingUnitCost, 'Costura');
+    const customizationUnitCost = number(costs.customizationUnitCost, 'Personalização');
+    const freightUnitCost = number(costs.freightPerUnit ?? costs.freightUnitCost, 'Frete');
+    const technicalLossPercentage = number(costs.technicalLossPercentage, 'Perda técnica');
+    const markupPercentage = number(costs.markupPercentage, 'Markup');
+    const grid = sizes(item.sizes);
+    const quantity = Object.values(grid).reduce((a, b) => a + b, 0);
+    if (item.totalQuantity !== quantity) throw new InputError('Quantidade deve coincidir com a grade de tamanhos.');
+    const negotiated = item.unitFinalPrice ?? item.negotiatedUnitPrice;
+    if (negotiated !== undefined) number(negotiated, 'Preço negociado', 0.01);
+    const pricing = PricingEngine.calculateItemPricing({ materialUnitCost, outsourcedSewingUnitCost, customizationUnitCost,
+      freightUnitCost, technicalLossPercentage, markupPercentage, negotiatedUnitPrice: negotiated });
+    return { id: crypto.randomUUID(), quoteId, category: text(item.category, 'Categoria', 40),
+      modelName: text(item.modelName, 'Modelo', 150), fabricName: text(item.fabricName, 'Tecido', 100),
+      fabricColor: text(item.fabricColor, 'Cor', 60), sizes: grid, totalQuantity: quantity,
+      materialUnitCost, outsourcedSewingUnitCost, customizationUnitCost, freightUnitCost, technicalLossPercentage, markupPercentage,
+      calculatedBaseUnitCost: pricing.calculatedBaseUnitCost, suggestedUnitPrice: pricing.suggestedUnitPrice,
+      negotiatedUnitPrice: pricing.negotiatedUnitPrice, totalItemPrice: money(pricing.negotiatedUnitPrice * quantity),
+      customizations: Array.isArray(item.customizations) ? item.customizations : [] };
   });
-
-  res.status(201).json(newQuote);
-});
-
-// Atualizar status comercial
-quotesRouter.patch('/:id/status', requirePermission('quotes:edit'), async (req: RequestWithUser, res: Response) => {
-  const quote = await quoteRepository.findById(req.params.id);
-  if (!quote) {
-    return res.status(404).json({ error: 'Orçamento não encontrado' });
-  }
-
-  const oldStatus = quote.commercialStatus;
-  const newStatus = req.body.status;
-  if (quote.isLocked || quote.commercialStatus === 'convertido_em_pedido') {
-    return res.status(409).json({ error: 'Proposta convertida está bloqueada.' });
-  }
-  if (!['rascunho', 'enviado', 'em_negociacao', 'aprovado', 'recusado', 'cancelado'].includes(newStatus)) {
-    return res.status(400).json({ error: 'Status comercial inválido.' });
-  }
-  quote.commercialStatus = newStatus;
-  quote.updatedAt = new Date().toISOString();
-
+  const totalBaseCost = money(items.reduce((sum, item) => sum + item.calculatedBaseUnitCost * item.totalQuantity, 0));
+  const suggestedTotalAmount = money(items.reduce((sum, item) => sum + item.suggestedUnitPrice * item.totalQuantity, 0));
+  const negotiatedTotalAmount = money(items.reduce((sum, item) => sum + item.totalItemPrice, 0));
+  const discounted = items.some((item) => item.negotiatedUnitPrice < item.suggestedUnitPrice);
+  if (discounted && actor.role !== 'admin') return res.status(403).json({ error: 'Preço abaixo do sugerido exige autorização de administrador.', code: 'DISCOUNT_REQUIRES_ADMIN_APPROVAL' });
+  const now = new Date().toISOString();
+  const entryAmount = money(negotiatedTotalAmount / 2);
+  const quote: QuoteEntity = { id: quoteId, quoteNumber: await sequenceService.nextQuoteNumber(), version: 1,
+    clientId: client.id, clientName: client.companyName, clientCnpj: client.cnpj, sellerId: actor.id, sellerName: actor.fullName,
+    commercialStatus: oneOf(payload.commercialStatus ?? payload.status ?? 'enviado', ['rascunho', 'enviado', 'em_negociacao', 'aprovado'], 'Status'),
+    date: date(payload.date || now.slice(0, 10), 'Data'), validUntil: date(payload.validUntil, 'Validade'),
+    totalBaseCost, suggestedTotalAmount, negotiatedTotalAmount, markupPercentage: items[0].markupPercentage,
+    discountAmount: money(Math.max(0, suggestedTotalAmount - negotiatedTotalAmount)),
+    estimatedMarginPercentage: negotiatedTotalAmount > 0 ? money((negotiatedTotalAmount - totalBaseCost) / negotiatedTotalAmount * 100) : 0,
+    belowSuggestedAuthorized: discounted, authorizedById: discounted ? actor.id : undefined,
+    authorizedByName: discounted ? actor.fullName : undefined, authorizationDate: discounted ? now : undefined,
+    entryPercentage: 50, entryAmount, balanceAmount: money(negotiatedTotalAmount - entryAmount),
+    paymentTerms: '50% Sinal (Liberação de Corte) + 50% na Entrega', productionLeadDays: number(payload.productionLeadDays, 'Prazo de produção', 1, true),
+    artApproved: false, acceptanceChannel: oneOf(payload.acceptanceChannel || 'whatsapp', ['whatsapp', 'email', 'presencial'], 'Canal'),
+    notes: text(payload.notes, 'Observações', 10000, false), isLocked: false, isDemo: false, createdAt: now, updatedAt: now, items };
   await quoteRepository.save(quote);
-
-  auditService.log({
-    actorId: req.user!.id,
-    actorName: req.user!.fullName,
-    actorRole: req.user!.role,
-    entityName: 'crm.quotes',
-    entityId: quote.quoteNumber,
-    action: 'UPDATE_STATUS',
-    oldData: { status: oldStatus },
-    newData: { status: newStatus },
-    notes: `Status da proposta ${quote.quoteNumber} alterado de ${oldStatus} para ${newStatus}.`,
-  });
-
+  await auditService.log({ actorId: actor.id, actorName: actor.fullName, actorRole: actor.role, entityName: 'crm.quotes',
+    entityId: quote.id, action: 'CREATE_QUOTE', newData: quote });
+  res.status(201).json(quote);
+}));
+quotesRouter.patch('/:id/status', requirePermission('quotes:edit'), atomic(async (req: RequestWithUser, res: Response) => {
+  const quote = await quoteRepository.findById(req.params.id);
+  if (!quote) return res.status(404).json({ error: 'Proposta não encontrada.' });
+  if (quote.isLocked || quote.commercialStatus === 'convertido_em_pedido') return res.status(409).json({ error: 'Proposta convertida está bloqueada.' });
+  const previous = quote.commercialStatus;
+  quote.commercialStatus = oneOf(req.body.status, ['rascunho', 'enviado', 'em_negociacao', 'aprovado', 'recusado', 'cancelado'], 'Status');
+  quote.updatedAt = new Date().toISOString();
+  await quoteRepository.save(quote);
+  await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role, entityName: 'crm.quotes',
+    entityId: quote.id, action: 'UPDATE_STATUS', oldData: { status: previous }, newData: { status: quote.commercialStatus } });
   res.json(quote);
-});
-
-// Conversão IDEMPOTENTE de Orçamento em Pedido / Ordem de Produção (Regra B.2.2 & Gate A.3.2)
-quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_order'), async (req: RequestWithUser, res: Response) => {
+}));
+quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_order'), atomic(async (req: RequestWithUser, res: Response) => {
   const quote = await quoteRepository.findById(req.params.id);
-  if (!quote) {
-    return res.status(404).json({ error: 'Orçamento não encontrado' });
+  if (!quote) return res.status(404).json({ error: 'Proposta não encontrada.' });
+  const existing = await orderRepository.findByQuoteId(quote.id);
+  if (existing.length) return res.json({ success: true, alreadyConverted: true, order: existing[0], orders: existing });
+  if (quote.commercialStatus !== 'aprovado' || quote.isLocked) return res.status(409).json({ error: 'A proposta precisa estar aprovada para conversão.' });
+  if (!quote.items.length) throw new InputError('Proposta sem itens.');
+  const now = new Date().toISOString();
+  const delivery = new Date(Date.now() + quote.productionLeadDays * 86400000).toISOString().slice(0, 10);
+  const orders: ProductionOrderEntity[] = [];
+  for (const item of quote.items) {
+    const order: ProductionOrderEntity = { id: crypto.randomUUID(), orderNumber: await sequenceService.nextOrderNumber(),
+      quoteId: quote.id, quoteItemId: item.id, quoteVersion: quote.version,
+      idempotencyKey: `convert_${quote.id}_v${quote.version}_${item.id}`, clientId: quote.clientId, clientName: quote.clientName,
+      itemTitle: item.modelName, category: item.category, fabricName: item.fabricName, fabricColor: item.fabricColor,
+      sizes: item.sizes, totalPieces: item.totalQuantity, customizations: item.customizations || [], commercialStatus: 'aprovado',
+      financialStatus: 'entrada_pendente', stage: 'aguardando_liberacao', artApproved: quote.artApproved,
+      artApprovedBy: quote.artApprovedBy, artApprovalDate: quote.artApprovalDate, entryPaymentConfirmed: false,
+      priority: 'normal', creationDate: now.slice(0, 10), targetDeliveryDate: delivery,
+      technicalNotes: `Proposta ${quote.quoteNumber}, item ${item.modelName}. ${quote.notes || ''}`, assignedTeam: '',
+      isDemo: quote.isDemo, createdAt: now, updatedAt: now };
+    await orderRepository.save(order);
+    orders.push(order);
   }
-
-  // Idempotency Key
-  const idempotencyKey = `convert_quote_${quote.id}_v${quote.version}`;
-
-  // Verificar se já existe uma OP gerada com esta idempotencyKey
-  const existingOrder = await orderRepository.findByIdempotencyKey(idempotencyKey);
-
-  if (existingOrder) {
-    return res.status(200).json({
-      success: true,
-      alreadyConverted: true,
-      message: `Idempotência garantida: A proposta comercial ${quote.quoteNumber} já foi convertida na OP ${existingOrder.orderNumber}.`,
-      order: existingOrder,
-    });
+  const titles: FinancialTransactionEntity[] = [];
+  for (const subType of ['entrada_pedido', 'saldo_entrega'] as const) {
+    const title: FinancialTransactionEntity = { id: crypto.randomUUID(), transactionNumber: await sequenceService.nextFinanceNumber(),
+      productionOrderId: orders[0].id, quoteId: quote.id, type: 'receber', subType, description: `${subType === 'entrada_pedido' ? 'Sinal' : 'Saldo'} 50% - ${quote.quoteNumber}`,
+      category: 'Venda de Uniformes', amount: subType === 'entrada_pedido' ? quote.entryAmount : quote.balanceAmount,
+      dueDate: subType === 'entrada_pedido' ? now.slice(0, 10) : delivery, status: 'pendente', paymentMethod: 'pix',
+      referenceId: quote.quoteNumber, isDemo: quote.isDemo, createdAt: now, updatedAt: now };
+    await financeRepository.save(title);
+    titles.push(title);
   }
-
-  const orderNumber = sequenceService.nextOrderNumber();
-  const orderId = crypto.randomUUID();
-  const firstItem = quote.items[0] || {
-    modelName: 'Fardamento Confeccionado',
-    category: 'polos',
-    fabricName: 'Padrão Homologado',
-    fabricColor: 'Padrão',
-    sizes: { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
-    totalQuantity: 100,
-  };
-
-  const totalPieces = quote.items.reduce((sum, item) => sum + item.totalQuantity, 0);
-
-  // Criar Ordem de Produção no PCP com Portão A.3.2: stage inicial 'aguardando_liberacao'
-  const newOrder: ProductionOrderEntity = {
-    id: orderId,
-    orderNumber,
-    quoteId: quote.id,
-    quoteVersion: quote.version,
-    idempotencyKey,
-    clientId: quote.clientId,
-    clientName: quote.clientName,
-    itemTitle: firstItem.modelName,
-    category: firstItem.category,
-    fabricName: firstItem.fabricName,
-    fabricColor: firstItem.fabricColor,
-    sizes: firstItem.sizes,
-    totalPieces,
-    customizations: firstItem.customizations || [],
-    commercialStatus: 'aprovado',
-    financialStatus: 'entrada_pendente', // Bloqueado até confirmar sinal de 50%!
-    stage: 'aguardando_liberacao',       // Gate A.3.2
-    artApproved: quote.artApproved,
-    artApprovalDate: quote.artApprovalDate,
-    artApprovedBy: quote.artApprovedBy,
-    entryPaymentConfirmed: false,        // Portão rígido do PRD
-    priority: 'normal',
-    creationDate: new Date().toISOString().split('T')[0],
-    targetDeliveryDate: new Date(Date.now() + quote.productionLeadDays * 86400000).toISOString().split('T')[0],
-    technicalNotes: `Gerado a partir da Proposta Comercial ${quote.quoteNumber}. ${quote.notes || ''}`,
-    assignedTeam: 'Mesa de Corte & Facção Terceirizada',
-    isDemo: quote.isDemo,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  await orderRepository.save(newOrder);
-
-  // Lançamentos Financeiros Idempotentes: Sinal de 50% + Saldo na Entrega
-  const finSinalNumber = sequenceService.nextFinanceNumber();
-  const finSinal: FinancialTransactionEntity = {
-    id: crypto.randomUUID(),
-    transactionNumber: finSinalNumber,
-    productionOrderId: newOrder.id,
-    quoteId: quote.id,
-    type: 'receber',
-    subType: 'entrada_pedido',
-    description: `Sinal 50% - Proposta ${quote.quoteNumber} (${quote.clientName})`,
-    category: 'Venda de Uniformes',
-    amount: quote.entryAmount,
-    dueDate: new Date().toISOString().split('T')[0],
-    status: 'pendente',
-    paymentMethod: 'pix',
-    referenceId: newOrder.orderNumber,
-    isDemo: quote.isDemo,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  const finSaldoNumber = sequenceService.nextFinanceNumber();
-  const finSaldo: FinancialTransactionEntity = {
-    id: crypto.randomUUID(),
-    transactionNumber: finSaldoNumber,
-    productionOrderId: newOrder.id,
-    quoteId: quote.id,
-    type: 'receber',
-    subType: 'saldo_entrega',
-    description: `Saldo 50% na Entrega - Proposta ${quote.quoteNumber} (${quote.clientName})`,
-    category: 'Venda de Uniformes',
-    amount: quote.balanceAmount,
-    dueDate: newOrder.targetDeliveryDate,
-    status: 'pendente',
-    paymentMethod: 'boleto',
-    referenceId: newOrder.orderNumber,
-    isDemo: quote.isDemo,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  await financeRepository.save(finSinal);
-  await financeRepository.save(finSaldo);
-
-  // Atualizar a proposta como convertida
-  quote.commercialStatus = 'convertido_em_pedido';
-  quote.convertedOrderId = newOrder.id;
-  quote.isLocked = true;
-  quote.updatedAt = new Date().toISOString();
+  quote.commercialStatus = 'convertido_em_pedido'; quote.convertedOrderId = orders[0].id; quote.isLocked = true; quote.updatedAt = now;
   await quoteRepository.save(quote);
-
-  auditService.log({
-    actorId: req.user!.id,
-    actorName: req.user!.fullName,
-    actorRole: req.user!.role,
-    entityName: 'producao.production_orders',
-    entityId: newOrder.orderNumber,
-    action: 'CONVERT_QUOTE_TO_ORDER',
-    newData: {
-      orderNumber: newOrder.orderNumber,
-      quoteNumber: quote.quoteNumber,
-      totalPieces: newOrder.totalPieces,
-      financialStatus: newOrder.financialStatus,
-      stage: newOrder.stage,
-      sinalTransaction: finSinal.transactionNumber,
-      saldoTransaction: finSaldo.transactionNumber,
-    },
-    notes: `Proposta ${quote.quoteNumber} convertida com sucesso na OP ${newOrder.orderNumber}. Títulos financeiros de 50% gerados.`,
-  });
-
-  res.status(201).json({
-    success: true,
-    alreadyConverted: false,
-    message: `Proposta ${quote.quoteNumber} convertida na OP ${newOrder.orderNumber}. A OP está em 'aguardando_liberacao' até quitação do sinal de 50% e aprovação de arte.`,
-    order: newOrder,
-    financeTransactions: [finSinal, finSaldo],
-  });
-});
-
-// Excluir proposta
-quotesRouter.delete('/:id', requirePermission('quotes:delete'), async (req: RequestWithUser, res: Response) => {
+  await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role, entityName: 'crm.quotes',
+    entityId: quote.id, action: 'CONVERT_QUOTE_TO_ORDER', newData: { orderIds: orders.map((o) => o.id), titleIds: titles.map((t) => t.id) } });
+  res.status(201).json({ success: true, alreadyConverted: false, order: orders[0], orders, financeTransactions: titles });
+}));
+quotesRouter.delete('/:id', requirePermission('quotes:delete'), atomic(async (req: RequestWithUser, res: Response) => {
   const quote = await quoteRepository.findById(req.params.id);
-  if (!quote) {
-    return res.status(404).json({ error: 'Orçamento não encontrado' });
-  }
-
-  if (quote.commercialStatus === 'convertido_em_pedido') {
-    return res.status(400).json({ error: 'Não é permitido excluir uma proposta já convertida em Ordem de Produção.' });
-  }
-
-  await quoteRepository.delete(req.params.id);
-
-  auditService.log({
-    actorId: req.user!.id,
-    actorName: req.user!.fullName,
-    actorRole: req.user!.role,
-    entityName: 'crm.quotes',
-    entityId: quote.quoteNumber,
-    action: 'DELETE_QUOTE',
-    notes: `Proposta comercial ${quote.quoteNumber} excluída.`,
-  });
-
-  res.json({ success: true, message: 'Proposta excluída com sucesso' });
-});
+  if (!quote) return res.status(404).json({ error: 'Proposta não encontrada.' });
+  if (quote.isLocked || (await orderRepository.findByQuoteId(quote.id)).length) return res.status(409).json({ error: 'Proposta vinculada a produção não pode ser excluída.' });
+  await quoteRepository.delete(quote.id);
+  await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role, entityName: 'crm.quotes', entityId: quote.id, action: 'DELETE_QUOTE' });
+  res.json({ success: true });
+}));

@@ -17,7 +17,7 @@ interface SettingsViewProps {
   profile: CompanyProfile;
   fullState: ERPState;
   onSaveProfile: (profile: CompanyProfile) => void;
-  onRestoreState: (state: ERPState) => void;
+  onRestoreState: (state: ERPState) => Promise<boolean>;
   onResetToDefaults: () => void;
 }
 
@@ -43,11 +43,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
         if (parsed.orders && parsed.inventory && parsed.quotes) {
-          onRestoreState(parsed);
+          if (!(await onRestoreState(parsed))) return;
           alert('Backup restaurado com sucesso!');
         } else {
           alert('Arquivo de backup inválido.');

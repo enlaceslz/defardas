@@ -19,7 +19,7 @@ export class FinanceRepository {
         const rows = await drizzleDb.select().from(transactions).orderBy(desc(transactions.createdAt));
         return rows.map((r) => this.mapToEntity(r));
       } catch (err) {
-        if (process.env.NODE_ENV === 'production') throw err;
+        throw err;
         console.warn('⚠️ [FinanceRepository] Erro ao listar lançamentos via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -38,10 +38,11 @@ export class FinanceRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
-        if (process.env.NODE_ENV === 'production') throw err;
+        throw err;
         console.warn(`⚠️ [FinanceRepository] Falha ao buscar transação ${id} via Drizzle.`, err);
       }
     }
+    if (fallbackDb.isConnected()) return null;
     return fallbackDb.finance.get(id) || null;
   }
 
@@ -50,7 +51,7 @@ export class FinanceRepository {
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
       throw new Error('PostgreSQL indisponível.');
     }
-    if (process.env.NODE_ENV !== 'production') fallbackDb.finance.set(tx.id, tx);
+    if (!fallbackDb.isConnected()) fallbackDb.finance.set(tx.id, tx);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -71,6 +72,7 @@ export class FinanceRepository {
           referenceId: tx.referenceId,
           receiptEvidenceUrl: tx.receiptEvidenceUrl,
           receiptVoucherNumber: tx.receiptVoucherNumber,
+          confirmedById: tx.confirmedById,
           confirmedByName: tx.confirmedByName,
           confirmationNotes: tx.confirmationNotes,
           isDemo: tx.isDemo ?? false,
@@ -86,13 +88,14 @@ export class FinanceRepository {
               paidDate: newRecord.paidDate,
               receiptEvidenceUrl: newRecord.receiptEvidenceUrl,
               receiptVoucherNumber: newRecord.receiptVoucherNumber,
+              confirmedById: newRecord.confirmedById,
               confirmedByName: newRecord.confirmedByName,
               confirmationNotes: newRecord.confirmationNotes,
               updatedAt: new Date(),
             },
           });
       } catch (err) {
-        if (process.env.NODE_ENV === 'production') throw err;
+        throw err;
         console.error(`❌ [FinanceRepository] Falha ao persistir transação ${tx.id} via Drizzle:`, err);
       }
     }
@@ -105,13 +108,13 @@ export class FinanceRepository {
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
       throw new Error('PostgreSQL indisponível.');
     }
-    if (process.env.NODE_ENV !== 'production') fallbackDb.finance.delete(id);
+    if (!fallbackDb.isConnected()) fallbackDb.finance.delete(id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(transactions).where(eq(transactions.id, id));
         return true;
       } catch (err) {
-        if (process.env.NODE_ENV === 'production') throw err;
+        throw err;
         console.error(`❌ [FinanceRepository] Falha ao deletar transação ${id} via Drizzle:`, err);
       }
     }

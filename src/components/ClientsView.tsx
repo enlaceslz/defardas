@@ -1,3 +1,4 @@
+import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
 import { 
   Users, 
@@ -17,7 +18,7 @@ import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
 
 interface ClientsViewProps {
   clients: Client[];
-  onSaveClient: (client: Client) => void;
+  onSaveClient: (client: Client) => Promise<boolean>;
   onDeleteClient: (clientId: string) => void;
   onSelectClientForQuote?: (client: Client) => void;
 }
@@ -80,7 +81,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const { submit, isSaving } = useSubmission();
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clientToSave: Client = {
       id: editingClient?.id || `cli-${Date.now()}`,
@@ -100,7 +102,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
       totalSpent: editingClient?.totalSpent || 0,
       createdAt: editingClient?.createdAt || new Date().toISOString().split('T')[0],
     };
-    onSaveClient(clientToSave);
+    if (!(await submit(() => onSaveClient(clientToSave)))) return;
     setIsModalOpen(false);
   };
 
@@ -407,6 +409,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                 </button>
                 <button
                   type="submit"
+                  disabled={isSaving}
                   className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer"
                 >
                   Salvar Cliente

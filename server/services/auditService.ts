@@ -1,57 +1,35 @@
-/**
- * DE FARDAS ERP — Audit Service
- * Registra eventos auditáveis de mutações críticas, autorizações e tentativas de bypass.
- */
-import { AuditLogEntity } from '../types/db';
+import crypto from 'node:crypto';
+import { query } from '../db/index';
+import type { AuditLogEntity } from '../types/db';
 
+type AuditEvent = Omit<AuditLogEntity, 'id' | 'createdAt'>;
 class AuditService {
-  private inMemoryLogs: AuditLogEntity[] = [];
-
-  public log(event: {
-    actorId?: string;
-    actorName: string;
-    actorRole: string;
-    entityName: string;
-    entityId: string;
-    action: string;
-    oldData?: any;
-    newData?: any;
-    notes?: string;
-    ipAddress?: string;
-  }): AuditLogEntity {
-    const entry: AuditLogEntity = {
-      id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      actorId: event.actorId,
-      actorName: event.actorName,
-      actorRole: event.actorRole,
-      entityName: event.entityName,
-      entityId: event.entityId,
-      action: event.action,
-      oldData: event.oldData,
-      newData: event.newData,
-      notes: event.notes,
-      ipAddress: event.ipAddress || '127.0.0.1',
-      createdAt: new Date().toISOString(),
-    };
-
-    this.inMemoryLogs.unshift(entry);
-    if (this.inMemoryLogs.length > 500) {
-      this.inMemoryLogs.pop();
+  private memory: AuditLogEntity[] = [];
+  private get persistent() { return Boolean(process.env.DATABASE_URL) || process.env.NODE_ENV === 'production'; }
+  public async log(event: AuditEvent): Promise<AuditLogEntity> {
+    const entry = { ...event, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
+    if (this.persistent) {
+      // Participa do mesmo cliente transacional dos repositórios quando há UoW.
+      await query(`INSERT INTO core.audit_logs
+        (id, actor_id, actor_name, actor_role, entity_name, entity_id, action, old_data, new_data, notes, ip_address, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [entry.id, entry.actorId || null,
+        entry.actorName.slice(0, 120), entry.actorRole.slice(0, 40), entry.entityName.slice(0, 60), entry.entityId.slice(0, 60),
+        entry.action.slice(0, 40), JSON.stringify(entry.oldData ?? null), JSON.stringify(entry.newData ?? null), entry.notes || null,
+        entry.ipAddress || null, entry.createdAt]);
+    } else {
+      this.memory.unshift(entry);
+      this.memory = this.memory.slice(0, 500);
     }
-
-    console.log(`[AUDIT] [${entry.action}] [${entry.entityName}:${entry.entityId}] por ${entry.actorName} (${entry.actorRole})`);
     return entry;
   }
-
-  public getRecentLogs(limit: number = 50): AuditLogEntity[] {
-    return this.inMemoryLogs.slice(0, limit);
-  }
-
-  public getLogsForEntity(entityName: string, entityId: string): AuditLogEntity[] {
-    return this.inMemoryLogs.filter(
-      (l) => l.entityName === entityName && l.entityId === entityId
-    );
+  public async getRecentLogs(limit = 50, entityName?: string, entityId?: string): Promise<AuditLogEntity[]> {
+    limit = Number.isInteger(limit) ? Math.min(500, Math.max(1, limit)) : 50;
+    if (!this.persistent) return this.memory.filter((e) => !entityName || (e.entityName === entityName && e.entityId === entityId)).slice(0, limit);
+    const result = await query(`SELECT id, actor_id AS "actorId", actor_name AS "actorName", actor_role AS "actorRole",
+      entity_name AS "entityName", entity_id AS "entityId", action, old_data AS "oldData", new_data AS "newData",
+      notes, ip_address AS "ipAddress", created_at AS "createdAt" FROM core.audit_logs
+      WHERE ($2::text IS NULL OR (entity_name = $2 AND entity_id = $3)) ORDER BY created_at DESC LIMIT $1`, [limit, entityName || null, entityId || null]);
+    return result.rows.map((row) => ({ ...row, createdAt: new Date(row.createdAt).toISOString() }));
   }
 }
-
 export const auditService = new AuditService();

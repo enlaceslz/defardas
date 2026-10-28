@@ -50,7 +50,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
 
   const user = await userRepository.findByEmail(email);
   if (!user) {
-    auditService.log({
+    await auditService.log({
       actorName: email,
       actorRole: 'unauthenticated',
       entityName: 'auth',
@@ -63,7 +63,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
   }
 
   if (!user.isActive) {
-    auditService.log({
+    await auditService.log({
       actorId: user.id,
       actorName: user.fullName,
       actorRole: user.role,
@@ -78,7 +78,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
 
   const isPasswordValid = await PasswordService.comparePassword(password, user.passwordHash);
   if (!isPasswordValid) {
-    auditService.log({
+    await auditService.log({
       actorId: user.id,
       actorName: user.fullName,
       actorRole: user.role,
@@ -112,7 +112,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
     maxAge: 8 * 60 * 60 * 1000, // 8 horas
   });
 
-  auditService.log({
+  await auditService.log({
     actorId: user.id,
     actorName: user.fullName,
     actorRole: user.role,
@@ -161,7 +161,7 @@ authRouter.post('/logout', requireAuth, async (req: RequestWithUser, res: Respon
   res.clearCookie('defardas_session', { path: '/' });
 
   if (req.user) {
-    auditService.log({
+    await auditService.log({
       actorId: req.user.id,
       actorName: req.user.fullName,
       actorRole: req.user.role,
@@ -232,7 +232,7 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
   const user = await userRepository.findByEmail(email);
   if (user) {
     const resetToken = userRepository.createPasswordResetToken(user.id, user.email);
-    auditService.log({
+    await auditService.log({
       actorId: user.id,
       actorName: user.fullName,
       actorRole: user.role,
@@ -283,7 +283,7 @@ authRouter.post('/reset-password', async (req: RequestWithUser, res: Response) =
   await userRepository.updatePassword(tokenRecord.userId, newPassword);
   await sessionStore.destroyAllUserSessions(tokenRecord.userId);
 
-  auditService.log({
+  await auditService.log({
     actorId: tokenRecord.userId,
     actorName: tokenRecord.email,
     actorRole: 'usuario',
@@ -350,7 +350,7 @@ authRouter.post('/switch-role', requireAuth, async (req: RequestWithUser, res: R
     maxAge: 8 * 60 * 60 * 1000,
   });
 
-  auditService.log({
+  await auditService.log({
     actorId: req.user.id,
     actorName: req.user.fullName,
     actorRole: req.user.role,
