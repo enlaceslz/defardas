@@ -1,3 +1,5 @@
+import { number, text, date, oneOf } from '../validation/input';
+import { atomic } from '../db/unitOfWork';
 import { Router, Response } from 'express';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { orderRepository } from '../repositories/orderRepository';
@@ -25,7 +27,7 @@ ordersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
 });
 
 // Avanço de Etapa com Verificação Rígida de Portão (Gate A.3.2 do PRD)
-ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'), async (req: RequestWithUser, res: Response) => {
+ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const order = await orderRepository.findById(req.params.id);
   if (!order) {
@@ -33,20 +35,20 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
   }
 
   const { targetStage } = req.body;
-  if (!targetStage) {
+  if (!['aguardando_liberacao', 'corte', 'bordado_silk', 'costura', 'conferencia_qualidade', 'retrabalho', 'expedicao', 'entregue'].includes(targetStage)) {
     return res.status(400).json({ error: 'targetStage é obrigatório' });
   }
 
   const oldStage = order.stage;
 
   // PORTÃO RÍGIDO (GATE A.3.2): Transição de 'aguardando_liberacao' para 'corte' ou qualquer etapa fabril
-  if (oldStage === 'aguardando_liberacao' && targetStage !== 'aguardando_liberacao') {
+  if (targetStage !== 'aguardando_liberacao') {
     const isArtApproved = !!order.artApproved;
     const isPaymentConfirmed = !!order.entryPaymentConfirmed;
 
     if (!isArtApproved || !isPaymentConfirmed) {
       // Registrar tentativa de bypass de portão na trilha de auditoria
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         actorName: actor.fullName,
         actorRole: actor.role,
@@ -71,10 +73,11 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
   }
 
   order.stage = targetStage;
+  order.completionDate = targetStage === 'entregue' ? new Date().toISOString().slice(0, 10) : undefined;
   order.updatedAt = new Date().toISOString();
   await orderRepository.save(order);
 
-  auditService.log({
+  await auditService.log({
     actorId: actor.id,
     actorName: actor.fullName,
     actorRole: actor.role,
@@ -91,10 +94,10 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
     message: `Etapa atualizada com sucesso para ${targetStage}.`,
     order,
   });
-});
+}));
 
 // Aprovação Formal de Arte (Gate da Arte)
-ordersRouter.post('/:id/approve-art', async (req: RequestWithUser, res: Response) => {
+ordersRouter.post('/:id/approve-art', requirePermission('orders:approve_art'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const order = await orderRepository.findById(req.params.id);
   if (!order) {
@@ -103,13 +106,13 @@ ordersRouter.post('/:id/approve-art', async (req: RequestWithUser, res: Response
 
   const { approverName, fileUrl } = req.body;
   order.artApproved = true;
-  order.artApprovedBy = approverName || actor.fullName;
+  order.artApprovedBy = text(approverName, 'Nome do cliente que aprovou a arte', 100);
   order.artApprovalDate = new Date().toISOString();
   order.technicalNotes = `${order.technicalNotes || ''} [Arte aprovada por ${order.artApprovedBy} em ${new Date().toLocaleDateString('pt-BR')}].`;
   order.updatedAt = new Date().toISOString();
   await orderRepository.save(order);
 
-  auditService.log({
+  await auditService.log({
     actorId: actor.id,
     actorName: actor.fullName,
     actorRole: actor.role,
@@ -130,18 +133,21 @@ ordersRouter.post('/:id/approve-art', async (req: RequestWithUser, res: Response
     message: 'Arte final aprovada com sucesso.',
     order,
   });
-});
+}));
 
 // Exclusão de OP
-ordersRouter.delete('/:id', requirePermission('orders:delete'), async (req: RequestWithUser, res: Response) => {
+ordersRouter.delete('/:id', requirePermission('orders:delete'), atomic(async (req: RequestWithUser, res: Response) => {
   const order = await orderRepository.findById(req.params.id);
   if (!order) {
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
 
+  if (order.quoteId || order.stage !== 'aguardando_liberacao' || order.entryPaymentConfirmed) {
+    return res.status(409).json({ error: 'OP vinculada à proposta ou com histórico não pode ser excluída isoladamente.' });
+  }
   await orderRepository.delete(req.params.id);
 
-  auditService.log({
+  await auditService.log({
     actorId: req.user!.id,
     actorName: req.user!.fullName,
     actorRole: req.user!.role,
@@ -152,4 +158,21 @@ ordersRouter.delete('/:id', requirePermission('orders:delete'), async (req: Requ
   });
 
   res.json({ success: true, message: 'Ordem de produção excluída com sucesso.' });
-});
+}));
+
+ordersRouter.put('/:id', requirePermission('orders:create'), atomic(async (req: RequestWithUser, res: Response) => {
+  const order = await orderRepository.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: 'OP não encontrada.' });
+  const body = req.body;
+  order.priority = oneOf(body.priority, ['normal', 'alta', 'urgente'], 'Prioridade');
+  order.targetDeliveryDate = date(body.targetDeliveryDate, 'Entrega');
+  order.technicalNotes = text(body.technicalNotes, 'Notas técnicas', 10000, false);
+  order.assignedTeam = text(body.assignedTeam, 'Equipe', 100, false);
+  order.outsourcedPartner = text(body.outsourcedPartner, 'Facção', 100, false);
+  order.partnerCostPerPiece = number(body.partnerCostPerPiece ?? 0, 'Custo da facção');
+  order.updatedAt = new Date().toISOString();
+  await orderRepository.save(order);
+  await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role,
+    entityName: 'producao.production_orders', entityId: order.id, action: 'UPDATE_ORDER', newData: order });
+  res.json(order);
+}));

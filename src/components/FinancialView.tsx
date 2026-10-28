@@ -1,3 +1,4 @@
+import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
 import { 
   Wallet, 
@@ -17,10 +18,10 @@ import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
 
 interface FinancialViewProps {
   transactions: FinancialTransaction[];
-  onSaveTransaction: (trx: FinancialTransaction) => void;
+  onSaveTransaction: (trx: FinancialTransaction) => Promise<boolean>;
   onDeleteTransaction: (trxId: string) => void;
   onToggleStatus: (trxId: string) => void;
-  onConfirmPaymentWithVoucher?: (trxId: string, voucherNumber: string, notes: string) => void;
+  onConfirmPaymentWithVoucher?: (trxId: string, voucherNumber: string, notes: string, evidenceUrl: string) => Promise<boolean>;
 }
 
 export const FinancialView: React.FC<FinancialViewProps> = ({
@@ -38,6 +39,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   const [selectedTrxForVoucher, setSelectedTrxForVoucher] = useState<FinancialTransaction | null>(null);
   const [voucherNumber, setVoucherNumber] = useState('');
   const [voucherNotes, setVoucherNotes] = useState('');
+  const [evidenceUrl, setEvidenceUrl] = useState('');
 
   // Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -71,12 +73,13 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
 
   const projectedBalance = totalReceivablesPending - totalPayablesPending;
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const { submit, isSaving } = useSubmission();
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const newTrx: FinancialTransaction = {
       id: `fin-${Date.now()}`,
       type,
-      subType: type === 'receber' ? 'entrada_pedido' : 'compra_tecido',
+      subType: type === 'receber' ? 'despesa_geral' : 'compra_tecido',
       description,
       category,
       amount,
@@ -84,7 +87,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
       status: 'pendente',
       paymentMethod,
     };
-    onSaveTransaction(newTrx);
+    if (!(await submit(() => onSaveTransaction(newTrx)))) return;
     setIsModalOpen(false);
     setDescription('');
   };
@@ -422,6 +425,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 </button>
                 <button
                   type="submit"
+                  disabled={isSaving}
                   className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer"
                 >
                   Lançar
@@ -453,12 +457,12 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
             </div>
 
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 if (onConfirmPaymentWithVoucher) {
-                  onConfirmPaymentWithVoucher(selectedTrxForVoucher.id, voucherNumber, voucherNotes);
+                  if (!(await submit(() => onConfirmPaymentWithVoucher(selectedTrxForVoucher.id, voucherNumber, voucherNotes, evidenceUrl)))) return;
                 } else {
-                  onToggleStatus(selectedTrxForVoucher.id);
+                  return;
                 }
                 setSelectedTrxForVoucher(null);
               }}
@@ -474,7 +478,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 </div>
                 {selectedTrxForVoucher.subType === 'entrada_pedido' && (
                   <div className="text-[11px] font-bold text-blue-700 pt-1">
-                    ★ Este título é o sinal de 50%. A liquidação liberará o portão de corte da Ordem de Produção!
+                    Este título confirma o sinal da proposta. O corte exige também a aprovação formal da arte.
                   </div>
                 )}
               </div>
@@ -493,6 +497,10 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 />
               </div>
 
+              <label className="block space-y-1 font-semibold text-slate-700">URL privada do comprovante real *
+                <input type="url" required value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)}
+                  placeholder="https://..." className="w-full rounded-lg border border-slate-300 px-3 py-2 font-normal" />
+              </label>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
                   Notas de Conferência do Recebimento / Extrato
@@ -515,6 +523,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 </button>
                 <button
                   type="submit"
+                  disabled={isSaving}
                   className="px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-500 transition-colors shadow-xs cursor-pointer"
                 >
                   Confirmar e Liquidar

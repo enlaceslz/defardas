@@ -1,3 +1,5 @@
+> Estado atual de produção: leia [a auditoria de 28/10/2026](docs/AUDITORIA_PRODUCAO_2026-10-28.md) e [a operação transacional](docs/OPERACAO_TRANSACIONAL.md). A publicação estática da SPA não substitui a API/PostgreSQL, e a liberação operacional ainda depende das pendências documentadas.
+
 # Guia de Deploy na Vercel via GitHub — DE FARDAS ERP
 
 Este documento fornece o passo a passo direto para conectar o repositório GitHub do projeto **DE FARDAS ERP** à **Vercel** e obter deploy contínuo (CI/CD) automático com alta disponibilidade.

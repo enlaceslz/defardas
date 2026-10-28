@@ -40,6 +40,11 @@ class UserRepository {
    */
   private async initUsers() {
     if (this.isInitialized) return;
+    // Contas demonstrativas nunca devem existir no processo de produção.
+    if (process.env.NODE_ENV === 'production' || process.env.DATABASE_URL) {
+      this.isInitialized = true;
+      return;
+    }
 
     // Gerar hash para a credencial inicial segura
     const defaultHash = await PasswordService.hashPassword(DEV_DEFAULT_PASSWORD);
@@ -112,6 +117,7 @@ class UserRepository {
    * Busca usuário por email
    */
   public async findByEmail(email: string): Promise<UserEntity | null> {
+    await db.ready;
     const normalized = email.trim().toLowerCase();
 
     // Se conectado ao PostgreSQL real, consulta tabela core.users
@@ -136,9 +142,12 @@ class UserRepository {
           };
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('[AUTH] Falha ao consultar PostgreSQL para usuário, recorrendo ao repositório local:', err);
       }
     }
+
+    if (process.env.NODE_ENV === 'production') return null;
 
     // Consulta repositório transacional
     for (const u of this.users.values()) {
@@ -153,6 +162,7 @@ class UserRepository {
    * Busca usuário por ID
    */
   public async findById(id: string): Promise<UserEntity | null> {
+    await db.ready;
     if (db.isConnected() && db.getPool()) {
       try {
         const pool = db.getPool()!;
@@ -174,10 +184,12 @@ class UserRepository {
           };
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('[AUTH] Falha ao consultar PostgreSQL para usuário por ID:', err);
       }
     }
 
+    if (process.env.NODE_ENV === 'production') return null;
     return this.users.get(id) || null;
   }
 
@@ -185,6 +197,7 @@ class UserRepository {
    * Lista todos os usuários (sem expor o hash da senha)
    */
   public async listAll(): Promise<Omit<UserEntity, 'passwordHash'>[]> {
+    await db.ready;
     if (db.isConnected() && db.getPool()) {
       try {
         const pool = db.getPool()!;
@@ -201,6 +214,7 @@ class UserRepository {
           updatedAt: row.updated_at,
         }));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('[AUTH] Falha ao listar usuários do PostgreSQL:', err);
       }
     }
@@ -212,6 +226,7 @@ class UserRepository {
    * Cria novo usuário com hash de senha
    */
   public async createUser(data: CreateUserData): Promise<UserEntity> {
+    await db.ready;
     const existing = await this.findByEmail(data.email);
     if (existing) {
       throw new Error(`O email ${data.email} já está cadastrado no sistema.`);
@@ -241,6 +256,7 @@ class UserRepository {
           [newUser.id, newUser.fullName, newUser.email, newUser.passwordHash, newUser.role, newUser.isActive, newUser.createdAt, newUser.updatedAt]
         );
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error('[AUTH] Falha ao persistir usuário no PostgreSQL:', err);
       }
     }
@@ -253,6 +269,7 @@ class UserRepository {
    * Atualiza senha do usuário
    */
   public async updatePassword(userId: string, newPassword: string): Promise<boolean> {
+    await db.ready;
     const user = await this.findById(userId);
     if (!user) return false;
 
@@ -267,6 +284,7 @@ class UserRepository {
           [passwordHash, now, userId]
         );
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error('[AUTH] Erro ao atualizar senha no PostgreSQL:', err);
       }
     }

@@ -1,0 +1,64 @@
+name: Validate
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: defardas_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: integration-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d defardas_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:integration-only@localhost:5432/defardas_test
+          DATABASE_SSL_MODE: disable
+      - name: Verify backup and restore in isolated database
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_USER: postgres
+          POSTGRES_DB: defardas_test
+        run: |
+          task_backup_dir="$(mktemp -d)"
+          BACKUP_DIR="$task_backup_dir" bash scripts/backup.sh
+          task_backup_file="$(find "$task_backup_dir" -name '*.sql.gz' -print -quit)"
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c 'CREATE DATABASE defardas_restore_test'
+          POSTGRES_DB=defardas_restore_test bash scripts/restore.sh "$task_backup_file" --force
+          test "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_restore_test -Atc 'SELECT count(*) > 0 FROM producao.production_orders')" = t
+          task_counts_sql="SELECT 'clients',count(*) FROM crm.clients UNION ALL SELECT 'quotes',count(*) FROM crm.quotes UNION ALL SELECT 'orders',count(*) FROM producao.production_orders UNION ALL SELECT 'finance',count(*) FROM financeiro.transactions UNION ALL SELECT 'movements',count(*) FROM estoque.movements UNION ALL SELECT 'audit',count(*) FROM core.audit_logs ORDER BY 1"
+          test "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_test -Atc "$task_counts_sql")" = "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_restore_test -Atc "$task_counts_sql")"
+          { gunzip -c "$task_backup_file"; echo '-- changed bytes'; } | gzip > "$task_backup_dir/tampered.sql.gz"
+          cp "$task_backup_file.sha256" "$task_backup_dir/tampered.sql.gz.sha256"
+          if POSTGRES_DB=defardas_restore_test bash scripts/restore.sh "$task_backup_dir/tampered.sql.gz" --force; then
+            echo 'Restore should reject changed bytes even when checksum names another file' >&2
+            exit 1
+          fi
+      - name: Verify production image
+        run: |
+          docker build -t defardas-ci .
+          docker run -d --name defardas-ci --network host -e PORT=3300 -e DATABASE_SSL_MODE=disable -e DATABASE_URL=postgresql://postgres:integration-only@localhost:5432/defardas_test defardas-ci
+          curl --fail --retry 15 --retry-connrefused --retry-delay 1 --max-time 5 http://localhost:3300/api/health
+          curl --fail --max-time 5 http://localhost:3300/ > /dev/null
+          docker stop --time 20 defardas-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' defardas-ci)" = 0

@@ -1,0 +1,1 @@
+ALTER TABLE "producao"."production_orders" ADD COLUMN "quote_item_id" uuid;

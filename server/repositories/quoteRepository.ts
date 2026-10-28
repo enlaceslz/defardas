@@ -10,6 +10,10 @@ import { QuoteEntity, QuoteItemEntity } from '../types/db';
 
 export class QuoteRepository {
   public async findAll(): Promise<QuoteEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(quotes).orderBy(desc(quotes.createdAt));
@@ -20,6 +24,7 @@ export class QuoteRepository {
         }
         return results;
       } catch (err) {
+        throw err;
         console.warn('⚠️ [QuoteRepository] Erro ao listar propostas via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -27,6 +32,10 @@ export class QuoteRepository {
   }
 
   public async findById(id: string): Promise<QuoteEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(quotes).where(eq(quotes.id, id)).limit(1);
@@ -35,14 +44,20 @@ export class QuoteRepository {
           return this.mapToEntity(rows[0], items);
         }
       } catch (err) {
+        throw err;
         console.warn(`⚠️ [QuoteRepository] Falha ao buscar proposta ${id} via Drizzle.`, err);
       }
     }
+    if (fallbackDb.isConnected()) return null;
     return fallbackDb.quotes.get(id) || null;
   }
 
   public async save(quote: QuoteEntity): Promise<QuoteEntity> {
-    fallbackDb.quotes.set(quote.id, quote);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (!fallbackDb.isConnected()) fallbackDb.quotes.set(quote.id, quote);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -53,6 +68,7 @@ export class QuoteRepository {
           clientId: quote.clientId,
           clientName: quote.clientName,
           clientCnpj: quote.clientCnpj,
+          sellerId: quote.sellerId,
           sellerName: quote.sellerName,
           commercialStatus: quote.commercialStatus,
           date: quote.date,
@@ -64,6 +80,7 @@ export class QuoteRepository {
           discountAmount: quote.discountAmount.toString(),
           estimatedMarginPercentage: quote.estimatedMarginPercentage.toString(),
           belowSuggestedAuthorized: quote.belowSuggestedAuthorized,
+          authorizedById: quote.authorizedById,
           authorizedByName: quote.authorizedByName,
           authorizationDate: quote.authorizationDate ? new Date(quote.authorizationDate) : null,
           authorizationNotes: quote.authorizationNotes,
@@ -134,6 +151,7 @@ export class QuoteRepository {
           }
         }
       } catch (err) {
+        throw err;
         console.error(`❌ [QuoteRepository] Falha ao persistir proposta ${quote.id} via Drizzle:`, err);
       }
     }
@@ -142,12 +160,17 @@ export class QuoteRepository {
   }
 
   public async delete(id: string): Promise<boolean> {
-    fallbackDb.quotes.delete(id);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (!fallbackDb.isConnected()) fallbackDb.quotes.delete(id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(quotes).where(eq(quotes.id, id));
         return true;
       } catch (err) {
+        throw err;
         console.error(`❌ [QuoteRepository] Falha ao deletar proposta ${id} via Drizzle:`, err);
       }
     }

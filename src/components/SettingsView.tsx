@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
   Save, 
@@ -16,8 +16,8 @@ import { ERPState, exportERPStateAsJSON } from '../utils/storage';
 interface SettingsViewProps {
   profile: CompanyProfile;
   fullState: ERPState;
-  onSaveProfile: (profile: CompanyProfile) => void;
-  onRestoreState: (state: ERPState) => void;
+  onSaveProfile: (profile: CompanyProfile) => Promise<boolean>;
+  onRestoreState: (state: ERPState) => Promise<boolean>;
   onResetToDefaults: () => void;
 }
 
@@ -31,9 +31,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [formData, setFormData] = useState<CompanyProfile>(profile);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => setFormData(profile), [profile]);
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveProfile(formData);
+    if (!(await onSaveProfile(formData))) return;
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
   };
@@ -43,11 +44,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
         if (parsed.orders && parsed.inventory && parsed.quotes) {
-          onRestoreState(parsed);
+          if (!(await onRestoreState(parsed))) return;
           alert('Backup restaurado com sucesso!');
         } else {
           alert('Arquivo de backup inválido.');

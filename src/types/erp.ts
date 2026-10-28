@@ -91,6 +91,7 @@ export interface MaterialRequirement {
 }
 
 export interface ProductionOrder {
+  backendId?: string;
   id: string; // Ex: OP-2026-101
   orderNumber?: string;
   idempotencyKey?: string;
@@ -163,6 +164,7 @@ export interface QuoteItem {
 }
 
 export interface Quote {
+  backendId?: string;
   id: string; // Ex: ORC-904
   quoteNumber?: string;
   isDemo?: boolean;
@@ -220,6 +222,7 @@ export interface InventoryMovement {
 export type InventoryCategory = 'tecido' | 'aviamento' | 'insumo_personalizacao' | 'pronta_entrega';
 
 export interface InventoryItem {
+  backendId?: string;
   id: string;
   code: string;
   name: string;
@@ -236,6 +239,7 @@ export interface InventoryItem {
 }
 
 export interface Client {
+  backendId?: string;
   id: string;
   code?: string;
   companyName: string;
@@ -257,6 +261,7 @@ export interface Client {
 }
 
 export interface FinancialTransaction {
+  backendId?: string;
   id: string;
   transactionNumber?: string;
   type: 'receber' | 'pagar';

@@ -1,3 +1,4 @@
+import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
 import { 
   Shirt, 
@@ -25,7 +26,7 @@ interface PublicPortalViewProps {
     category: UniformCategory;
     estimatedQty: number;
     notes: string;
-  }) => void;
+  }) => Promise<boolean>;
 }
 
 export const PublicPortalView: React.FC<PublicPortalViewProps> = ({
@@ -72,9 +73,10 @@ export const PublicPortalView: React.FC<PublicPortalViewProps> = ({
     setModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const { submit, isSaving } = useSubmission();
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onRequestQuote({
+    if (!(await submit(() => onRequestQuote({
       clientName,
       companyName,
       phone,
@@ -82,7 +84,7 @@ export const PublicPortalView: React.FC<PublicPortalViewProps> = ({
       category,
       estimatedQty,
       notes,
-    });
+    })))) return;
     setSuccessSubmitted(true);
     setTimeout(() => {
       setSuccessSubmitted(false);
@@ -366,7 +368,7 @@ export const PublicPortalView: React.FC<PublicPortalViewProps> = ({
                     Cancelar
                   </button>
                   <button
-                    type="submit"
+                    type="submit" disabled={isSaving}
                     className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow-sm cursor-pointer"
                   >
                     Enviar Solicitação

@@ -213,8 +213,8 @@ export const QuotesView: React.FC<QuotesViewProps> = ({
                             <span className="font-mono">{formatCurrencyBRL(it.totalPrice)}</span>
                           </div>
                           <div className="text-[10px] text-slate-500 flex justify-between pt-0.5 font-mono">
-                            <span>Markup: {it.costBreakdown?.markupPercentage || 45}%</span>
-                            <span className="text-emerald-700">Margem: {it.costBreakdown?.estimatedMarginPercentage || 30}%</span>
+                            <span>Markup: {it.costBreakdown?.markupPercentage ?? 0}%</span>
+                            <span className="text-emerald-700">Margem: {it.costBreakdown?.estimatedMarginPercentage ?? 0}%</span>
                           </div>
                         </div>
                       ))}

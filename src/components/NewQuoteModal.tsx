@@ -1,3 +1,4 @@
+import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Calculator, FileText, CheckCircle, AlertTriangle, ShieldCheck, Lock } from 'lucide-react';
 import { Quote, Client, QuoteItem, SizeGrid, CustomizationItem, UniformCategory, CostBreakdown } from '../types/erp';
@@ -8,7 +9,7 @@ import { useAuth } from '../api/authContext';
 interface NewQuoteModalProps {
   clients: Client[];
   onClose: () => void;
-  onSaveQuote: (quote: Quote) => void;
+  onSaveQuote: (quote: Quote) => Promise<boolean>;
 }
 
 export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
@@ -18,54 +19,26 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
 }) => {
   const { user } = useAuth();
   const [selectedClient, setSelectedClient] = useState<Client | null>(clients[0] || null);
-  const [sellerName, setSellerName] = useState(user?.fullName || 'Mariana Alencar (Comercial)');
-  const [validUntilDays, setValidUntilDays] = useState(15);
+  const [sellerName, setSellerName] = useState(user?.fullName || '');
+  const [validUntilDays, setValidUntilDays] = useState(0);
   
   // Regra do PRD: Entrada percentual fixa em 50% (Adendo A.3.2)
   const entryPercentage = 50;
   const [paymentTerms, setPaymentTerms] = useState('50% Sinal (Liberação de Corte) + 50% na Entrega das Peças');
-  const [productionLeadDays, setProductionLeadDays] = useState(16);
-  const [artApproved, setArtApproved] = useState(false);
-  const [whatsAppContact, setWhatsAppContact] = useState(clients[0]?.phone || '(98) 98135-4130');
-  const [notes, setNotes] = useState('Proposta inclui prova de tamanho e amostra física de cor antes do corte. Frete CIF incluso para São Luís e região metropolitana.');
+  const [productionLeadDays, setProductionLeadDays] = useState(0);
+  const artApproved = false;
+  const [whatsAppContact, setWhatsAppContact] = useState(clients[0]?.phone || '');
+  const [notes, setNotes] = useState('');
 
-  // Items list with PRD Cost Decomposition
-  const [items, setItems] = useState<QuoteItem[]>([
-    {
-      id: 'item-1',
-      modelName: 'Camisa Polo Corporativa Piquet',
-      category: 'polos',
-      fabricName: 'Malha Piquet PA 50/50',
-      fabricColor: 'Azul Marinho / Vivos Brancos',
-      sizes: { pp: 0, p: 20, m: 50, g: 40, gg: 15, xg: 5, exg: 0, sobMedida: 0 },
-      totalQuantity: 130,
-      costBreakdown: {
-        materialUnitCost: 22.00,
-        outsourcedSewingUnitCost: 12.00,
-        customizationUnitCost: 6.50,
-        freightPerUnit: 1.50,
-        technicalLossPercentage: 2.0,
-        calculatedBaseCost: 42.84,
-        markupPercentage: 50.0, // Markup sobre custo (Regra B.2.1)
-        suggestedUnitPrice: 64.26,
-        negotiatedUnitPrice: 64.26,
-        discountPercentage: 0,
-        belowSuggestedAuthorized: false,
-        estimatedMarginPercentage: 33.3,
-      },
-      unitFinalPrice: 64.26,
-      totalPrice: 64.26 * 130,
-      customizations: [
-        {
-          id: 'c-1',
-          type: 'bordado_peito',
-          description: 'Bordado logomarca alta definição no peito',
-          location: 'Peito Esquerdo',
-          unitCost: 6.50,
-        }
-      ],
-    }
-  ]);
+  const makeItem = (): QuoteItem => ({
+    id: crypto.randomUUID(), modelName: '', category: 'polos', fabricName: '', fabricColor: '',
+    sizes: { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 }, totalQuantity: 0,
+    costBreakdown: { materialUnitCost: 0, outsourcedSewingUnitCost: 0, customizationUnitCost: 0,
+      freightPerUnit: 0, technicalLossPercentage: 0, calculatedBaseCost: 0, markupPercentage: 0,
+      suggestedUnitPrice: 0, negotiatedUnitPrice: 0, discountPercentage: 0, belowSuggestedAuthorized: false, estimatedMarginPercentage: 0 },
+    unitFinalPrice: 0, totalPrice: 0, customizations: [],
+  });
+  const [items, setItems] = useState<QuoteItem[]>(() => [makeItem()]);
 
   const handleClientSelect = (cId: string) => {
     const found = clients.find((c) => c.id === cId) || null;
@@ -75,43 +48,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
     }
   };
 
-  const handleAddItem = () => {
-    const newItem: QuoteItem = {
-      id: `item-${Date.now()}`,
-      modelName: 'Calça Operacional Brim com Faixa 3M',
-      category: 'calcas',
-      fabricName: 'Brim Pesado 100% Algodão Santanense',
-      fabricColor: 'Cinza Chumbo',
-      sizes: { pp: 0, p: 15, m: 40, g: 35, gg: 10, xg: 0, exg: 0, sobMedida: 0 },
-      totalQuantity: 100,
-      costBreakdown: {
-        materialUnitCost: 42.00,
-        outsourcedSewingUnitCost: 18.00,
-        customizationUnitCost: 11.00,
-        freightPerUnit: 2.00,
-        technicalLossPercentage: 3.0,
-        calculatedBaseCost: 75.19,
-        markupPercentage: 45.0,
-        suggestedUnitPrice: 109.03,
-        negotiatedUnitPrice: 109.00,
-        discountPercentage: 0,
-        belowSuggestedAuthorized: false,
-        estimatedMarginPercentage: 31.0,
-      },
-      unitFinalPrice: 109.00,
-      totalPrice: 109.00 * 100,
-      customizations: [
-        {
-          id: `c-faixa-${Date.now()}`,
-          type: 'faixa_refletiva',
-          description: 'Faixa refletiva 3M 50mm tórax e pernas',
-          location: 'Pernas',
-          unitCost: 11.00,
-        }
-      ],
-    };
-    setItems((prev) => [...prev, newItem]);
-  };
+  const handleAddItem = () => setItems((previous) => [...previous, makeItem()]);
 
   const handleRemoveItem = (id: string) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
@@ -189,7 +126,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
   const entryAmount = (totalAmount * entryPercentage) / 100;
   const balanceDue = totalAmount - entryAmount;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const { submit, isSaving } = useSubmission();
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!selectedClient) {
@@ -212,9 +150,10 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
       return;
     }
 
+    if (productionLeadDays < 1 || validUntilDays < 1) { alert('Informe o prazo de produção e a validade da proposta.'); return; }
     const today = new Date();
     const validUntilDate = new Date(today.getTime() + validUntilDays * 86400000);
-    const seqNum = Math.floor(1000 + Math.random() * 900);
+    const seqNum = crypto.randomUUID();
 
     const newQuote: Quote = {
       id: `ORC-${today.getFullYear()}-${seqNum}`,
@@ -238,17 +177,12 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
       paymentTerms,
       productionLeadDays,
       status: 'enviado',
-      whatsAppProof: {
-        contactId: whatsAppContact,
-        timestamp: new Date().toISOString(),
-        notes: `Enviado para ${whatsAppContact} com confirmação de recebimento.`,
-        manualConfirmation: true,
-      },
+
       artApproved,
       notes,
     };
 
-    onSaveQuote(newQuote);
+    if (!(await submit(() => onSaveQuote(newQuote)))) return;
     onClose();
   };
 
@@ -358,7 +292,16 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                           }}
                           className="px-2.5 py-1 border border-slate-300 rounded-lg font-bold text-slate-900 bg-white"
                         />
-                        <span className="text-slate-500 text-[11px]">({item.fabricName})</span>
+                        <select aria-label="Categoria" value={item.category} className="rounded-lg border border-slate-300 p-1 text-xs"
+                          onChange={(event) => setItems((previous) => previous.map((entry, i) => i === index ? { ...entry, category: event.target.value as UniformCategory } : entry))}>
+                          {Array.from(new Set(initialPublicCatalog.map((entry) => entry.category))).map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                        </select>
+                        <input aria-label="Tecido" required placeholder="Tecido" value={item.fabricName}
+                          onChange={(event) => setItems((previous) => previous.map((entry, i) => i === index ? { ...entry, fabricName: event.target.value } : entry))}
+                          className="min-w-0 rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+                        <input aria-label="Cor" required placeholder="Cor" value={item.fabricColor}
+                          onChange={(event) => setItems((previous) => previous.map((entry, i) => i === index ? { ...entry, fabricColor: event.target.value } : entry))}
+                          className="min-w-0 rounded-lg border border-slate-300 px-2 py-1 text-xs" />
                       </div>
 
                       <div className="flex items-center gap-3">
@@ -593,7 +536,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                   <input
                     type="number"
                     value={productionLeadDays}
-                    onChange={(e) => setProductionLeadDays(parseInt(e.target.value) || 16)}
+                    onChange={(e) => setProductionLeadDays(parseInt(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-mono"
                   />
                 </div>
@@ -611,18 +554,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                 />
               </div>
 
-              {/* Pre-condition: Layout approval */}
-              <label className="flex items-center gap-2 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={artApproved}
-                  onChange={(e) => setArtApproved(e.target.checked)}
-                  className="rounded text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-slate-700 font-medium text-[11px]">
-                  <strong>Arte / Layout Personalizado já Aprovado</strong> (Pré-condição de liberação do corte no PRD)
-                </span>
-              </label>
+              <p className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">A aprovação formal da arte é registrada na OP, com o nome do cliente que a aprovou.</p>
             </div>
 
             {/* Totalizer */}
@@ -662,6 +594,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
             </button>
             <button
               type="submit"
+                  disabled={isSaving}
               className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 transition-colors shadow-sm cursor-pointer"
             >
               Salvar & Emitir Proposta (Versão 1)

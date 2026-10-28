@@ -10,11 +10,16 @@ import { ProductionOrderEntity } from '../types/db';
 
 export class OrderRepository {
   public async findAll(): Promise<ProductionOrderEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(productionOrders).orderBy(desc(productionOrders.createdAt));
         return rows.map((r) => this.mapToEntity(r));
       } catch (err) {
+        throw err;
         console.warn('⚠️ [OrderRepository] Erro ao listar OPs via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -22,6 +27,10 @@ export class OrderRepository {
   }
 
   public async findById(id: string): Promise<ProductionOrderEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(productionOrders).where(eq(productionOrders.id, id)).limit(1);
@@ -29,13 +38,19 @@ export class OrderRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        throw err;
         console.warn(`⚠️ [OrderRepository] Falha ao buscar OP ${id} via Drizzle.`, err);
       }
     }
+    if (fallbackDb.isConnected()) return null;
     return fallbackDb.orders.get(id) || null;
   }
 
   public async findByIdempotencyKey(key: string): Promise<ProductionOrderEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(productionOrders).where(eq(productionOrders.idempotencyKey, key)).limit(1);
@@ -43,6 +58,7 @@ export class OrderRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        throw err;
         console.warn(`⚠️ [OrderRepository] Falha ao buscar chave de idempotência ${key}.`, err);
       }
     }
@@ -53,14 +69,19 @@ export class OrderRepository {
   }
 
   public async save(order: ProductionOrderEntity): Promise<ProductionOrderEntity> {
-    fallbackDb.orders.set(order.id, order);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (!fallbackDb.isConnected()) fallbackDb.orders.set(order.id, order);
 
     if (fallbackDb.isConnected()) {
       try {
         const newRecord: NewProductionOrder = {
           id: order.id,
           orderNumber: order.orderNumber,
-          quoteId: order.quoteId,
+          quoteId: order.quoteId || null,
+          quoteItemId: order.quoteItemId,
           quoteVersion: order.quoteVersion || 1,
           idempotencyKey: order.idempotencyKey,
           clientId: order.clientId,
@@ -81,6 +102,7 @@ export class OrderRepository {
           entryPaymentConfirmed: order.entryPaymentConfirmed,
           entryReceiptUrl: order.entryReceiptUrl,
           entryReceiptReference: order.entryReceiptReference,
+          entryVerifiedById: order.entryVerifiedById,
           entryVerificationDate: order.entryVerificationDate ? new Date(order.entryVerificationDate) : null,
           priority: order.priority,
           creationDate: order.creationDate,
@@ -110,6 +132,13 @@ export class OrderRepository {
               entryReceiptReference: newRecord.entryReceiptReference,
               entryVerificationDate: newRecord.entryVerificationDate,
               completionDate: newRecord.completionDate,
+              itemTitle: newRecord.itemTitle, category: newRecord.category,
+              fabricName: newRecord.fabricName, fabricColor: newRecord.fabricColor,
+              sizes: newRecord.sizes, totalPieces: newRecord.totalPieces,
+              customizations: newRecord.customizations, priority: newRecord.priority,
+              targetDeliveryDate: newRecord.targetDeliveryDate,
+              partnerCostPerPiece: newRecord.partnerCostPerPiece,
+              entryVerifiedById: newRecord.entryVerifiedById,
               outsourcedPartner: newRecord.outsourcedPartner,
               technicalNotes: newRecord.technicalNotes,
               assignedTeam: newRecord.assignedTeam,
@@ -117,6 +146,7 @@ export class OrderRepository {
             },
           });
       } catch (err) {
+        throw err;
         console.error(`❌ [OrderRepository] Falha ao persistir OP ${order.id} via Drizzle:`, err);
       }
     }
@@ -125,23 +155,37 @@ export class OrderRepository {
   }
 
   public async delete(id: string): Promise<boolean> {
-    fallbackDb.orders.delete(id);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (!fallbackDb.isConnected()) fallbackDb.orders.delete(id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(productionOrders).where(eq(productionOrders.id, id));
         return true;
       } catch (err) {
+        throw err;
         console.error(`❌ [OrderRepository] Falha ao deletar OP ${id} via Drizzle:`, err);
       }
     }
     return true;
   }
 
+  public async findByQuoteId(quoteId: string): Promise<ProductionOrderEntity[]> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) {
+      return (await drizzleDb.select().from(productionOrders).where(eq(productionOrders.quoteId, quoteId))).map((row) => this.mapToEntity(row));
+    }
+    return [...fallbackDb.orders.values()].filter((order) => order.quoteId === quoteId);
+  }
+
   private mapToEntity(row: ProductionOrder): ProductionOrderEntity {
     return {
       id: row.id,
       orderNumber: row.orderNumber,
-      quoteId: row.quoteId || '',
+      quoteId: row.quoteId || undefined,
+      quoteItemId: row.quoteItemId || undefined,
       quoteVersion: row.quoteVersion,
       idempotencyKey: row.idempotencyKey,
       clientId: row.clientId,
@@ -162,6 +206,7 @@ export class OrderRepository {
       entryPaymentConfirmed: row.entryPaymentConfirmed,
       entryReceiptUrl: row.entryReceiptUrl || undefined,
       entryReceiptReference: row.entryReceiptReference || undefined,
+      entryVerifiedById: row.entryVerifiedById || undefined,
       entryVerificationDate: row.entryVerificationDate ? row.entryVerificationDate.toISOString() : undefined,
       priority: row.priority as any,
       creationDate: row.creationDate,

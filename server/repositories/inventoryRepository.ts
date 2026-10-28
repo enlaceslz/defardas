@@ -10,11 +10,16 @@ import { InventoryItemEntity, StockMovementEntity } from '../types/db';
 
 export class InventoryRepository {
   public async findAllItems(): Promise<InventoryItemEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(items).orderBy(desc(items.createdAt));
         return rows.map((r) => this.mapToItemEntity(r));
       } catch (err) {
+        throw err;
         console.warn('⚠️ [InventoryRepository] Erro ao listar itens via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -22,6 +27,10 @@ export class InventoryRepository {
   }
 
   public async findItemById(id: string): Promise<InventoryItemEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(items).where(eq(items.id, id)).limit(1);
@@ -29,14 +38,20 @@ export class InventoryRepository {
           return this.mapToItemEntity(rows[0]);
         }
       } catch (err) {
+        throw err;
         console.warn(`⚠️ [InventoryRepository] Falha ao buscar item ${id} via Drizzle.`, err);
       }
     }
+    if (fallbackDb.isConnected()) return null;
     return fallbackDb.inventory.get(id) || null;
   }
 
   public async saveItem(item: InventoryItemEntity): Promise<InventoryItemEntity> {
-    fallbackDb.inventory.set(item.id, item);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (!fallbackDb.isConnected()) fallbackDb.inventory.set(item.id, item);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -63,6 +78,8 @@ export class InventoryRepository {
           .onConflictDoUpdate({
             target: items.id,
             set: {
+              name: newRecord.name, category: newRecord.category, unit: newRecord.unit,
+              minStock: newRecord.minStock, supplier: newRecord.supplier, location: newRecord.location,
               physicalStock: newRecord.physicalStock,
               allocatedStock: newRecord.allocatedStock,
               inPartnersCustodyStock: newRecord.inPartnersCustodyStock,
@@ -72,6 +89,7 @@ export class InventoryRepository {
             },
           });
       } catch (err) {
+        throw err;
         console.error(`❌ [InventoryRepository] Falha ao persistir item ${item.id} via Drizzle:`, err);
       }
     }
@@ -80,11 +98,16 @@ export class InventoryRepository {
   }
 
   public async findAllMovements(): Promise<StockMovementEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(movements).orderBy(desc(movements.createdAt));
         return rows.map((r) => this.mapToMovementEntity(r));
       } catch (err) {
+        throw err;
         console.warn('⚠️ [InventoryRepository] Erro ao listar movimentações via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -92,7 +115,11 @@ export class InventoryRepository {
   }
 
   public async saveMovement(mov: StockMovementEntity): Promise<StockMovementEntity> {
-    fallbackDb.movements.set(mov.id, mov);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (!fallbackDb.isConnected()) fallbackDb.movements.set(mov.id, mov);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -107,6 +134,7 @@ export class InventoryRepository {
           date: mov.date,
           reason: mov.reason,
           referenceDoc: mov.referenceDoc,
+          operatorId: mov.operatorId,
           operatorName: mov.operatorName,
           isDemo: mov.isDemo ?? false,
         };
@@ -116,11 +144,18 @@ export class InventoryRepository {
           .values(newRecord)
           .onConflictDoNothing();
       } catch (err) {
+        throw err;
         console.error(`❌ [InventoryRepository] Falha ao persistir movimentação ${mov.id} via Drizzle:`, err);
       }
     }
 
     return mov;
+  }
+
+  public async deleteItem(id: string): Promise<void> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) await drizzleDb.delete(items).where(eq(items.id, id));
+    else fallbackDb.inventory.delete(id);
   }
 
   private mapToItemEntity(row: InventoryItem): InventoryItemEntity {

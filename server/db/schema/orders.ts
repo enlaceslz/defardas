@@ -1,5 +1,6 @@
-import { pgSchema, uuid, varchar, text, integer, numeric, boolean, date, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
-import { quotes } from './quotes';
+import { pgSchema, uuid, varchar, text, integer, numeric, boolean, date, timestamp, jsonb, index, uniqueIndex, check } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { quotes, quoteItems } from './quotes';
 import { clients } from './clients';
 import { users } from './users';
 
@@ -9,6 +10,7 @@ export const productionOrders = producaoSchema.table('production_orders', {
   id: uuid('id').primaryKey().defaultRandom(),
   orderNumber: varchar('order_number', { length: 30 }).unique().notNull(), // Ex: OP-2026-0101
   quoteId: uuid('quote_id').references(() => quotes.id, { onDelete: 'restrict' }),
+  quoteItemId: uuid('quote_item_id').references(() => quoteItems.id, { onDelete: 'restrict' }),
   quoteVersion: integer('quote_version').notNull().default(1),
   idempotencyKey: varchar('idempotency_key', { length: 120 }).unique().notNull(), // Previne duplicação de OPs
   clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'restrict' }),
@@ -63,6 +65,9 @@ export const productionOrders = producaoSchema.table('production_orders', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
+  uniqueIndex('uq_order_quote_item_version').on(table.quoteId, table.quoteItemId, table.quoteVersion),
+  check('orders_gate', sql`${table.stage} = 'aguardando_liberacao' OR (${table.artApproved} AND ${table.entryPaymentConfirmed} AND ${table.entryReceiptUrl} IS NOT NULL)`),
+  check('orders_positive_pieces', sql`${table.totalPieces} > 0`),
   index('idx_orders_client').on(table.clientId),
   index('idx_orders_stage').on(table.stage),
   index('idx_orders_idempotency').on(table.idempotencyKey),

@@ -91,6 +91,16 @@ class ApiClient {
     return headers;
   }
 
+  public updateOrder(id: string, payload: any) { return this.request<any>(`/orders/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
+  public updateQuoteStatus(id: string, status: string) { return this.request<any>(`/quotes/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); }
+  public updateInventoryItem(id: string, payload: any) { return this.request<any>(`/inventory/items/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
+  public deleteInventoryItem(id: string) { return this.request<any>(`/inventory/items/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+  public updateClient(id: string, payload: any) { return this.request<any>(`/clients/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
+  public deleteClient(id: string) { return this.request<any>(`/clients/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+
+  public getPublicConfig() { return this.request<{ profile: any }>('/public-config', { method: 'GET' }); }
+  public saveProfile(profile: any) { return this.request<any>('/settings/profile', { method: 'PUT', body: JSON.stringify(profile) }); }
+
   // Health
   public async getHealth() {
     return this.request<any>('/health', { method: 'GET' });

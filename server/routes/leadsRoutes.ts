@@ -1,3 +1,4 @@
+import { atomic } from '../db/unitOfWork';
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
@@ -16,14 +17,14 @@ leadsRouter.get('/', requireAuth, requirePermission('crm:view_leads'), async (_r
 });
 
 // Captura pública de lead vinda do Portal Público (Ambiente 1 do PRD)
-leadsRouter.post('/', async (req: Request, res: Response) => {
+leadsRouter.post('/', atomic(async (req: Request, res: Response) => {
   const { clientName, companyName, phone, email, category, estimatedQty, notes } = req.body;
 
-  if (!clientName || !companyName || !phone || !category) {
+  if (![clientName, companyName, phone, category].every((value) => typeof value === 'string' && value.trim().length > 0 && value.length <= 200)) {
     return res.status(400).json({ error: 'Campos obrigatórios: clientName, companyName, phone, category' });
   }
 
-  const leadNumber = sequenceService.nextLeadNumber();
+  const leadNumber = await sequenceService.nextLeadNumber();
   const leadId = crypto.randomUUID();
 
   const newLead: LeadEntity = {
@@ -44,38 +45,7 @@ leadsRouter.post('/', async (req: Request, res: Response) => {
 
   await leadRepository.save(newLead);
 
-  // Cadastrar ou vincular cliente na carteira se for novo
-  const allClients = await clientRepository.findAll();
-  let matchedClient = allClients.find(
-    (c) => c.phone === phone || c.companyName.toLowerCase() === companyName.toLowerCase()
-  );
-
-  if (!matchedClient) {
-    const clientCode = sequenceService.nextClientCode();
-    matchedClient = {
-      id: crypto.randomUUID(),
-      code: clientCode,
-      companyName: companyName.toUpperCase(),
-      tradeName: companyName,
-      cnpj: '00.000.000/0001-00', // Cadastro preliminar aguardando dados fiscais
-      contactName: clientName,
-      phone,
-      email: email || '',
-      address: 'São Luís - MA',
-      city: 'São Luís',
-      state: 'MA',
-      segment: 'Corporativo / Lead Web',
-      standardUniformNotes: `Origem: Portal Público DE FARDAS. Categoria solicitada: ${category}.`,
-      totalOrdersCount: 0,
-      totalSpent: 0,
-      isDemo: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await clientRepository.save(matchedClient);
-  }
-
-  auditService.log({
+  await auditService.log({
     actorName: 'Portal Público (Visitante)',
     actorRole: 'cliente_portal',
     entityName: 'crm.leads',
@@ -88,13 +58,12 @@ leadsRouter.post('/', async (req: Request, res: Response) => {
   res.status(201).json({
     success: true,
     message: 'Solicitação de orçamento recebida com sucesso! Nossa equipe comercial entrará em contato em breve via WhatsApp.',
-    lead: newLead,
-    client: matchedClient,
+    leadId: newLead.id,
   });
-});
+}));
 
 // Atualizar status do lead (Apenas vendedores, gerentes e admin)
-leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clients'), async (req: RequestWithUser, res: Response) => {
+leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clients'), atomic(async (req: RequestWithUser, res: Response) => {
   const lead = await leadRepository.findById(req.params.id);
   if (!lead) {
     return res.status(404).json({ error: 'Lead não encontrado' });
@@ -106,4 +75,4 @@ leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clie
 
   await leadRepository.save(lead);
   res.json({ success: true, lead });
-});
+}));

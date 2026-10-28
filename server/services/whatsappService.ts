@@ -62,8 +62,9 @@ export class WhatsAppService {
         const cleanPhone = conv.customerPhone.replace(/\D/g, '');
         const metaUrl = `https://graph.facebook.com/v21.0/${this.metaPhoneNumberId}/messages`;
         
-        await fetch(metaUrl, {
+        const response = await fetch(metaUrl, {
           method: 'POST',
+          signal: AbortSignal.timeout(15000),
           headers: {
             'Authorization': `Bearer ${this.metaToken}`,
             'Content-Type': 'application/json',
@@ -75,6 +76,7 @@ export class WhatsAppService {
             text: { body: options.body },
           }),
         });
+        if (!response.ok) throw new Error(`Provedor WhatsApp retornou HTTP ${response.status}.`);
       } catch (err: any) {
         console.warn('⚠️ [WhatsApp] Erro no envio via Meta Cloud API:', err.message);
         newMsg.status = 'failed';
@@ -83,8 +85,9 @@ export class WhatsAppService {
     } else if (channel.provider === 'wa_akg') {
       try {
         const cleanPhone = conv.customerPhone.replace(/\D/g, '');
-        await fetch(`${this.waAkgEndpoint}/message/sendText`, {
+        const response = await fetch(`${this.waAkgEndpoint}/message/sendText`, {
           method: 'POST',
+          signal: AbortSignal.timeout(15000),
           headers: {
             'Content-Type': 'application/json',
             'apikey': this.waAkgApiKey || '',
@@ -94,10 +97,15 @@ export class WhatsAppService {
             text: options.body,
           }),
         });
+        if (!response.ok) throw new Error(`Provedor WhatsApp retornou HTTP ${response.status}.`);
       } catch (err: any) {
         console.warn('⚠️ [WhatsApp] Erro no envio via WA-AKG container:', err.message);
-        // Não quebra a interface, mantém status enviado em ambiente simulado
+        newMsg.status = 'failed';
+        newMsg.errorMessage = err.message;
       }
+    } else {
+      newMsg.status = 'failed';
+      newMsg.errorMessage = 'Provedor WhatsApp não configurado.';
     }
 
     await communicationRepository.saveMessage(newMsg);
@@ -108,12 +116,12 @@ export class WhatsAppService {
     conv.updatedAt = new Date().toISOString();
     await communicationRepository.saveConversation(conv);
 
-    auditService.log({
+    await auditService.log({
       actorName: options.senderName || 'DE FARDAS',
       actorRole: 'atendimento',
       entityName: 'communication.messages',
       entityId: newMsg.id,
-      action: 'SEND_WHATSAPP_MESSAGE',
+      action: newMsg.status === 'failed' ? 'WHATSAPP_MESSAGE_FAILED' : 'SEND_WHATSAPP_MESSAGE',
       notes: `Mensagem enviada para ${conv.customerName} (${conv.customerPhone}). Provedor: ${channel.provider}.`,
     });
 
@@ -187,7 +195,7 @@ export class WhatsAppService {
 
     await communicationRepository.saveMessage(newMsg);
 
-    auditService.log({
+    await auditService.log({
       actorName: payload.fromName || cleanPhone,
       actorRole: 'cliente_whatsapp',
       entityName: 'communication.messages',

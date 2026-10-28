@@ -39,9 +39,8 @@ export class InMemoryRateLimiter {
   }
 
   public middleware() {
-    return (req: Request, res: Response, next: NextFunction) => {
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-                 req.ip ||
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const ip = req.ip ||
                  req.socket.remoteAddress ||
                  'unknown';
 
@@ -66,7 +65,7 @@ export class InMemoryRateLimiter {
         res.setHeader('X-RateLimit-Remaining', 0);
 
         // Registro de incidente de segurança na trilha de auditoria
-        auditService.log({
+        await auditService.log({
           actorName: `IP:${ip}`,
           actorRole: 'unauthenticated',
           entityName: 'security_rate_limit',

@@ -165,7 +165,7 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
                         </div>
                       </td>
                       <td className="py-3 px-3 align-top text-center font-mono text-slate-600">
-                        {item.costBreakdown?.markupPercentage || 45}%
+                        {item.costBreakdown?.markupPercentage ?? 0}%
                       </td>
                       <td className="py-3 px-3 align-top text-right font-mono font-bold text-slate-900">
                         {item.totalQuantity} pçs

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { mapClient, mapInventory, mapFinance, mapQuote, mapOrder } from './api/adapters';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
@@ -42,7 +43,12 @@ import {
 
 export default function App() {
   const { user, isAuthenticated, isLoading } = useAuth();
-  const [state, setState] = useState<ERPState>(() => loadERPState());
+  const emptyState = (): ERPState => { const initial = loadERPState(); return { ...initial, clients: [], inventory: [], orders: [], quotes: [], finance: [] }; };
+  const [state, setState] = useState<ERPState>(emptyState);
+  const sessionIdentity = useRef(user?.id);
+  sessionIdentity.current = user?.id;
+  const [syncError, setSyncError] = useState('');
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -58,688 +64,130 @@ export default function App() {
   const [isHelpManualOpen, setIsHelpManualOpen] = useState(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
-  // Sync de backup para localStorage
+  useEffect(() => { void api.getPublicConfig().then((response) => {
+    if (response.status === 200 && response.data?.profile) setState((previous) => ({ ...previous, profile: response.data!.profile }));
+  }); }, []);
+
+  const refreshServerState = useCallback(async () => {
+    const identity = user?.id;
+    if (!identity) return;
+    const responses = await Promise.all([api.getOrders(), api.getQuotes(), api.getInventoryItems(), api.getClients(), api.getTransactions()]);
+    if (sessionIdentity.current !== identity) return;
+    const failure = responses.find((response) => response.status !== 200 || !Array.isArray(response.data));
+    if (failure) { setSyncError(failure.error || 'Não foi possível carregar os dados.'); return; }
+    const [orders, quotes, inventory, clients, finance] = responses.map((response) => response.data!);
+    setState((prev) => ({ ...prev, clients: clients.map(mapClient), inventory: inventory.map(mapInventory),
+      finance: finance.map(mapFinance), quotes: quotes.map((row) => mapQuote(row, clients)),
+      orders: orders.map((row) => mapOrder(row, clients, quotes)) }));
+    setSyncError('');
+    setLoadedFor(identity);
+  }, [user?.id]);
+
   useEffect(() => {
-    saveERPState(state);
-  }, [state]);
+    setState((previous) => ({ ...emptyState(), profile: previous.profile })); setLoadedFor(null);
+    setSelectedOrderForTicket(null); setSelectedQuoteForPrint(null);
+    setIsNewOrderModalOpen(false); setIsNewQuoteModalOpen(false);
+    setSyncError('');
+    if (user?.id) void refreshServerState();
+  }, [user?.id, refreshServerState]);
 
-  // Carregar dados reais e autoritativos do backend PostgreSQL quando autenticado
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const fetchServerState = async () => {
-      try {
-        const [ordersRes, quotesRes, invRes, clientsRes, finRes] = await Promise.all([
-          api.getOrders(),
-          api.getQuotes(),
-          api.getInventoryItems(),
-          api.getClients(),
-          api.getTransactions(),
-        ]);
-
-        setState((prev) => {
-          const updated = { ...prev };
-          if (ordersRes.data && Array.isArray(ordersRes.data) && ordersRes.data.length > 0) {
-            updated.orders = ordersRes.data.map((o: any) => ({
-              id: o.orderNumber || o.id,
-              quoteId: o.quoteId,
-              quoteVersion: o.quoteVersion || 1,
-              clientId: o.clientId,
-              clientName: o.clientName,
-              itemTitle: o.itemTitle,
-              category: o.category,
-              fabricName: o.fabricName,
-              fabricColor: o.fabricColor,
-              sizes: o.sizes || { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
-              totalPieces: o.totalPieces,
-              customizations: o.customizations || [],
-              costBreakdown: o.costBreakdown || {
-                materialUnitCost: 25,
-                outsourcedSewingUnitCost: 15,
-                customizationUnitCost: 6,
-                freightPerUnit: 1.5,
-                technicalLossPercentage: 2,
-                calculatedBaseCost: 48,
-                markupPercentage: 50,
-                suggestedUnitPrice: 72,
-                negotiatedUnitPrice: 72,
-                discountPercentage: 0,
-                belowSuggestedAuthorized: false,
-                estimatedMarginPercentage: 33,
-              },
-              materials: o.materials || [],
-              commercialStatus: o.commercialStatus,
-              financialStatus: o.financialStatus,
-              stage: o.stage,
-              artApproved: o.artApproved,
-              artApprovalDate: o.artApprovalDate,
-              artApprovedBy: o.artApprovedBy,
-              entryPaymentConfirmed: o.entryPaymentConfirmed,
-              entryReceiptUrl: o.entryReceiptUrl,
-              canStartProduction: Boolean(o.entryPaymentConfirmed && o.artApproved),
-              priority: o.priority,
-              creationDate: o.creationDate,
-              targetDeliveryDate: o.targetDeliveryDate,
-              technicalNotes: o.technicalNotes,
-              assignedTeam: o.assignedTeam,
-            }));
-          }
-          if (quotesRes.data && Array.isArray(quotesRes.data) && quotesRes.data.length > 0) {
-            updated.quotes = quotesRes.data.map((q: any) => ({
-              id: q.quoteNumber || q.id,
-              version: q.version || 1,
-              clientId: q.clientId,
-              clientName: q.clientName,
-              clientCnpj: q.clientCnpj,
-              clientContact: q.sellerName,
-              clientPhone: '(98) 98841-2090',
-              clientEmail: 'compras@cliente.com.br',
-              sellerName: q.sellerName,
-              date: q.date,
-              validUntil: q.validUntil,
-              items: (q.items || []).map((it: any) => ({
-                id: it.id,
-                modelName: it.modelName,
-                category: it.category,
-                fabricName: it.fabricName,
-                fabricColor: it.fabricColor,
-                sizes: it.sizes || { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
-                totalQuantity: it.totalQuantity || it.quantity || 1,
-                costBreakdown: {
-                  materialUnitCost: it.materialUnitCost || 25,
-                  outsourcedSewingUnitCost: it.outsourcedSewingUnitCost || 15,
-                  customizationUnitCost: it.customizationUnitCost || 6,
-                  freightPerUnit: it.freightUnitCost || 1.5,
-                  technicalLossPercentage: it.technicalLossPercentage || 2,
-                  calculatedBaseUnitCost: it.calculatedBaseUnitCost || 48,
-                  markupPercentage: it.markupPercentage || 50,
-                  suggestedUnitPrice: it.suggestedUnitPrice || 72,
-                  negotiatedUnitPrice: it.negotiatedUnitPrice || 72,
-                  discountPercentage: 0,
-                  belowSuggestedAuthorized: false,
-                  estimatedMarginPercentage: 33,
-                },
-                unitFinalPrice: it.negotiatedUnitPrice || 72,
-                totalPrice: it.totalItemPrice || 72,
-                customizations: it.customizations || [],
-              })),
-              subtotal: q.suggestedTotalAmount,
-              discountPercentage: 0,
-              totalAmount: q.negotiatedTotalAmount,
-              entryPercentage: 50,
-              entryAmount: q.entryAmount,
-              balanceDueAtDelivery: q.balanceAmount,
-              paymentTerms: q.paymentTerms,
-              productionLeadDays: q.productionLeadDays,
-              status: q.commercialStatus,
-              artApproved: q.artApproved,
-              notes: q.notes,
-            }));
-          }
-          if (invRes.data && Array.isArray(invRes.data) && invRes.data.length > 0) {
-            updated.inventory = invRes.data.map((i: any) => ({
-              id: i.code || i.id,
-              code: i.code || i.id,
-              name: i.name,
-              category: i.category,
-              unit: i.unit,
-              currentStock: i.physicalStock ?? i.currentStock ?? 0,
-              allocatedStock: i.allocatedStock ?? 0,
-              inPartnersCustodyStock: i.inPartnersCustodyStock ?? 0,
-              minStock: i.minStock ?? 50,
-              costPrice: i.unitCostPrice ?? i.costPrice ?? 0,
-              supplier: i.supplier || 'Fornecedor Homologado',
-              location: i.location || 'Almoxarifado Central',
-              lastRestocked: i.lastRestocked || new Date().toISOString().split('T')[0],
-            }));
-          }
-          if (clientsRes.data && Array.isArray(clientsRes.data) && clientsRes.data.length > 0) {
-            updated.clients = clientsRes.data.map((c: any) => ({
-              id: c.code || c.id,
-              companyName: c.companyName,
-              tradeName: c.tradeName,
-              cnpj: c.cnpj,
-              contactName: c.contactName,
-              phone: c.phone,
-              email: c.email,
-              address: c.address,
-              city: c.city,
-              state: c.state,
-              segment: c.segment,
-              standardUniformNotes: c.standardUniformNotes,
-              totalOrdersCount: c.totalOrdersCount,
-              totalSpent: c.totalSpent,
-              createdAt: c.createdAt ? c.createdAt.split('T')[0] : '2026-01-01',
-            }));
-          }
-          if (finRes.data && Array.isArray(finRes.data) && finRes.data.length > 0) {
-            updated.finance = finRes.data.map((f: any) => ({
-              id: f.transactionNumber || f.id,
-              type: f.type,
-              subType: f.subType,
-              description: f.description,
-              category: f.category,
-              amount: f.amount,
-              dueDate: f.dueDate,
-              paidDate: f.paidDate,
-              status: f.status,
-              paymentMethod: f.paymentMethod,
-              referenceId: f.referenceId,
-              receiptEvidenceUrl: f.receiptEvidenceUrl,
-            }));
-          }
-          return updated;
-        });
-      } catch (err) {
-        console.warn('⚠️ [ERP Frontend] Falha ao sincronizar dados com o backend:', err);
-      }
-    };
-
-    fetchServerState();
-  }, [isAuthenticated]);
-
-  // Orders Actions
-  const handleSaveOrder = (savedOrder: ProductionOrder) => {
-    setState((prev) => {
-      const exists = prev.orders.some((o) => o.id === savedOrder.id);
-      let updatedOrders: ProductionOrder[];
-      if (exists) {
-        updatedOrders = prev.orders.map((o) => (o.id === savedOrder.id ? savedOrder : o));
-      } else {
-        updatedOrders = [savedOrder, ...prev.orders];
-      }
-      return { ...prev, orders: updatedOrders };
-    });
-    setEditingOrder(null);
+  async function mutate(operation: () => Promise<{ status: number; error?: string; data?: any }>): Promise<boolean> {
+    const identity = user?.id;
+    const response = await operation();
+    if (identity !== sessionIdentity.current) return false;
+    if (response.status < 200 || response.status >= 300) { alert(response.error || 'A operação não foi confirmada.'); return false; }
+    await refreshServerState();
+    return true;
+  }
+  const databaseId = (records: { id: string; backendId?: string }[], id: string) => records.find((record) => record.id === id)?.backendId || id;
+  const startOrder = () => {
+    setCurrentTab('quotes');
+    alert('Para emitir uma OP, selecione uma proposta aprovada e use Converter em Pedido. Cada item terá sua própria ficha de produção.');
   };
-
-  const handleEditOrder = (order: ProductionOrder) => {
-    setEditingOrder(order);
-    setIsNewOrderModalOpen(true);
+  const handleSaveOrder = async (order: ProductionOrder) => {
+    const existing = state.orders.find((item) => item.id === order.id);
+    if (!existing?.backendId) { startOrder(); return false; }
+    return mutate(() => api.updateOrder(existing.backendId!, order));
   };
-
-  const handleDeleteOrder = (orderId: string) => {
-    if (confirm(`Deseja realmente excluir a Ordem de Produção ${orderId}?`)) {
-      setState((prev) => ({
-        ...prev,
-        orders: prev.orders.filter((o) => o.id !== orderId),
-      }));
+  const handleEditOrder = (order: ProductionOrder) => { setEditingOrder(order); setIsNewOrderModalOpen(true); };
+  const handleDeleteOrder = async (id: string) => {
+    if (confirm(`Excluir OP ${id}?`)) await mutate(() => api.deleteOrder(databaseId(state.orders, id)));
+  };
+  const handleUpdateOrderStage = async (id: string, stage: OperationalStage) => { await mutate(() => api.advanceOrderStage(databaseId(state.orders, id), stage)); };
+  const handleConfirmEntryPayment = () => {
+    setCurrentTab('finance');
+    alert('Localize o título de sinal da proposta e confirme a liquidação com a autenticação bancária e o comprovante real.');
+  };
+  const handleApproveArt = async (id: string) => {
+    const approver = prompt('Nome do cliente que aprovou formalmente a arte:');
+    if (approver?.trim()) await mutate(() => api.approveOrderArt(databaseId(state.orders, id), approver.trim()));
+  };
+  const handleSaveQuote = async (quote: Quote) => mutate(() => api.createQuote({ ...quote,
+    clientId: databaseId(state.clients, quote.clientId), commercialStatus: quote.status }));
+  const handleUpdateQuoteStatus = async (id: string, status: CommercialStatus) => { await mutate(() => api.updateQuoteStatus(databaseId(state.quotes, id), status)); };
+  const handleConvertQuoteToOrder = async (quote: Quote) => {
+    if (quote.status !== 'aprovado' && quote.status !== 'convertido_em_pedido') {
+      if (!confirm(`Registrar aprovação comercial da proposta ${quote.id} e gerar as ordens de produção?`)) return;
+      const approval = await api.updateQuoteStatus(quote.backendId || quote.id, 'aprovado');
+      if (approval.status !== 200) { alert(approval.error || 'Aprovação não confirmada.'); await refreshServerState(); return; }
+    }
+    if (await mutate(() => api.convertQuoteToOrder(quote.backendId || quote.id))) {
+      setSelectedQuoteForPrint(null); setCurrentTab('orders');
     }
   };
+  const handleDeleteQuote = async (id: string) => {
+    if (confirm(`Excluir proposta ${id}?`)) await mutate(() => api.deleteQuote(databaseId(state.quotes, id)));
+  };
+  const handleRequestQuoteFromPortal = async (request: Parameters<typeof api.submitPublicLead>[0]) => {
+    const response = await api.submitPublicLead(request);
+    if (response.status !== 201) { alert(response.error || 'Não foi possível enviar a solicitação.'); return false; }
+    return true;
+  };
+  const handleSaveInventoryItem = async (item: InventoryItem) => {
+    const existing = state.inventory.find((entry) => entry.id === item.id);
+    if (!existing?.backendId) return mutate(() => api.createInventoryItem(item));
+    const reason = item.currentStock !== existing.currentStock ? prompt('Motivo do ajuste de estoque:') : '';
+    if (item.currentStock !== existing.currentStock && !reason?.trim()) return false;
+    return mutate(() => api.updateInventoryItem(existing.backendId!, { ...item, expectedPhysicalStock: existing.currentStock, adjustmentReason: reason }));
+  };
+  const handleDeleteInventoryItem = async (id: string) => {
+    if (confirm('Excluir item sem saldo e sem histórico?')) await mutate(() => api.deleteInventoryItem(databaseId(state.inventory, id)));
+  };
+  const handleSaveClient = async (client: Client) => {
+    const existing = state.clients.find((entry) => entry.id === client.id);
+    return mutate(() => existing?.backendId ? api.updateClient(existing.backendId, client) : api.createClient(client));
+  };
+  const handleDeleteClient = async (id: string) => {
+    if (confirm('Excluir cliente sem histórico?')) await mutate(() => api.deleteClient(databaseId(state.clients, id)));
+  };
+  const handleSaveTransaction = async (title: FinancialTransaction) => mutate(() => api.createTransaction(title));
+  const handleDeleteTransaction = async (id: string) => {
+    if (confirm('Excluir título pendente sem vínculo com produção?')) await mutate(() => api.deleteTransaction(databaseId(state.finance, id)));
+  };
+  const handleToggleTransactionStatus = () => { alert('Uma liquidação exige comprovante. Títulos pagos precisam de estorno auditado; não podem ser alternados para pendente.'); };
+  const handleConfirmPaymentWithVoucher = async (id: string, voucher: string, notes: string, evidenceUrl: string) =>
+    mutate(() => api.confirmPayment(databaseId(state.finance, id), { receiptVoucherNumber: voucher, receiptEvidenceUrl: evidenceUrl, confirmationNotes: notes }));
 
-  const handleUpdateOrderStage = async (orderId: string, nextStage: OperationalStage) => {
-    // Validação estrita do Portão A.3.2 com o backend
-    const res = await api.advanceOrderStage(orderId, nextStage);
-    if (res.status === 422) {
-      alert(`Bloqueio do Portão de Liberação Fabril (Gate A.3.2):\n\n${res.error || 'A Ordem de Produção não pode avançar para corte sem sinal de 50% confirmado com comprovante e arte formalmente aprovada.'}`);
-      return;
-    }
-
-    setState((prev) => ({
-      ...prev,
-      orders: prev.orders.map((o) => {
-        if (o.id === orderId) {
-          return {
-            ...o,
-            stage: nextStage,
-            completionDate: nextStage === 'entregue' ? new Date().toISOString().split('T')[0] : o.completionDate,
-          };
-        }
-        return o;
-      }),
-    }));
+  // Profile público é persistido no servidor; dados privados não vão ao navegador.
+  const handleSaveProfile = async (profile: CompanyProfile) => {
+    const response = await api.saveProfile(profile);
+    if (response.status !== 200) { alert(response.error || 'Falha ao salvar perfil.'); return false; }
+    setState((previous) => ({ ...previous, profile: response.data }));
+    return true;
   };
 
-  // PRD Gate 1: Confirmação do Sinal de Entrada (50%) com comprovante
-  const handleConfirmEntryPayment = (orderId: string) => {
-    setState((prev) => ({
-      ...prev,
-      orders: prev.orders.map((o) => {
-        if (o.id === orderId) {
-          const canStart = Boolean(o.artApproved);
-          return {
-            ...o,
-            entryPaymentConfirmed: true,
-            entryReceiptUrl: `comprovante_manual_${Date.now()}.pdf`,
-            financialStatus: 'entrada_confirmada',
-            canStartProduction: canStart,
-            stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
-          };
-        }
-        return o;
-      }),
-    }));
-  };
+  const handleRestoreState = async (restored: ERPState) => mutate(() => api.importLocalStorageData(restored));
 
-  // PRD Gate 2: Aprovação formal da Arte / Layout
-  const handleApproveArt = async (orderId: string) => {
-    await api.approveOrderArt(orderId, user?.fullName || 'Cliente (WhatsApp)');
-
-    setState((prev) => ({
-      ...prev,
-      orders: prev.orders.map((o) => {
-        if (o.id === orderId) {
-          const canStart = Boolean(o.entryPaymentConfirmed);
-          return {
-            ...o,
-            artApproved: true,
-            artApprovalDate: new Date().toISOString().split('T')[0],
-            artApprovedBy: user?.fullName || 'Cliente (WhatsApp)',
-            canStartProduction: canStart,
-            stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
-          };
-        }
-        return o;
-      }),
-    }));
-  };
-
-  // Quotes Actions
-  const handleSaveQuote = (quote: Quote) => {
-    setState((prev) => ({
-      ...prev,
-      quotes: [quote, ...prev.quotes],
-    }));
-  };
-
-  const handleUpdateQuoteStatus = (quoteId: string, status: CommercialStatus) => {
-    setState((prev) => ({
-      ...prev,
-      quotes: prev.quotes.map((q) => (q.id === quoteId ? { ...q, status } : q)),
-    }));
-  };
-
-  // Conversão Idempotente de Orçamento em Pedido (PRD A.3.1 e B.3)
-  const handleConvertQuoteToOrder = (quote: Quote) => {
-    // Idempotência Rígida: Se já foi convertido ou OP com este quoteId já existe, não recriar
-    const alreadyConverted = state.orders.some((o) => o.quoteId === quote.id) || quote.status === 'convertido_em_pedido';
-    if (alreadyConverted) {
-      alert(`Esta proposta já foi convertida anteriormente (OP vinculada: ${quote.convertedToOrderId || 'Existente'}). Ação idempotente mantida.`);
-      return;
-    }
-
-    // Disparar sincronização com o backend
-    api.convertQuoteToOrder(quote.id).catch((err) => console.warn('Erro ao sincronizar conversão no backend:', err));
-
-    const opSeq = String(Math.floor(100 + Math.random() * 900)).padStart(4, '0');
-    const opId = `OP-2026-${opSeq}`;
-
-    const newOrders: ProductionOrder[] = quote.items.map((item, idx) => {
-      const orderSpecificId = idx === 0 ? opId : `${opId}-${idx + 1}`;
-      const defaultCost = item.costBreakdown || {
-        materialUnitCost: 24.0,
-        outsourcedSewingUnitCost: 15.0,
-        customizationUnitCost: 6.5,
-        freightPerUnit: 1.5,
-        technicalLossPercentage: 2.0,
-        calculatedBaseCost: 47.94,
-        markupPercentage: 45.0,
-        suggestedUnitPrice: 69.51,
-        negotiatedUnitPrice: item.unitFinalPrice,
-        discountPercentage: 0,
-        belowSuggestedAuthorized: false,
-        estimatedMarginPercentage: 31.0,
-      };
-
-      const canStart = Boolean(quote.artApproved);
-
-      return {
-        id: orderSpecificId,
-        quoteId: quote.id,
-        quoteVersion: quote.version || 1,
-        clientId: quote.clientId,
-        clientName: quote.clientName,
-        itemTitle: item.modelName,
-        category: item.category,
-        fabricName: item.fabricName,
-        fabricColor: item.fabricColor,
-        sizes: item.sizes,
-        totalPieces: item.totalQuantity,
-        customizations: item.customizations,
-        costBreakdown: defaultCost,
-        materials: [
-          {
-            id: `mat-${Date.now()}-${idx}`,
-            materialName: item.fabricName,
-            unit: 'metros',
-            estimatedQuantity: Math.round(item.totalQuantity * 1.4),
-            allocatedInStock: Math.round(item.totalQuantity * 1.4),
-            sentToPartnerQuantity: 0,
-            returnedFromPartnerQuantity: 0,
-            lostQuantity: 1,
-          }
-        ],
-        commercialStatus: 'aprovado',
-        financialStatus: 'entrada_pendente', // Bloqueia produção até comprovar sinal de 50%!
-        stage: 'aguardando_liberacao',       // Portão de liberação fabril Gate A.3.2
-        artApproved: quote.artApproved,
-        artApprovalDate: quote.artApproved ? new Date().toISOString().split('T')[0] : undefined,
-        entryPaymentConfirmed: false,        // Sinal de 50% pendente
-        canStartProduction: false,
-        priority: 'normal',
-        creationDate: new Date().toISOString().split('T')[0],
-        targetDeliveryDate: new Date(Date.now() + quote.productionLeadDays * 86400000).toISOString().split('T')[0],
-        technicalNotes: `Gerado a partir da Proposta Comercial ${quote.id} v${quote.version}. ${quote.notes || ''}`,
-        assignedTeam: 'Mesa de Corte & Facção Terceirizada',
-      };
-    });
-
-    // Lançamento do Sinal de 50% no Financeiro
-    const finSinalId = `FIN-2026-${Math.floor(5000 + Math.random() * 500)}`;
-    const newReceivableEntry: FinancialTransaction = {
-      id: finSinalId,
-      type: 'receber',
-      subType: 'entrada_pedido',
-      description: `Sinal 50% - Proposta ${quote.id} (${quote.clientName})`,
-      category: 'Venda de Uniformes',
-      amount: quote.entryAmount || (quote.totalAmount / 2),
-      dueDate: new Date().toISOString().split('T')[0],
-      status: 'pendente',
-      paymentMethod: 'pix',
-      referenceId: opId,
-    };
-
-    // Lançamento do Saldo para a data da entrega
-    const finSaldoId = `FIN-2026-${Math.floor(6000 + Math.random() * 500)}`;
-    const newReceivableBalance: FinancialTransaction = {
-      id: finSaldoId,
-      type: 'receber',
-      subType: 'saldo_entrega',
-      description: `Saldo 50% na Entrega - Proposta ${quote.id} (${quote.clientName})`,
-      category: 'Venda de Uniformes',
-      amount: quote.balanceDueAtDelivery || (quote.totalAmount / 2),
-      dueDate: new Date(Date.now() + quote.productionLeadDays * 86400000).toISOString().split('T')[0],
-      status: 'pendente',
-      paymentMethod: 'boleto',
-      referenceId: opId,
-    };
-
-    setState((prev) => ({
-      ...prev,
-      quotes: prev.quotes.map((q) => (q.id === quote.id ? { ...q, status: 'convertido_em_pedido', convertedToOrderId: opId } : q)),
-      orders: [...newOrders, ...prev.orders],
-      finance: [newReceivableEntry, newReceivableBalance, ...prev.finance],
-    }));
-
-    if (selectedQuoteForPrint?.id === quote.id) {
-      setSelectedQuoteForPrint(null);
-    }
-
-    alert(`Proposta ${quote.id} convertida em OP com sucesso! A OP ${opId} foi criada no estágio 'Aguardando Liberação', com bloqueio ativo até quitação do sinal de 50% e aprovação de arte.`);
-    setCurrentTab('orders');
-  };
-
-  const handleDeleteQuote = (quoteId: string) => {
-    if (confirm(`Deseja excluir a proposta comercial ${quoteId}?`)) {
-      setState((prev) => ({
-        ...prev,
-        quotes: prev.quotes.filter((q) => q.id !== quoteId),
-      }));
-    }
-  };
-
-  // Solicitação de orçamento originada no Portal Público (Ambiente 1 do PRD)
-  const handleRequestQuoteFromPortal = (req: {
-    clientName: string;
-    companyName: string;
-    phone: string;
-    email: string;
-    category: UniformCategory;
-    estimatedQty: number;
-    notes: string;
-  }) => {
-    // Sincronizar lead com persistência centralizada no backend (crm.leads)
-    api.submitPublicLead(req).catch((err) => console.warn('Erro ao sincronizar lead no backend:', err));
-
-    // 1. Cadastrar cliente se for novo
-    let matchedClient = state.clients.find(
-      (c) => c.phone === req.phone || c.companyName.toLowerCase() === req.companyName.toLowerCase()
-    );
-
-    if (!matchedClient) {
-      const cliNum = Math.floor(200 + Math.random() * 800);
-      matchedClient = {
-        id: `CLI-2026-${String(cliNum).padStart(4, '0')}`,
-        companyName: req.companyName.toUpperCase(),
-        tradeName: req.companyName,
-        cnpj: "00.000.000/0001-00",
-        contactName: req.clientName,
-        phone: req.phone,
-        email: req.email,
-        address: "São Luís",
-        city: "São Luís",
-        state: "MA",
-        segment: "Corporativo / Web Lead",
-        standardUniformNotes: `Origem: Portal Público DE FARDAS. Categoria: ${req.category}.`,
-        totalOrdersCount: 0,
-        totalSpent: 0,
-        createdAt: new Date().toISOString().split('T')[0],
-      };
-      setState((prev) => ({ ...prev, clients: [matchedClient!, ...prev.clients] }));
-    }
-
-    // 2. Criar Orçamento no CRM com numeração segura
-    const orcNum = Math.floor(1000 + Math.random() * 900);
-    const newQuote: Quote = {
-      id: `ORC-2026-${orcNum}`,
-      version: 1,
-      clientId: matchedClient.id,
-      clientName: matchedClient.tradeName,
-      clientCnpj: matchedClient.cnpj,
-      clientContact: matchedClient.contactName,
-      clientPhone: matchedClient.phone,
-      clientEmail: matchedClient.email,
-      sellerName: "Atendimento Web / WhatsApp",
-      date: new Date().toISOString().split('T')[0],
-      validUntil: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-      items: [
-        {
-          id: `qi-web-${Date.now()}`,
-          modelName: `Fardamento Linha ${req.category.replace('_', ' ')}`,
-          category: req.category,
-          fabricName: "Tecido Homologado Padrão DE FARDAS",
-          fabricColor: "Conforme Identidade da Empresa",
-          sizes: { pp: 0, p: Math.round(req.estimatedQty * 0.2), m: Math.round(req.estimatedQty * 0.4), g: Math.round(req.estimatedQty * 0.3), gg: Math.round(req.estimatedQty * 0.1), xg: 0, exg: 0, sobMedida: 0 },
-          totalQuantity: req.estimatedQty,
-          costBreakdown: {
-            materialUnitCost: 28.00,
-            outsourcedSewingUnitCost: 16.00,
-            customizationUnitCost: 6.50,
-            freightPerUnit: 1.50,
-            technicalLossPercentage: 2.0,
-            calculatedBaseCost: 53.04,
-            markupPercentage: 45.0,
-            suggestedUnitPrice: 76.91,
-            negotiatedUnitPrice: 76.00,
-            discountPercentage: 0,
-            belowSuggestedAuthorized: false,
-            estimatedMarginPercentage: 30.2,
-          },
-          unitFinalPrice: 76.00,
-          totalPrice: 76.00 * req.estimatedQty,
-          customizations: [
-            {
-              id: 'c-web-1',
-              type: 'bordado_peito',
-              description: 'Bordado Institucional',
-              location: 'Peito Esquerdo',
-              unitCost: 6.50,
-            }
-          ]
-        }
-      ],
-      subtotal: 76.00 * req.estimatedQty,
-      discountPercentage: 0,
-      totalAmount: 76.00 * req.estimatedQty,
-      entryPercentage: 50,
-      entryAmount: (76.00 * req.estimatedQty) / 2,
-      balanceDueAtDelivery: (76.00 * req.estimatedQty) / 2,
-      paymentTerms: "50% Sinal na Liberação + 50% na Entrega",
-      productionLeadDays: 16,
-      status: 'enviado',
-      whatsAppProof: {
-        contactId: req.phone,
-        timestamp: new Date().toISOString(),
-        notes: `Lead recebido através do site institucional com solicitação de ${req.estimatedQty} peças.`,
-        manualConfirmation: false,
-      },
-      artApproved: false,
-      notes: `Solicitação via Portal Público: ${req.notes}`,
-    };
-
-    setState((prev) => ({ ...prev, quotes: [newQuote, ...prev.quotes] }));
-  };
-
-  // Inventory Actions
-  const handleSaveInventoryItem = (item: InventoryItem) => {
-    setState((prev) => {
-      const exists = prev.inventory.some((i) => i.id === item.id);
-      let updated: InventoryItem[];
-      if (exists) {
-        updated = prev.inventory.map((i) => (i.id === item.id ? item : i));
-      } else {
-        updated = [item, ...prev.inventory];
-      }
-      return { ...prev, inventory: updated };
-    });
-  };
-
-  const handleDeleteInventoryItem = (itemId: string) => {
-    if (confirm('Deseja excluir este item do almoxarifado?')) {
-      setState((prev) => ({
-        ...prev,
-        inventory: prev.inventory.filter((i) => i.id !== itemId),
-      }));
-    }
-  };
-
-  // Clients Actions
-  const handleSaveClient = (client: Client) => {
-    setState((prev) => {
-      const exists = prev.clients.some((c) => c.id === client.id);
-      let updated: Client[];
-      if (exists) {
-        updated = prev.clients.map((c) => (c.id === client.id ? client : c));
-      } else {
-        updated = [client, ...prev.clients];
-      }
-      return { ...prev, clients: updated };
-    });
-  };
-
-  const handleDeleteClient = (clientId: string) => {
-    if (confirm('Deseja excluir este cliente da carteira?')) {
-      setState((prev) => ({
-        ...prev,
-        clients: prev.clients.filter((c) => c.id !== clientId),
-      }));
-    }
-  };
-
-  // Financial Actions
-  const handleSaveTransaction = (trx: FinancialTransaction) => {
-    setState((prev) => ({
-      ...prev,
-      finance: [trx, ...prev.finance],
-    }));
-  };
-
-  const handleDeleteTransaction = (trxId: string) => {
-    if (confirm('Deseja excluir este lançamento financeiro?')) {
-      setState((prev) => ({
-        ...prev,
-        finance: prev.finance.filter((f) => f.id !== trxId),
-      }));
-    }
-  };
-
-  const handleToggleTransactionStatus = (trxId: string) => {
-    setState((prev) => ({
-      ...prev,
-      finance: prev.finance.map((f) => {
-        if (f.id === trxId) {
-          const isPending = f.status === 'pendente';
-          return {
-            ...f,
-            status: isPending ? 'pago' : 'pendente',
-            paidDate: isPending ? new Date().toISOString().split('T')[0] : undefined,
-          };
-        }
-        return f;
-      }),
-    }));
-  };
-
-  // Quitação de título com comprovante bancário e liberação automática do sinal da OP (Portão A.3.2)
-  const handleConfirmPaymentWithVoucher = (trxId: string, voucherNumber: string, notes: string) => {
-    // Sincronizar com o backend
-    api.confirmPayment(trxId, { receiptVoucherNumber: voucherNumber, confirmationNotes: notes })
-      .catch((err) => console.warn('Erro ao sincronizar pagamento no backend:', err));
-
-    setState((prev) => {
-      const targetTrx = prev.finance.find((f) => f.id === trxId);
-      if (!targetTrx) return prev;
-
-      const updatedFinance = prev.finance.map((f) => {
-        if (f.id === trxId) {
-          return {
-            ...f,
-            status: 'pago' as const,
-            paidDate: new Date().toISOString().split('T')[0],
-            receiptEvidenceUrl: `comprovante_${voucherNumber}.pdf`,
-          };
-        }
-        return f;
-      });
-
-      // Se for sinal de 50%, atualizar automaticamente a OP vinculada!
-      let updatedOrders = prev.orders;
-      if (targetTrx.subType === 'entrada_pedido') {
-        updatedOrders = prev.orders.map((o) => {
-          const matches = o.id === targetTrx.referenceId || o.orderNumber === targetTrx.referenceId || o.quoteId === targetTrx.referenceId;
-          if (matches) {
-            const canStart = Boolean(o.artApproved);
-            return {
-              ...o,
-              entryPaymentConfirmed: true,
-              financialStatus: 'entrada_confirmada' as const,
-              entryReceiptUrl: `comprovante_${voucherNumber}.pdf`,
-              canStartProduction: canStart,
-              stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
-            };
-          }
-          return o;
-        });
-      }
-
-      return {
-        ...prev,
-        finance: updatedFinance,
-        orders: updatedOrders,
-      };
-    });
-  };
-
-  // Profile & Reset
-  const handleSaveProfile = (profile: CompanyProfile) => {
-    setState((prev) => ({ ...prev, profile }));
-  };
-
-  const handleRestoreState = (restored: ERPState) => {
-    setState(restored);
-  };
-
-  const handleResetToDefaults = () => {
-    const fresh = resetERPState();
-    setState(fresh);
-    alert('Dados de demonstração do PRD v1.6 restaurados com sucesso.');
-  };
+  const handleResetToDefaults = () => { alert('A restauração de demonstração não altera o banco operacional. Use um ambiente de desenvolvimento separado.'); };
 
   // Counts for sidebar badges
   const activeOrdersCount = state.orders.filter((o) => o.stage !== 'entregue').length;
   const lowStockCount = state.inventory.filter((i) => i.currentStock <= i.minStock).length;
   const pendingQuotesCount = state.quotes.filter((q) => q.status === 'enviado' || q.status === 'aprovado').length;
 
+  if (isAuthenticated && loadedFor !== user?.id) {
+    return <div role="status" className="min-h-screen bg-slate-950 p-12 text-white"><p>{syncError || 'Carregando dados da sessão...'}</p>{syncError && <button className="mt-4 underline" onClick={() => void refreshServerState()}>Tentar novamente</button>}</div>;
+  }
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white select-none">
@@ -763,6 +211,7 @@ export default function App() {
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
         activeOrdersCount={activeOrdersCount}
+        activePieces={state.orders.filter((order) => !['entregue', 'aguardando_liberacao'].includes(order.stage)).reduce((sum, order) => sum + order.totalPieces, 0)}
         lowStockCount={lowStockCount}
         pendingQuotesCount={pendingQuotesCount}
         profile={state.profile}
@@ -770,10 +219,7 @@ export default function App() {
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         isMobileOpen={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
-        onOpenNewOrderModal={() => {
-          setEditingOrder(null);
-          setIsNewOrderModalOpen(true);
-        }}
+        onOpenNewOrderModal={startOrder}
         onOpenHelpManual={() => setIsHelpManualOpen(true)}
       />
 
@@ -784,19 +230,17 @@ export default function App() {
         <Header
           currentTab={currentTab}
           onSelectTab={setCurrentTab}
-          onOpenNewOrderModal={() => {
-            setEditingOrder(null);
-            setIsNewOrderModalOpen(true);
-          }}
+          onOpenNewOrderModal={startOrder}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
           lowStockCount={lowStockCount}
           onOpenHelpManual={() => setIsHelpManualOpen(true)}
-          onOpenAuditModal={() => setIsAuditModalOpen(true)}
+          onOpenAuditModal={import.meta.env?.DEV ? () => setIsAuditModalOpen(true) : undefined}
         />
 
         {/* Viewport Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
           <div className="max-w-7xl mx-auto">
+            {syncError && <div role="alert" className="mb-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">{syncError}<button className="ml-4 underline" onClick={() => void refreshServerState()}>Tentar novamente</button></div>}
             {currentTab === 'portal' && (
               <PublicPortalView
                 catalog={state.catalog}
@@ -811,10 +255,7 @@ export default function App() {
                 quotes={state.quotes}
                 inventory={state.inventory}
                 onSelectTab={setCurrentTab}
-                onOpenNewOrderModal={() => {
-                  setEditingOrder(null);
-                  setIsNewOrderModalOpen(true);
-                }}
+                onOpenNewOrderModal={startOrder}
                 onOpenNewQuoteModal={() => setIsNewQuoteModalOpen(true)}
                 onSelectOrderForTicket={(order) => setSelectedOrderForTicket(order)}
               />
@@ -823,10 +264,7 @@ export default function App() {
             {currentTab === 'orders' && (
               <ProductionOrdersView
                 orders={state.orders}
-                onOpenNewOrderModal={() => {
-                  setEditingOrder(null);
-                  setIsNewOrderModalOpen(true);
-                }}
+                onOpenNewOrderModal={startOrder}
                 onEditOrder={handleEditOrder}
                 onDeleteOrder={handleDeleteOrder}
                 onUpdateOrderStage={handleUpdateOrderStage}
@@ -940,7 +378,7 @@ export default function App() {
       )}
 
       {/* Modal: Foundation P0 Audit, Tests & Database Invariants */}
-      {isAuditModalOpen && (
+      {import.meta.env?.DEV && isAuditModalOpen && (
         <FoundationAuditModal
           isOpen={isAuditModalOpen}
           onClose={() => setIsAuditModalOpen(false)}

@@ -1,3 +1,5 @@
+import { number, text, oneOf, InputError, money } from '../validation/input';
+import { atomic } from '../db/unitOfWork';
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
@@ -18,22 +20,22 @@ inventoryRouter.get('/items', async (_req: RequestWithUser, res: Response) => {
 });
 
 // Cadastrar novo item de estoque
-inventoryRouter.post('/items', requirePermission('inventory:adjust'), async (req: RequestWithUser, res: Response) => {
+inventoryRouter.post('/items', requirePermission('inventory:adjust'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
 
-  const code = sequenceService.nextInventoryCode();
+  const code = await sequenceService.nextInventoryCode();
   const newItem: InventoryItemEntity = {
     id: crypto.randomUUID(),
     code,
-    name: payload.name || 'Insumo Têxtil',
-    category: payload.category || 'tecido',
-    unit: payload.unit || 'metros',
-    physicalStock: Number(payload.physicalStock || payload.currentStock || 0),
-    allocatedStock: Number(payload.allocatedStock || 0),
-    inPartnersCustodyStock: Number(payload.inPartnersCustodyStock || 0),
-    minStock: Number(payload.minStock || 50),
-    unitCostPrice: Number(payload.unitCostPrice || payload.costPrice || 0),
+    name: text(payload.name, 'Nome', 150),
+    category: oneOf(payload.category, ['tecido', 'aviamento', 'insumo_personalizacao', 'pronta_entrega'], 'Categoria'),
+    unit: oneOf(payload.unit, ['metros', 'kg', 'rolos', 'unidades', 'cones', 'pecas'], 'Unidade'),
+    physicalStock: number(payload.physicalStock ?? payload.currentStock ?? 0, 'Saldo inicial'),
+    allocatedStock: 0,
+    inPartnersCustodyStock: 0,
+    minStock: number(payload.minStock ?? 0, 'Estoque mínimo'),
+    unitCostPrice: number(payload.unitCostPrice ?? payload.costPrice ?? 0, 'Custo'),
     supplier: payload.supplier || 'Fornecedor Homologado',
     location: payload.location || 'Almoxarifado Central',
     lastRestocked: new Date().toISOString().split('T')[0],
@@ -43,8 +45,13 @@ inventoryRouter.post('/items', requirePermission('inventory:adjust'), async (req
   };
 
   await inventoryRepository.saveItem(newItem);
+  if (newItem.physicalStock > 0) await inventoryRepository.saveMovement({ id: crypto.randomUUID(),
+    movementNumber: await sequenceService.nextMovementNumber(), itemId: newItem.id, type: 'entrada_compra',
+    quantity: newItem.physicalStock, unit: newItem.unit, date: newItem.lastRestocked,
+    reason: 'Saldo inicial informado no cadastro', operatorId: actor.id, operatorName: actor.fullName,
+    isDemo: false, createdAt: newItem.createdAt });
 
-  auditService.log({
+  await auditService.log({
     actorId: actor.id,
     actorName: actor.fullName,
     actorRole: actor.role,
@@ -56,7 +63,7 @@ inventoryRouter.post('/items', requirePermission('inventory:adjust'), async (req
   });
 
   res.status(201).json(newItem);
-});
+}));
 
 // Listar movimentações
 inventoryRouter.get('/movements', async (_req: RequestWithUser, res: Response) => {
@@ -65,7 +72,7 @@ inventoryRouter.get('/movements', async (_req: RequestWithUser, res: Response) =
 });
 
 // Registrar movimentação de estoque por evento compensatório (Regra B.3.5)
-inventoryRouter.post('/movements', requirePermission('inventory:create_movement'), async (req: RequestWithUser, res: Response) => {
+inventoryRouter.post('/movements', requirePermission('inventory:create_movement'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const { itemId, productionOrderId, type, quantity, reason, referenceDoc } = req.body;
 
@@ -74,8 +81,9 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
     return res.status(404).json({ error: 'Item de estoque não encontrado' });
   }
 
-  const qty = Number(quantity);
-  if (isNaN(qty) || qty <= 0) {
+  const qty = quantity;
+  if (typeof qty !== 'number') throw new InputError('Quantidade inválida.');
+  if (!Number.isFinite(qty) || (type === 'ajuste_inventario' ? qty === 0 : qty <= 0)) {
     return res.status(400).json({ error: 'Quantidade deve ser um número positivo' });
   }
 
@@ -115,10 +123,14 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
       item.physicalStock += qty;
       break;
     case 'perda_tecnica':
-      item.physicalStock = Math.max(0, item.physicalStock - qty);
+      if (qty > item.physicalStock) throw new InputError('Perda superior ao saldo físico.');
+      item.physicalStock -= qty;
       break;
     case 'ajuste_inventario':
-      item.physicalStock = qty; // Ajuste direto autorizado
+      if (!['admin', 'pcp_producao'].includes(actor.role)) return res.status(403).json({ error: 'Sem permissão para ajuste.' });
+      text(reason, 'Motivo do ajuste', 1000);
+      if (item.physicalStock + qty < 0) throw new InputError('Ajuste resultaria em saldo negativo.');
+      item.physicalStock += qty; // Evento compensatório: quantidade é o delta assinado.
       break;
     default:
       return res.status(400).json({ error: 'Tipo de movimentação inválido' });
@@ -127,7 +139,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
   item.updatedAt = new Date().toISOString();
   await inventoryRepository.saveItem(item);
 
-  const movementNumber = sequenceService.nextMovementNumber();
+  const movementNumber = await sequenceService.nextMovementNumber();
   const movement: StockMovementEntity = {
     id: crypto.randomUUID(),
     movementNumber,
@@ -147,7 +159,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
 
   await inventoryRepository.saveMovement(movement);
 
-  auditService.log({
+  await auditService.log({
     actorId: actor.id,
     actorName: actor.fullName,
     actorRole: actor.role,
@@ -171,4 +183,43 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
     movement,
     item,
   });
-});
+}));
+
+inventoryRouter.put('/items/:id', requirePermission('inventory:manage_items'), atomic(async (req: RequestWithUser, res: Response) => {
+  const item = await inventoryRepository.findItemById(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Item não encontrado.' });
+  const body = req.body;
+  item.name = text(body.name, 'Nome', 150);
+  item.category = oneOf(body.category, ['tecido', 'aviamento', 'insumo_personalizacao', 'pronta_entrega'], 'Categoria');
+  if (body.unit !== item.unit) throw new InputError('Unidade de item cadastrado não pode ser alterada.');
+  item.minStock = number(body.minStock, 'Estoque mínimo');
+  item.unitCostPrice = number(body.unitCostPrice ?? body.costPrice, 'Custo');
+  item.supplier = text(body.supplier, 'Fornecedor', 150, false);
+  item.location = text(body.location, 'Localização', 100, false);
+  if (body.currentStock !== undefined && body.currentStock !== item.physicalStock) {
+    const target = number(body.currentStock, 'Saldo desejado');
+    if (body.expectedPhysicalStock !== item.physicalStock) return res.status(409).json({ error: 'Estoque foi alterado por outra operação. Atualize a tela.' });
+    const reason = text(body.adjustmentReason, 'Motivo do ajuste', 1000);
+    await inventoryRepository.saveMovement({ id: crypto.randomUUID(), movementNumber: await sequenceService.nextMovementNumber(),
+      itemId: item.id, type: 'ajuste_inventario', quantity: target - item.physicalStock, unit: item.unit,
+      date: new Date().toISOString().slice(0, 10), reason, operatorId: req.user!.id, operatorName: req.user!.fullName,
+      isDemo: item.isDemo, createdAt: new Date().toISOString() });
+    item.physicalStock = target;
+  }
+  item.updatedAt = new Date().toISOString();
+  await inventoryRepository.saveItem(item);
+  await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role,
+    entityName: 'estoque.items', entityId: item.id, action: 'UPDATE_ITEM' });
+  res.json(item);
+}));
+inventoryRouter.delete('/items/:id', requirePermission('inventory:manage_items'), atomic(async (req: RequestWithUser, res: Response) => {
+  const item = await inventoryRepository.findItemById(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Item não encontrado.' });
+  if (item.physicalStock || item.allocatedStock || item.inPartnersCustodyStock || (await inventoryRepository.findAllMovements()).some((m) => m.itemId === item.id)) {
+    return res.status(409).json({ error: 'Item com saldo ou histórico não pode ser excluído.' });
+  }
+  await inventoryRepository.deleteItem(item.id);
+  await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role,
+    entityName: 'estoque.items', entityId: item.id, action: 'DELETE_ITEM' });
+  res.json({ success: true });
+}));

@@ -51,7 +51,11 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
   }
 
   // Verificar se o caminho está na lista de exceções
-  const isExempt = EXEMPT_PATHS.some((path) => req.path.startsWith(path));
+  // originalUrl preserva /api quando o middleware está montado em app.use('/api').
+  const pathname = req.originalUrl.split('?')[0].replace(/\/$/, '');
+  const isExempt = req.method === 'POST' && EXEMPT_PATHS.some((path) =>
+    pathname === path || (path === '/api/communication/webhooks' && pathname.startsWith(`${path}/`))
+  );
   if (isExempt) {
     return next();
   }

@@ -109,7 +109,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   orders.forEach((o) => {
     const grp = getCategoryGroup(o.category);
-    const unitPrice = o.costBreakdown?.negotiatedUnitPrice || o.costBreakdown?.suggestedUnitPrice || 65;
+    const unitPrice = o.costBreakdown?.negotiatedUnitPrice ?? o.costBreakdown?.suggestedUnitPrice ?? 0;
     if (categoryStats[grp]) {
       categoryStats[grp].count += 1;
       categoryStats[grp].pieces += o.totalPieces;
@@ -516,7 +516,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="text-indigo-900 font-semibold flex items-center justify-between">
                 <span>Total em Produção:</span>
                 <span className="font-mono font-bold text-indigo-950">
-                  {formatCurrencyBRL(orders.reduce((sum, o) => sum + ((o.costBreakdown?.negotiatedUnitPrice || o.costBreakdown?.suggestedUnitPrice || 65) * o.totalPieces), 0))}
+                  {formatCurrencyBRL(orders.reduce((sum, o) => sum + ((o.costBreakdown?.negotiatedUnitPrice ?? o.costBreakdown?.suggestedUnitPrice ?? 0) * o.totalPieces), 0))}
                 </span>
               </div>
               <div className="text-[11px] text-indigo-700">

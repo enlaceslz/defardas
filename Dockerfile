@@ -14,16 +14,16 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 # Copiar manifestos de dependências
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json .npmrc ./
 
 # Instalar todas as dependências (incluindo devDependencies para build)
-RUN npm install
+RUN npm ci
 
 # Copiar código-fonte completo
 COPY . .
 
 # Compilar frontend com Vite
-RUN npm run build
+RUN npm run build && npm prune --omit=dev --ignore-scripts
 
 # ------------------------------------------------------------------------------
 # Estágio 2: Runner de Produção Leve e Seguro
@@ -49,6 +49,7 @@ RUN addgroup -S -g 1001 defardas && \
 COPY --from=builder --chown=defardas:defardas /app/package.json ./
 COPY --from=builder --chown=defardas:defardas /app/node_modules ./node_modules
 COPY --from=builder --chown=defardas:defardas /app/dist ./dist
+COPY --from=builder --chown=defardas:defardas /app/scripts ./scripts
 COPY --from=builder --chown=defardas:defardas /app/server ./server
 COPY --from=builder --chown=defardas:defardas /app/server.ts ./server.ts
 COPY --from=builder --chown=defardas:defardas /app/drizzle ./drizzle

@@ -9,11 +9,16 @@ import { LeadEntity } from '../types/db';
 
 export class LeadRepository {
   public async findAll(): Promise<LeadEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(leads).orderBy(desc(leads.createdAt));
         return rows.map((r) => this.mapToEntity(r));
       } catch (err) {
+        throw err;
         console.warn('⚠️ [LeadRepository] Erro na consulta Drizzle ao PostgreSQL. Recorrendo à memória.', err);
       }
     }
@@ -21,6 +26,10 @@ export class LeadRepository {
   }
 
   public async findById(id: string): Promise<LeadEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(leads).where(eq(leads.id, id)).limit(1);
@@ -28,14 +37,20 @@ export class LeadRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        throw err;
         console.warn(`⚠️ [LeadRepository] Falha ao buscar lead ${id}.`, err);
       }
     }
+    if (fallbackDb.isConnected()) return null;
     return fallbackDb.leads.get(id) || null;
   }
 
   public async save(lead: LeadEntity): Promise<LeadEntity> {
-    fallbackDb.leads.set(lead.id, lead);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (!fallbackDb.isConnected()) fallbackDb.leads.set(lead.id, lead);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -67,6 +82,7 @@ export class LeadRepository {
             },
           });
       } catch (err) {
+        throw err;
         console.error(`❌ [LeadRepository] Falha ao persistir lead ${lead.id} via Drizzle:`, err);
       }
     }

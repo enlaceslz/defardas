@@ -1,4 +1,4 @@
-import { pgSchema, uuid, varchar, boolean, timestamp } from 'drizzle-orm/pg-core';
+import { pgSchema, uuid, varchar, boolean, timestamp, integer, jsonb } from 'drizzle-orm/pg-core';
 
 export const coreSchema = pgSchema('core');
 
@@ -22,3 +22,14 @@ export const users = coreSchema.table('users', {
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+
+export const numberCounters = coreSchema.table('number_counters', {
+  kind: varchar('kind', { length: 30 }).primaryKey(),
+  value: integer('value').notNull(),
+});
+
+export const publicSettings = coreSchema.table('public_settings', {
+  key: varchar('key', { length: 30 }).primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});

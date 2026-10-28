@@ -95,7 +95,7 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
               </div>
               <div>
                 <span className="text-slate-500">Portões de Liberação: </span>
-                <span className="font-semibold text-emerald-700">Sinal Confirmado · Arte Aprovada</span>
+                <span className="font-semibold text-emerald-700">{order.entryPaymentConfirmed ? 'Sinal confirmado' : 'Sinal pendente'} · {order.artApproved ? 'Arte aprovada' : 'Arte pendente'}</span>
               </div>
             </div>
           </div>
