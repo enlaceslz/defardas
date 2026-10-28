@@ -1,89 +1,71 @@
-# Auditoria de preparação para produção — DE FARDAS
+# Auditoria e preparação para produção — DE FARDAS
 
-Data: 28/10/2026. Base examinada: `43e7da05a341cb232584ad5b0d262eb1ff193c18` (`main`).
+Data: 28/10/2026. Repositório: `enlaceslz/defardas`. Trabalho na branch `fix/production-audit`, PR #1.
 
-**Parecer: NÃO LIBERAR para operação real.** O build funciona, mas existem fluxos demonstrativos e lacunas de persistência que podem produzir divergências comerciais e financeiras. Esta entrega corrige uma primeira camada de segurança; não equivale à homologação de produção.
+**Parecer: núcleo transacional implementado e testado; liberação operacional ainda condicionada às integrações e à homologação descritas abaixo.** Não foi alterada a infraestrutura contratada nem o banco operacional.
 
-## Escopo e limitações
+## Correções implementadas
 
-Revisão estática de frontend React, API Express, autenticação, repositórios Drizzle/PostgreSQL, migrações, Docker/Compose, configuração Vercel e backup/restauração. Foram executados testes HTTP locais de segurança, tipagem, build e auditoria npm.
-
-Não foram fornecidos acesso ao PostgreSQL contratado, credenciais S3, ambiente de homologação, provedor WhatsApp operacional, SMTP ou domínio/reverse proxy. Docker e psql não estão disponíveis neste ambiente. Não foram executadas migrações em banco real, restauração de backup, testes do container nem testes de ponta a ponta no navegador. `compile_applet`, requerido no AGENTS.md, não está disponível; foi executado `npm run build`, o comando real de produção do repositório.
-
-## Correções nesta branch
-
-| Achado | Correção |
+| Área | Comportamento atual |
 |---|---|
-| Contas de demonstração eram criadas inclusive em produção; busca sem resultado podia retornar conta local com senha conhecida | Seed de usuários desabilitado em produção, consulta autoritativa e propagação de falhas do PostgreSQL |
-| Produção iniciava sem PostgreSQL e podia confirmar operações somente em memória | Bootstrap aguarda inicialização; ausência/falha da conexão impede inicialização; repositórios aguardam readiness e propagam erros em produção; caches não recebem escritas de produção |
-| Sessões eram gravadas/removidas sem aguardar confirmação e validadas por cache local | Persistência aguardada, lookup por sessão ativa e usuário ativo no banco em cada requisição, revogação aguardada e compartilhada entre instâncias |
-| Exceções CSRF não funcionavam com middleware montado em `/api` | Comparação de caminhos completos, métodos restritos a POST e sem isenção por prefixos semelhantes |
-| Criação/status/conversão de proposta e aprovação de arte não aplicavam permissões existentes | Aplicação da matriz de permissões; permissões inexistentes negadas por padrão |
-| Etapa/status arbitrários e desbloqueio de proposta convertida | Validação de enums, bloqueio de alteração de status de proposta convertida e conferência do gate para qualquer destino fabril |
-| ID de proposta incompatível com coluna UUID | Geração com `crypto.randomUUID()` |
-| Rate limiter aceitava `X-Forwarded-For` arbitrário | Usa `req.ip` conforme política de proxy do Express (não confiável por padrão) |
-| Webhooks de mensagens sem autenticação; token Meta com fallback público | HMAC SHA-256 sobre bytes originais no webhook Meta, segredo dedicado no WA-AKG, ausência de configuração retorna erro |
-| Importação escrevia apenas em Maps e devolvia sucesso em produção | Endpoint retorna 501 em produção até existir importação transacional persistente |
-| QR/reconexão simulados informavam conexão operacional | Produção não gera QR fictício nem confirma reconexão com temporizador |
-| WhatsApp ignorava HTTP 4xx/5xx e podia marcar envio sem provedor | Valida HTTP, aplica timeout e registra status failed para falha/ausência de configuração |
-| Captura pública podia devolver ficha privada de cliente existente por telefone/nome | Resposta contém apenas identificador do lead; não cria cadastro fiscal com CNPJ fictício nem consulta carteira privada no POST público |
-| Erros assíncronos Express 4 sem tratamento central | Ponte express-async-errors e resposta JSON genérica; rotas API inexistentes retornam 404 JSON |
-| Healthcheck sempre saudável e expunha contagens internas | SELECT 1 real, 503 quando indisponível, sem contagens privadas |
-| Lock npm divergente, senha PostgreSQL padrão no Compose | Lock regenerado, Docker usa npm ci, senha obrigatória e SSL explicitamente desabilitado só para banco interno do Compose |
-| Avanço e aprovação na UI ignoravam falhas HTTP; coleções vazias não limpavam estado | UI respeita erros nessas ações, preserva UUID separado do número de exibição e aceita respostas vazias; aprovação de arte não avança etapa automaticamente |
-| Ausência de CI executável | Workflow com instalação, tipagem, testes de segurança e build |
+| Banco e bootstrap | Produção exige PostgreSQL, aguarda conexão e verifica tabelas essenciais de migração antes de servir; health faz consulta real e não expõe contagens privadas |
+| Autenticação | Produção não cria usuários demonstrativos; consultas de sessão verificam usuário ativo no banco a cada requisição, gravação e revogação aguardam confirmação |
+| RBAC/CSRF | Mutações comerciais e aprovação de arte aplicam permissões; permissão desconhecida é negada; CSRF funciona montado em `/api`, sem isenções por prefixos parecidos |
+| Webhooks e rate limit | Meta exige assinatura HMAC dos bytes originais; WA-AKG exige segredo; segredo ausente bloqueia ingestão; IP arbitrário em X-Forwarded-For não contorna rate limit |
+| Transações | Conversão, financeiro, estoque, clientes e propostas executam em uma unidade de trabalho; repositórios e auditoria usam o mesmo cliente PostgreSQL; resposta JSON sai após COMMIT |
+| Concorrência | Mutações ERP usam advisory lock transacional entre instâncias; lock é global nesta primeira versão para priorizar integridade; futura granularidade deve ser medida com testes de concorrência |
+| Conversão | Uma OP por item, com vínculo ao item e preservação da grade; sinal e saldo por proposta; conversões simultâneas retornam o mesmo conjunto de OPs; falha parcial desfaz tudo |
+| Numeração | Contadores persistentes transacionais, inicializados a partir dos sufixos existentes, sem fallback local em produção |
+| Financeiro | Títulos de pedido só nascem na conversão; baixa confere valor/vínculo com proposta, é idempotente, atualiza todas as OPs; pagamento e aprovação não avançam corte automaticamente; saldo liquidado marca quitação |
+| Estoque | Item, movimento e auditoria confirmam juntos; concorrência não permite remessa acima do saldo; saldo inicial gera evento; ajustes são deltas assinados e edição rejeita saldo desatualizado |
+| Cadastro e exclusão | Cliente é realmente persistido/excluído, campos editáveis têm allowlist; vínculos e histórico impedem exclusões inconsistentes; não existe exclusão fictícia por totalOrdersCount=-1 |
+| Auditoria | Eventos críticos são persistidos no PostgreSQL na transação da operação; consulta limitada a administradores |
+| Interface | CRUD principal chama API e recarrega fonte autoritativa; formulários aguardam sucesso, mantêm dados em erro e bloqueiam duplo envio; OPs/títulos/comprovantes não são gerados aleatoriamente no navegador |
+| Sessão no navegador | Dados privados não são gravados em localStorage; caches legados são removidos; troca de usuário limpa estado e bloqueia renderização de dados de outra sessão |
+| Identidade e valores | Número exibido e UUID interno separados; adaptadores preservam zero, resolvem custo por item e não inventam contatos/preços; ficha impressa reflete gates reais |
+| Perfil e emissão de OP | Perfil institucional persiste no servidor com edição por admin; emissão passa pela proposta aprovada; editor de OP altera planejamento sem liberar gates ou modificar item aprovado |
+| Demonstração | Login de produção não mostra ajudante de credenciais; novas propostas começam sem custos/grades/prazos demonstrativos ou cláusulas comerciais inventadas |
+| WhatsApp | HTTP 4xx/5xx, timeout e ausência de configuração resultam em failed; QR/reconexão simulados não operam em produção |
+| Build/runtime | Lock npm sincronizado; Docker respeita `.npmrc`, usa npm ci, remove dependências de desenvolvimento, exclui `.env*`/backups do contexto e executa com usuário sem privilégios |
+| Operação | Migração usa runner Node/Drizzle disponível na imagem; administrador é provisionado por variáveis de ambiente, sem senha padrão; desligamento fecha HTTP e pool |
+| Backup | Dump sem TTY, arquivo temporário, permissão restrita, teste gzip e checksum; restore exige checksum, falha em erro SQL e aplica uma transação única |
 
-## Bloqueios remanescentes e critérios de aceite
+## Evidências
 
-### P0 — persistência e consistência
+- 21 testes locais passaram: 15 de segurança/HTTP e 6 de componentes/adaptadores/isolamento de cache.
+- 8 testes com PostgreSQL 16 real passaram na CI: gravação dos itens/custos, 8 conversões simultâneas, gate por API e constraint SQL, repetição de baixa, quitação do saldo, rollback por falha injetada no segundo título, concorrência de estoque e auditoria persistente.
+- Backup e restauração em outro banco descartável passaram na CI, com conferência de existência de OPs restauradas.
+- `npm run lint`, `npm run build`, `git diff --check` e sintaxe Bash passaram localmente.
+- Bundle JS principal ficou em aproximadamente 464 kB minificado / 119 kB gzip, abaixo do aviso anterior de 500 kB; não houve reescrita visual das telas principais.
+- A CI construiu e iniciou a imagem de produção, verificou HTTP/health e testou desligamento com sucesso (execução 40735127236). Consulte também a execução do commit final no PR.
+- `compile_applet`, referido no AGENTS.md, não está disponível; foi usado `npm run build`, o build real do projeto.
+- Testes de componentes usam JSDOM. Isso não equivale a homologação visual completa em navegador, celular ou impressão física.
 
-1. **Frontend ainda tem fluxos locais.** `src/App.tsx`: handlers de criação/edição/exclusão de OP, proposta, cliente, inventário e títulos alteram `state`/localStorage sem persistência completa. Conversão cria OPs/títulos locais aleatórios enquanto chama API sem conferir resultado. Pagamento cria nomes de comprovante fictícios e muda estado mesmo quando a API exige URL real e rejeita a baixa. Confirmação de entrada pode ocorrer só no navegador.
-   - Aceite: todas as ações usam endpoints reais e só atualizam tela após sucesso; erro não altera estado; repetir, recarregar e abrir em outro navegador mantém o mesmo dado; comprovante real privado e autorização exigidos.
-2. **Conversão não é atômica nem segura sob concorrência.** `server/routes/quotesRoutes.ts`: lookup, INSERT de OP, dois títulos e UPDATE da proposta acontecem separadamente. A chave canônica corrigida evita variar a chave por cabeçalho, mas não resolve corrida nem recuperação após gravação parcial. A OP agrega quantidade de todos os itens e usa descrição/grade somente do primeiro.
-   - Aceite: transação PostgreSQL com bloqueio de proposta, constraints de identidade da conversão e dos títulos; rollback integral sob falha; chamadas simultâneas retornam o mesmo resultado; modelagem de todos os itens/grades preservada e homologada.
-3. **Numeração persistente não está efetivamente conectada aos fluxos.** `server/services/sequenceService.ts` tem métodos Async, mas rotas usam contadores locais síncronos. O journal Drizzle não cria as sequences referenciadas. Reinício/múltiplas instâncias podem colidir.
-   - Aceite: migração de sequences/contadores inicializados conforme dados existentes e uso exclusivamente persistente na produção, sem fallback local em erro.
-4. **Baixa financeira e gate da OP não são uma transação.** `server/routes/financeRoutes.ts` salva título e OP separadamente; não há reconciliação integral do valor efetivamente recebido, saldo final ou prevenção de vínculo indevido por payload na criação de título.
-   - Aceite: transação, validação de valor/vínculo, repetição segura e testes negativos (título errado/valor insuficiente/falha entre etapas). Políticas de alçada/reembolso não devem ser inventadas.
-5. **Estoque sujeito a perda de atualização e eventos incompletos.** `server/routes/inventoryRoutes.ts` lê saldo e salva item/movimento em operações distintas; ajuste faz sobrescrita do saldo e perda usa clamp em zero.
-   - Aceite: eventos compensatórios, lock/UPDATE condicional, saldo e evento na mesma transação; teste concorrente e rastreabilidade por OP/facção. Homologar semântica de ajustes e perdas.
-6. **Auditoria só em memória.** `server/services/auditService.ts` mantém no máximo 500 eventos e os perde no reinício, embora exista schema de auditoria.
-   - Aceite: gravação persistente e eventos críticos na mesma transação da ação, com ator e evidências verificáveis, acesso restrito e retenção definida.
-7. **Isolamento de dados no navegador incompleto.** `src/App.tsx` inicializa estado de localStorage, conserva dados quando respostas falham e não demonstra isolamento por usuário/logout. Custos/contatos têm defaults demonstrativos que podem substituir dados reais ausentes.
-   - Aceite: estado limpo por sessão, sem cache privado compartilhado, tratamento explícito de erro e ausência de dados fictícios em telas/documentos reais; RBAC de leitura homologado por perfil.
+## Migrações e compatibilidade
 
-### P1 — implantação e integrações
+A trilha oficial usada pelo runtime é `drizzle/` e seu journal. Os arquivos históricos de `migrations/` não devem ser aplicados junto com ela.
 
-8. **S3 e comprovação documental:** variáveis existem, mas não há fluxo completo de upload privado/validação/URLs assinadas, necessário para artes, comprovantes e fichas.
-9. **WA-AKG:** Compose inicia `node:20-alpine` com `tail -f /dev/null`; não existe servidor real. Provisionar imagem/serviço homologado; validar QR, reconexão, deduplicação por ID externo e callback autenticado. Meta também precisa de testes de retorno e recibos de entrega. Não ativar canais falsamente como conectados.
-10. **Recuperação e provisionamento de usuários:** recuperação gera token em memória e não envia e-mail. Sem seed de produção, é necessário provisionar administrador de forma controlada no PostgreSQL (senha própria com bcrypt), implantar entrega de e-mail e token persistente de uso único. Nunca reativar conta padrão como atalho.
-11. **Vercel atual hospeda apenas SPA:** `vercel.json` reescreve tudo para index.html e não hospeda Express/PostgreSQL. Para ERP completo usar runtime Node persistente/container com API na mesma origem, ou desenhar/provar outro arranjo. Não interpretar publicação estática como ERP operacional.
-12. **Migrações concorrentes:** há SQL em `migrations/` e journal Drizzle em `drizzle/`. Definir uma trilha oficial, testar banco vazio e upgrade com dados reais em cópia de homologação, incluindo constraints, FKs, índices e sequences. Não executar seed demo em produção.
-13. **Backup/restauração:** scripts existem, mas precisam de ensaio. Remover TTY no pg_dump, gravar arquivo temporário com permissões restritas e renomear só após sucesso; usar ON_ERROR_STOP na restauração, verificar integridade e provar recuperação em banco isolado. Não testar restauração sobre o banco operacional.
-14. **Operação:** comprovar HTTPS, política de trust proxy conforme topologia real (sem aceitar origem forjada), desligamento gracioso, logs/redação de dados sensíveis, alertas, disponibilidade do banco, orçamento de conexões e monitoramento externo. Para PostgreSQL remoto usar TLS verificado; Compose usa rede interna sem TLS por escolha explícita.
-15. **Validação de entrada e leitura:** expandir schemas de request para datas, montantes finitos, quantidades, IDs e enums de todas as rotas. Homologar quais perfis podem listar financeiro/custos/dados pessoais; autenticação sozinha não define segregação de leitura. Aplicar limitação ao formulário público e webhooks, com política de proxy validada.
+Novas migrações adicionam vínculo da OP ao item, contadores, unicidade de conversão/títulos, checks de quantidade/valor/gate e perfil institucional. Os contadores usam o maior sufixo numérico existente; não fazem reset anual.
 
-### P2 — desempenho e manutenção
+**Em banco existente:** fazer backup, ensaiar em uma cópia e verificar duplicidades, títulos com valor zero/negativo, OPs sem gate e conversões antigas incompletas. As constraints podem recusar dados inconsistentes. Nenhum dado histórico é apagado/corrigido silenciosamente pela migração. OPs antigas sem quote_item_id continuam representando seu histórico; a migração não adivinha a distribuição de itens de conversões anteriores.
 
-16. `QuoteRepository.findAll()` faz N+1 para itens, sem paginação; demais listagens também não têm limites. Implementar paginação/consultas agrupadas e índices guiados por EXPLAIN em volume representativo.
-17. Bundle inicial JavaScript ~516 kB minificado (~131 kB gzip) na verificação local. Dividir módulos por tela com lazy loading depois de estabilizar persistência.
-18. `npm audit` após atualização do lock: quatro ocorrências moderadas na cadeia de ferramentas `drizzle-kit → @esbuild-kit/esm-loader → @esbuild-kit/core-utils → esbuild` (advisory GHSA-67mh-4wv8-2f99). Sem ocorrências altas/críticas reportadas nessa execução. A correção automática sugerida regride drizzle-kit para 0.18.1; não foi aplicada por incompatibilidade potencial. Reavaliar versão/toolchain e remover ferramentas de desenvolvimento da imagem final após compilar servidor/migrador adequadamente. Ausência de alerta npm não prova ausência de vulnerabilidades.
+A alteração de metadata da OP não altera grade, modelo, valor negociado, financeiro ou aprovação da arte. A ação Nova OP leva ao fluxo de proposta comercial para evitar produção sem origem/preço homologado. Cancelamento/estorno de pedidos já convertidos precisa de fluxo de negócio definido; exclusão isolada é bloqueada.
 
-## Validação da entrega
+## Pendências para liberação operacional
 
-- Instalação limpa com `npm ci --ignore-scripts --no-audit --no-fund` concluída após atualização do lock. Scripts de dependências não foram executados nesse comando.
-- `npm run lint`: sem erros.
-- `npm test`: suíte HTTP local de segurança, autenticação, RBAC, CSRF, webhooks, rate limit, falha de bootstrap e propagação de falhas de persistência. Dependências PostgreSQL das duas simulações de falha são substituídas explicitamente, sem banco real.
-- `npm run build`: concluído; aviso de tamanho de bundle registrado acima.
-- `git diff --check`: sem erros.
-- CI adicionada, mas sua execução remota deve ser conferida no GitHub após abertura do PR.
+1. **Anexos privados/S3:** o upload completo e a validação de posse do arquivo ainda não estão implementados. A baixa exige autenticação bancária e URL HTTPS real, mas HTTPS sozinho não prova que o arquivo está no armazenamento privado contratado. Integrar upload privado, assinatura temporária, validação de MIME/tamanho e vínculo de evidência antes de operar dados reais.
+2. **Recuperação de senha e administração da equipe:** recuperação ainda gera token em memória e não entrega e-mail; falta fluxo de entrega e token persistente de uso único. Existe provisionamento inicial de admin por CLI, sem contas padrão; completar o gerenciamento seguro dos demais usuários.
+3. **WhatsApp operacional:** WA-AKG no Compose é um placeholder que não executa servidor. Substituir por serviço homologado, implementar QR/reconexão reais, deduplicação de entrada e recibos de entrega. Meta precisa de credenciais e ensaio do contrato do provedor. Nenhuma mensagem foi enviada durante a auditoria.
+4. **Importação de backup legado:** endpoint de localStorage permanece bloqueado em produção. A interface não relata mais restauração fictícia. Restauração operacional suportada nesta entrega é o backup PostgreSQL testado; migração de JSON antigo precisa de normalização e validação específicas.
+5. **RBAC de leitura e privacidade:** as permissões de mutação existentes foram preservadas/aplicadas. Homologar com a diretoria quais perfis podem ler custos, financeiro e dados pessoais; autenticação sozinha não é uma matriz de visibilidade completa. Não foram inventadas políticas de comissão, desconto ou estorno.
+6. **Infraestrutura real:** faltam ensaio no servidor contratado, configuração de HTTPS/domínio e trust proxy conforme topologia, TLS do PostgreSQL remoto, acesso privado ao bucket, retenção/armazenamento externo de backups e alertas. A configuração Vercel atual publica SPA, não o ERP completo.
+7. **Homologação funcional/visual:** executar a jornada real com todos os perfis, artes/comprovantes reais, impressão e aparelhos usados na empresa, incluindo perda de rede, reinício e duas instâncias. Não considerar badges de teste na interface como evidência independente de produção.
+8. **Escala e ferramentas:** listagens ainda precisam de paginação e QuoteRepository mantém N+1 de itens. O lock global limita throughput; medir antes de granularizar. O audit npm original reportou quatro ocorrências moderadas na cadeia de desenvolvimento drizzle-kit/esbuild; não foi feito downgrade incompatível. Ferramentas de desenvolvimento saem da imagem final, mas devem continuar avaliadas no ambiente de engenharia.
 
-## Sequência recomendada para conclusão
+## Como prosseguir
 
-1. Corrigir fonte de verdade do frontend e transações de conversão/financeiro/estoque; adicionar testes com PostgreSQL descartável de homologação.
-2. Persistir auditoria, numeradores, recuperação de conta e importação; padronizar migrações e provisionar usuário inicial.
-3. Integrar armazenamento privado e provedores reais; homologar regras comerciais pendentes com a diretoria, preservando markup, tríade de estados e gate fabril.
-4. Executar jornada completa com perfis reais em homologação: lead → cliente → proposta com vários itens → aprovação → conversão concorrente → comprovante → corte → produção → entrega → saldo → auditoria. Incluir falhas de rede, reinício e duas instâncias.
-5. Provar instalação/upgrade, backup e restauração; revisar evidências, corrigir bloqueios e só então liberar produção.
-
-Nenhuma implantação, migração de banco operacional, envio de WhatsApp ou integração externa foi executada nesta auditoria.
+1. Aplicar o PR em homologação, configurar PostgreSQL e executar `npm run db:migrate` (nunca combinar com SQL histórico).
+2. Provisionar admin com `ADMIN_EMAIL`, `ADMIN_NAME` e `ADMIN_PASSWORD` no ambiente e executar `npm run admin:create`; não versionar esses valores.
+3. Configurar os dados reais da empresa na tela Configurações.
+4. Concluir os itens 1–5 acima e ensaiar a operação na infraestrutura contratada.
+5. Só liberar produção após registrar evidências e resolver os bloqueios; não foi executado merge ou deploy automaticamente.

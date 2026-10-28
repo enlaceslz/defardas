@@ -135,7 +135,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
                   Senha
                 </label>
                 <span className="text-[11px] text-slate-500 font-mono">
-                  Bcrypt com Salt R12
+                  Acesso pessoal
                 </span>
               </div>
               <div className="relative">
@@ -180,7 +180,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
             </button>
           </form>
 
-          {/* Quick Credential Helper (Dev & Test Mode) */}
+          {/* Credenciais de demonstração somente no build de desenvolvimento. */}
+          {import.meta.env?.DEV && (
           <div className="mt-6 pt-5 border-t border-slate-800">
             <button
               type="button"
@@ -237,6 +238,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Switch to Public Catalog View */}
@@ -256,7 +258,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
         <div className="mt-6 text-center text-[11px] text-slate-600 font-mono">
           <span>DE FARDAS INDUSTRIAL · SÃO LUÍS - MA</span>
           <br />
-          <span>Sessões protegidas com HttpOnly e SameSite Strict</span>
+          <span>Acesso exclusivo para a equipe autorizada</span>
         </div>
 
       </div>

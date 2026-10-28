@@ -1,3 +1,5 @@
+> Estado atual de produção: leia [a auditoria de 28/10/2026](docs/AUDITORIA_PRODUCAO_2026-10-28.md) e [a operação transacional](docs/OPERACAO_TRANSACIONAL.md). A publicação estática da SPA não substitui a API/PostgreSQL, e a liberação operacional ainda depende das pendências documentadas.
+
 # DEPLOY.md — Guia de Implantação e Operação de Produção
 
 **Aplicação:** DE FARDAS ERP & Portal Comercial  

@@ -234,7 +234,7 @@ export default function App() {
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
           lowStockCount={lowStockCount}
           onOpenHelpManual={() => setIsHelpManualOpen(true)}
-          onOpenAuditModal={() => setIsAuditModalOpen(true)}
+          onOpenAuditModal={import.meta.env?.DEV ? () => setIsAuditModalOpen(true) : undefined}
         />
 
         {/* Viewport Content */}
@@ -378,7 +378,7 @@ export default function App() {
       )}
 
       {/* Modal: Foundation P0 Audit, Tests & Database Invariants */}
-      {isAuditModalOpen && (
+      {import.meta.env?.DEV && isAuditModalOpen && (
         <FoundationAuditModal
           isOpen={isAuditModalOpen}
           onClose={() => setIsAuditModalOpen(false)}
