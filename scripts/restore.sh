@@ -8,10 +8,11 @@ POSTGRES_USER="${POSTGRES_USER:-defardas_user}"
 POSTGRES_DB="${POSTGRES_DB:-defardas_db}"
 [[ -f "$BACKUP_FILE" && -f "$BACKUP_FILE.sha256" ]] || { echo 'Backup e checksum .sha256 são obrigatórios.' >&2; exit 1; }
 command -v sha256sum >/dev/null || { echo 'sha256sum é obrigatório.' >&2; exit 1; }
-(
-  cd "$(dirname "$BACKUP_FILE")"
-  sha256sum -c "$(basename "$BACKUP_FILE").sha256"
-)
+read -r EXPECTED_HASH _ < "$BACKUP_FILE.sha256"
+[[ "$EXPECTED_HASH" =~ ^[a-fA-F0-9]{64}$ ]] || { echo 'Checksum inválido.' >&2; exit 1; }
+ACTUAL_HASH="$(sha256sum "$BACKUP_FILE" | cut -d ' ' -f 1)"
+[[ "$ACTUAL_HASH" == "$EXPECTED_HASH" ]] || { echo 'Checksum divergente. Nenhum dado foi restaurado.' >&2; exit 1; }
+
 gzip -t "$BACKUP_FILE"
 if [[ "${2:-}" != --force ]]; then
   read -r -p "Sobrescrever banco $POSTGRES_DB? Pare a aplicação antes de continuar. (s/N): " CONFIRM
