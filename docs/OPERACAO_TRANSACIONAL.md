@@ -61,3 +61,13 @@ A recuperação por CLI é uma operação privilegiada do host, equivalente ao p
 As rotas de credenciais demonstrativas, recuperação com token na resposta e simulação de perfis só ficam disponíveis sem `DATABASE_URL` e com `NODE_ENV` ausente, `development` ou `test`. Ambientes desconhecidos fecham esse acesso. Configurar um banco, mesmo local ou de homologação, desativa essas facilidades antes de consultar usuários ou emitir tokens/sessões.
 
 A importação de localStorage também permanece indisponível nesses ambientes persistentes: responde 501, sem alterar memória nem anunciar gravação no PostgreSQL. O fluxo persistente de importação continua pendente. A recuperação administrativa por `user:reset-password` permanece disponível para o operador autorizado, conforme procedimento acima.
+
+## Gestão administrativa da equipe
+
+`npm run user:manage` executa operações privilegiadas pelo host, exclusivamente com `DATABASE_URL`. Não há nova rota pública. Exige `ERP_USER_ACTION` (`create` ou `update`), `ERP_USER_EMAIL`, `ERP_USER_OPERATOR` (identificação do operador) e `ERP_USER_REASON` (motivo). A identificação informada é um registro declaratório; o acesso ao host deve comprovar quem executou o comando.
+
+Para criar uma conta ativa, carregar também `ERP_USER_NAME`, `ERP_USER_PASSWORD` e `ERP_USER_ROLE`. Os perfis aceitos são `admin`, `gerente_comercial`, `vendedor`, `pcp_producao`, `financeiro` e `expedicao_qualidade`. O e-mail é normalizado e conta existente nunca é substituída. Obter a senha por entrada oculta ou pelo mecanismo de segredos da infraestrutura; não passá-la na linha de comando, no histórico ou em arquivo versionado.
+
+Para alterar acesso, usar `update` com `ERP_USER_ROLE` e/ou `ERP_USER_ACTIVE` exatamente `true` ou `false`. Limpar as variáveis de criação (nome e senha) antes da atualização. O comando não altera nome/e-mail/senha nem exclui histórico. Mudança efetiva de perfil ou ativação revoga todas as sessões e tokens de recuperação; reativar não restaura sessões antigas. Repetir o estado já aplicado não revoga novas sessões nem duplica auditoria. O último administrador ativo não pode ser desativado ou perder esse perfil por este procedimento, inclusive em chamadas concorrentes.
+
+Cadastro/alteração, revogações e auditoria confirmam na mesma transação. Falha de auditoria reverte tudo. O retorno não exibe senha/hash/token; a auditoria registra operador, motivo e estados de acesso anterior/novo. Remover as variáveis `ERP_USER_*` do shell ao terminar. A tela administrativa de equipe ainda está pendente; esta entrega fornece o procedimento operacional com proteção transacional. Não executar contra o banco operacional sem a autorização correspondente.

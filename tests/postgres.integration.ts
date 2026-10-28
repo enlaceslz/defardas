@@ -1,4 +1,5 @@
 import 'express-async-errors';
+import { manageUser } from '../server/auth/userManagementService';
 import assert from 'node:assert/strict';
 import { before, after, test } from 'node:test';
 import crypto from 'node:crypto';
@@ -275,4 +276,97 @@ test('PostgreSQL: falha de auditoria no login desfaz sessão e não emite cookie
   } finally {
     await pool.query('DROP TRIGGER test_fail_login_audit ON core.audit_logs'); await pool.query('DROP FUNCTION core.test_fail_login_audit()');
   }
+});
+
+// Privileged host lifecycle; all accounts and failures belong to this disposable database.
+const teamCommand = (email: string) => ({ action: 'create', email, fullName: 'Team Test',
+  password: testPassword(), role: 'vendedor', operator: 'Integration Operator', reason: 'Integration team lifecycle' });
+
+test('PostgreSQL: gestão cria conta sem expor hash e altera acesso com revogação e auditoria', async () => {
+  const command = teamCommand(`team-${crypto.randomUUID()}@example.invalid`);
+  const account = await manageUser(command);
+  assert.equal('passwordHash' in account, false);
+  assert.equal('password_hash' in account, false);
+  assert.ok(await PasswordService.comparePassword(command.password, (await pool.query('SELECT password_hash FROM core.users WHERE id=$1', [account.id])).rows[0].password_hash));
+  await assert.rejects(manageUser({ ...command, email: command.email.toUpperCase() }), /já cadastrado/);
+  const session = await sessionStore.createSession(account);
+  const token = await new PasswordResetService().issue(account.id);
+  const changed = await manageUser({ action: 'update', email: account.email, role: 'financeiro', isActive: false,
+    operator: command.operator, reason: 'Integration revoke' });
+  assert.equal(changed.role, 'financeiro'); assert.equal(changed.isActive, false);
+  assert.equal(await sessionStore.getSession(session.token), null);
+  assert.equal((await pool.query('SELECT * FROM core.password_reset_tokens WHERE user_id=$1', [account.id])).rowCount, 0);
+  await manageUser({ action: 'update', email: account.email, isActive: true, operator: command.operator, reason: 'Integration reactivate' });
+  assert.equal(await new PasswordResetService().reset(token!, command.password), false);
+  const beforeRoleChange = await sessionStore.createSession(changed);
+  const current = await manageUser({ action: 'update', email: account.email, role: 'pcp_producao', operator: command.operator, reason: 'Role-only change' });
+  assert.equal(await sessionStore.getSession(beforeRoleChange.token), null);
+  const fresh = await sessionStore.createSession(current);
+  await manageUser({ action: 'update', email: account.email, isActive: true, operator: command.operator, reason: 'No-op repeat' });
+  assert.ok(await sessionStore.getSession(fresh.token));
+  const audits = (await pool.query("SELECT * FROM core.audit_logs WHERE entity_id=$1 AND entity_name='users' ORDER BY created_at", [account.id])).rows;
+  assert.equal(audits.length, 4);
+  assert.equal(audits[1].old_data.role, 'vendedor'); assert.equal(audits[1].new_data.isActive, false);
+  assert.equal(audits[1].actor_name, command.operator);
+  assert.ok(!JSON.stringify(audits).includes(command.password));
+});
+
+test('PostgreSQL: falha de auditoria desfaz criação e alteração com suas revogações', async () => {
+  const command = teamCommand(`rollback-${crypto.randomUUID()}@example.invalid`);
+  const account = await manageUser(command);
+  const session = await sessionStore.createSession(account);
+  await new PasswordResetService().issue(account.id);
+  await pool.query(`CREATE FUNCTION core.test_fail_user_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.entity_name='users' AND NEW.notes='Injected team rollback' THEN RAISE EXCEPTION 'Injected user audit failure'; END IF; RETURN NEW; END $$`);
+  await pool.query('CREATE TRIGGER test_fail_user_audit BEFORE INSERT ON core.audit_logs FOR EACH ROW EXECUTE FUNCTION core.test_fail_user_audit()');
+  const failedEmail = `failed-${crypto.randomUUID()}@example.invalid`;
+  try {
+    await assert.rejects(manageUser({ ...command, email: failedEmail, reason: 'Injected team rollback' }), /Injected user audit failure/);
+    assert.equal((await pool.query('SELECT id FROM core.users WHERE email=$1', [failedEmail])).rowCount, 0);
+    await assert.rejects(manageUser({ action: 'update', email: account.email, role: 'financeiro', isActive: false,
+      operator: command.operator, reason: 'Injected team rollback' }), /Injected user audit failure/);
+    assert.equal((await pool.query('SELECT role,is_active FROM core.users WHERE id=$1', [account.id])).rows[0].role, 'vendedor');
+    assert.equal((await pool.query('SELECT is_active FROM core.users WHERE id=$1', [account.id])).rows[0].is_active, true);
+    assert.ok(await sessionStore.getSession(session.token));
+    assert.equal((await pool.query('SELECT * FROM core.password_reset_tokens WHERE user_id=$1', [account.id])).rowCount, 1);
+  } finally { await pool.query('DROP TRIGGER test_fail_user_audit ON core.audit_logs'); await pool.query('DROP FUNCTION core.test_fail_user_audit()'); }
+});
+
+test('PostgreSQL: alterações concorrentes preservam o último administrador ativo', async () => {
+  const originals = (await pool.query("SELECT id FROM core.users WHERE role='admin' AND is_active=true")).rows.map((row) => row.id);
+  const first = await manageUser({ ...teamCommand(`admin-a-${crypto.randomUUID()}@example.invalid`), role: 'admin' });
+  const second = await manageUser({ ...teamCommand(`admin-b-${crypto.randomUUID()}@example.invalid`), role: 'admin' });
+  try {
+    await pool.query('UPDATE core.users SET is_active=false WHERE id=ANY($1::uuid[])', [originals]);
+    const result = await Promise.allSettled([first, second].map((account) => manageUser({ action: 'update', email: account.email,
+      isActive: false, operator: 'Integration Operator', reason: 'Concurrent admin deactivate' })));
+    assert.equal(result.filter((entry) => entry.status === 'fulfilled').length, 1);
+    assert.equal((await pool.query("SELECT id FROM core.users WHERE role='admin' AND is_active=true")).rowCount, 1);
+    const active = (await pool.query("SELECT email FROM core.users WHERE role='admin' AND is_active=true")).rows[0];
+    await assert.rejects(manageUser({ action: 'update', email: active.email, role: 'vendedor',
+      operator: 'Integration Operator', reason: 'Last admin demotion' }), /último administrador/);
+  } finally {
+    await pool.query('UPDATE core.users SET is_active=true WHERE id=ANY($1::uuid[])', [originals]);
+    await pool.query('UPDATE core.users SET is_active=false WHERE id=ANY($1::uuid[])', [[first.id, second.id]]);
+  }
+});
+
+test('PostgreSQL: CLI de equipe cria conta sem imprimir credenciais e rejeita ativação ambígua', async () => {
+  const command = teamCommand(`cli-team-${crypto.randomUUID()}@example.invalid`);
+  const env: NodeJS.ProcessEnv = { ...process.env, ERP_USER_ACTION: 'create', ERP_USER_EMAIL: command.email, ERP_USER_NAME: command.fullName,
+    ERP_USER_PASSWORD: command.password, ERP_USER_ROLE: 'pcp_producao', ERP_USER_OPERATOR: command.operator,
+    ERP_USER_REASON: command.reason };
+  delete env.ERP_USER_ACTIVE;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/manage-user.ts'], { env, encoding: 'utf8', timeout: 15000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.stdout.includes(command.password)); assert.ok(!result.stderr.includes(command.password));
+  assert.equal((await pool.query('SELECT role FROM core.users WHERE email=$1', [command.email])).rows[0].role, 'pcp_producao');
+  const invalid = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/manage-user.ts'], {
+    env: { ...env, ERP_USER_ACTIVE: 'yes' }, encoding: 'utf8', timeout: 15000 });
+  assert.equal(invalid.status, 1); assert.match(invalid.stderr, /true ou false/);
+  delete env.ERP_USER_PASSWORD; delete env.ERP_USER_NAME;
+  const updated = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/manage-user.ts'], {
+    env: { ...env, ERP_USER_ACTION: 'update', ERP_USER_ACTIVE: 'false' }, encoding: 'utf8', timeout: 15000 });
+  assert.equal(updated.status, 0, updated.stderr);
+  assert.equal((await pool.query('SELECT is_active FROM core.users WHERE email=$1', [command.email])).rows[0].is_active, false);
 });
