@@ -15,3 +15,11 @@ export const sessions = coreSchema.table('sessions', {
 
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
+
+// Só o SHA-256 do token aleatório é persistido; o valor utilizável nunca vai ao banco.
+export const passwordResetTokens = coreSchema.table('password_reset_tokens', {
+  tokenHash: varchar('token_hash', { length: 64 }).primaryKey(),
+  userId: uuid('user_id').notNull().unique().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});

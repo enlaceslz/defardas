@@ -6,6 +6,7 @@
 import { UserEntity, UserRole } from '../types/db';
 import { PasswordService } from '../auth/passwordService';
 import { db } from './connection';
+import { query } from './index';
 import crypto from 'crypto';
 
 export interface CreateUserData {
@@ -15,20 +16,12 @@ export interface CreateUserData {
   role: UserRole;
 }
 
-export interface PasswordResetTokenRecord {
-  token: string;
-  userId: string;
-  email: string;
-  expiresAt: Date;
-}
-
 // Senha padrão para ambiente de desenvolvimento/testes locais (Dev Seed)
 // Em produção, as senhas devem ser configuradas via variáveis de ambiente ou migração
-export const DEV_DEFAULT_PASSWORD = process.env.ERP_DEV_PASSWORD || 'DeFardas@2026!';
+export const DEV_DEFAULT_PASSWORD = process.env.ERP_DEV_PASSWORD || `Dev-${crypto.randomBytes(24).toString('base64url')}-1`;
 
 class UserRepository {
   private users: Map<string, UserEntity> = new Map();
-  private resetTokens: Map<string, PasswordResetTokenRecord> = new Map();
   private isInitialized = false;
 
   constructor() {
@@ -123,8 +116,7 @@ class UserRepository {
     // Se conectado ao PostgreSQL real, consulta tabela core.users
     if (db.isConnected() && db.getPool()) {
       try {
-        const pool = db.getPool()!;
-        const res = await pool.query(
+        const res = await query(
           'SELECT id, full_name, email, password_hash, role, is_active, created_at, updated_at FROM core.users WHERE LOWER(email) = $1',
           [normalized]
         );
@@ -165,8 +157,7 @@ class UserRepository {
     await db.ready;
     if (db.isConnected() && db.getPool()) {
       try {
-        const pool = db.getPool()!;
-        const res = await pool.query(
+        const res = await query(
           'SELECT id, full_name, email, password_hash, role, is_active, created_at, updated_at FROM core.users WHERE id = $1',
           [id]
         );
@@ -200,8 +191,7 @@ class UserRepository {
     await db.ready;
     if (db.isConnected() && db.getPool()) {
       try {
-        const pool = db.getPool()!;
-        const res = await pool.query(
+        const res = await query(
           'SELECT id, full_name, email, role, is_active, created_at, updated_at FROM core.users ORDER BY full_name ASC'
         );
         return res.rows.map((row) => ({
@@ -249,8 +239,7 @@ class UserRepository {
 
     if (db.isConnected() && db.getPool()) {
       try {
-        const pool = db.getPool()!;
-        await pool.query(
+        await query(
           `INSERT INTO core.users (id, full_name, email, password_hash, role, is_active, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [newUser.id, newUser.fullName, newUser.email, newUser.passwordHash, newUser.role, newUser.isActive, newUser.createdAt, newUser.updatedAt]
@@ -265,63 +254,13 @@ class UserRepository {
     return newUser;
   }
 
-  /**
-   * Atualiza senha do usuário
-   */
-  public async updatePassword(userId: string, newPassword: string): Promise<boolean> {
-    await db.ready;
-    const user = await this.findById(userId);
-    if (!user) return false;
-
-    const passwordHash = await PasswordService.hashPassword(newPassword);
-    const now = new Date().toISOString();
-
-    if (db.isConnected() && db.getPool()) {
-      try {
-        const pool = db.getPool()!;
-        await pool.query(
-          'UPDATE core.users SET password_hash = $1, updated_at = $2 WHERE id = $3',
-          [passwordHash, now, userId]
-        );
-      } catch (err) {
-        if (process.env.NODE_ENV === 'production') throw err;
-        console.error('[AUTH] Erro ao atualizar senha no PostgreSQL:', err);
-      }
-    }
-
+  // Apenas para demonstração sem banco; produção nunca atualiza cache de senhas.
+  public setLocalPasswordHash(userId: string, passwordHash: string): void {
+    if (process.env.NODE_ENV === 'production' || process.env.DATABASE_URL) throw new Error('Operação local indisponível.');
+    const user = this.users.get(userId);
+    if (!user) throw new Error('Usuário não encontrado.');
     user.passwordHash = passwordHash;
-    user.updatedAt = now;
-    this.users.set(user.id, user);
-    return true;
-  }
-
-  /**
-   * Gera token seguro para recuperação de senha
-   */
-  public createPasswordResetToken(userId: string, email: string): string {
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora de validade
-    this.resetTokens.set(token, {
-      token,
-      userId,
-      email,
-      expiresAt,
-    });
-    return token;
-  }
-
-  /**
-   * Valida e consome token de recuperação de senha
-   */
-  public consumePasswordResetToken(token: string): PasswordResetTokenRecord | null {
-    const record = this.resetTokens.get(token);
-    if (!record) return null;
-    if (new Date() > record.expiresAt) {
-      this.resetTokens.delete(token);
-      return null;
-    }
-    this.resetTokens.delete(token);
-    return record;
+    user.updatedAt = new Date().toISOString();
   }
 }
 

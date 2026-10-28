@@ -17,7 +17,15 @@ import { settingsRouter } from '../server/routes/settingsRoutes';
 import { spawnSync } from 'node:child_process';
 import { inventoryRouter } from '../server/routes/inventoryRoutes';
 import type { Server } from 'node:http';
+import { PasswordResetService } from '../server/auth/passwordResetService';
+import { PasswordService } from '../server/auth/passwordService';
+import { authRouter } from '../server/routes/authRoutes';
+import { quoteRepository } from '../server/repositories/quoteRepository';
 
+
+const credentials = { original: testPassword(), updated: testPassword(), replay: testPassword(),
+  concurrent: testPassword(), expired: testPassword(), inactive: testPassword(), operator: testPassword() };
+function testPassword() { return `Test-${crypto.randomBytes(24).toString('base64url')}-1`; }
 // Este runner só deve apontar para um banco descartável criado para a suíte.
 assert.ok(process.env.DATABASE_URL?.includes('/defardas_test'), 'Use um banco isolado chamado defardas_test.');
 let server: Server;
@@ -50,6 +58,7 @@ before(async () => {
   headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` };
   const app = express(); app.use(express.json()); app.use(cookieParser()); app.use('/api', authMiddleware);
   app.use('/api', settingsRouter);
+  app.use('/api/auth', authRouter);
   app.use('/api/clients', clientsRouter); app.use('/api/quotes', quotesRouter); app.use('/api/orders', ordersRouter);
   app.use('/api/finance', financeRouter); app.use('/api/inventory', inventoryRouter);
   app.use((err: any, _req: any, res: any, _next: any) => { res.status(err.status || 500).json({ error: err.message }); });
@@ -148,4 +157,122 @@ test('PostgreSQL: provisionamento CLI não mostra senha nem substitui conta exis
   const second = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/create-admin.ts'], options);
   assert.equal(second.status, 1); assert.match(second.stderr, /já cadastrado/);
   assert.equal((await pool.query('SELECT password_hash FROM core.users WHERE email=$1', [email])).rows[0].password_hash, user.password_hash);
+});
+
+async function resetAccount() {
+  const id = crypto.randomUUID(); const email = `${id}@example.invalid`;
+  const hash = await PasswordService.hashPassword(credentials.original);
+  await pool.query(`INSERT INTO core.users(id,full_name,email,password_hash,role,is_active)
+    VALUES($1,'Reset Integration',$2,$3,'vendedor',true)`, [id, email, hash]);
+  const session = await sessionStore.createSession({ id, email, fullName: 'Reset Integration', role: 'vendedor' });
+  return { id, email, hash, session };
+}
+test('PostgreSQL: recuperação pública indisponível não confirma entrega nem emite token', async () => {
+  const account = await resetAccount();
+  const result = await request('/api/auth/recover-password', 'POST', { email: account.email });
+  assert.equal(result.status, 503); assert.equal(result.data.devResetToken, undefined);
+  assert.equal((await pool.query('SELECT * FROM core.password_reset_tokens WHERE user_id=$1', [account.id])).rowCount, 0);
+});
+test('PostgreSQL: token persiste como hash e pode ser consumido por outra instância', async () => {
+  const account = await resetAccount(); const service = new PasswordResetService();
+  const token = await service.issue(account.id);
+  const stored = (await pool.query('SELECT * FROM core.password_reset_tokens WHERE user_id=$1', [account.id])).rows[0];
+  assert.notEqual(stored.token_hash, token);
+  assert.equal(stored.token_hash, crypto.createHash('sha256').update(token!).digest('hex'));
+  assert.ok(await new PasswordResetService().reset(token!, credentials.updated));
+  assert.equal(await service.reset(token!, credentials.replay), false);
+  assert.equal(await sessionStore.getSession(account.session.token), null);
+  assert.ok(await PasswordService.comparePassword(credentials.updated, (await pool.query('SELECT password_hash FROM core.users WHERE id=$1', [account.id])).rows[0].password_hash));
+});
+test('PostgreSQL: redefinições concorrentes têm um único vencedor', async () => {
+  const account = await resetAccount(); const token = await new PasswordResetService().issue(account.id);
+  const results = await Promise.all(Array.from({ length: 4 }, () => new PasswordResetService().reset(token!, credentials.concurrent)));
+  assert.equal(results.filter(Boolean).length, 1);
+  assert.equal((await pool.query("SELECT * FROM core.audit_logs WHERE entity_id=$1 AND action='PASSWORD_RESET_COMPLETED'", [account.id])).rowCount, 1);
+});
+test('PostgreSQL: token substituído, expirado ou de conta inativa é recusado', async () => {
+  const account = await resetAccount(); const service = new PasswordResetService();
+  const old = await service.issue(account.id); const fresh = await service.issue(account.id);
+  assert.equal(await service.reset(old!, credentials.updated), false);
+  await pool.query("UPDATE core.password_reset_tokens SET expires_at=NOW()-interval '1 second' WHERE user_id=$1", [account.id]);
+  assert.equal(await service.reset(fresh!, credentials.updated), false);
+  const active = await service.issue(account.id);
+  await pool.query('UPDATE core.users SET is_active=FALSE WHERE id=$1', [account.id]);
+  assert.equal(await service.issue(account.id), null);
+  assert.equal(await service.reset(active!, credentials.updated), false);
+  assert.equal((await pool.query('SELECT password_hash FROM core.users WHERE id=$1', [account.id])).rows[0].password_hash, account.hash);
+});
+test('PostgreSQL: falha na revogação desfaz senha, auditoria e consumo do token', async () => {
+  const account = await resetAccount(); const service = new PasswordResetService(); const token = await service.issue(account.id);
+  await pool.query(`CREATE FUNCTION core.test_fail_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF OLD.user_id='${account.id}'::uuid THEN RAISE EXCEPTION 'Injected revoke failure'; END IF; RETURN OLD; END $$`);
+  await pool.query('CREATE TRIGGER test_fail_revoke BEFORE DELETE ON core.sessions FOR EACH ROW EXECUTE FUNCTION core.test_fail_revoke()');
+  try {
+    await assert.rejects(service.reset(token!, credentials.updated), /Injected revoke failure/);
+    assert.equal((await pool.query('SELECT password_hash FROM core.users WHERE id=$1', [account.id])).rows[0].password_hash, account.hash);
+    assert.ok(await sessionStore.getSession(account.session.token));
+    assert.equal((await pool.query('SELECT * FROM core.password_reset_tokens WHERE user_id=$1', [account.id])).rowCount, 1);
+    assert.equal((await pool.query("SELECT * FROM core.audit_logs WHERE entity_id=$1 AND action='PASSWORD_RESET_COMPLETED'", [account.id])).rowCount, 0);
+  } finally {
+    await pool.query('DROP TRIGGER test_fail_revoke ON core.sessions'); await pool.query('DROP FUNCTION core.test_fail_revoke()');
+  }
+  assert.ok(await service.reset(token!, credentials.updated));
+});
+test('PostgreSQL: recuperação CLI não exibe senha e revoga sessões e tokens', async () => {
+  const account = await resetAccount(); const token = await new PasswordResetService().issue(account.id);
+  const password = `Reset-${crypto.randomUUID()}-9`;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/reset-user-password.ts'], {
+    env: { ...process.env, RESET_USER_EMAIL: account.email, RESET_USER_PASSWORD: password }, encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.stdout.includes(password)); assert.ok(!result.stderr.includes(password));
+  assert.equal(await sessionStore.getSession(account.session.token), null);
+  assert.equal(await new PasswordResetService().reset(token!, credentials.replay), false);
+  assert.ok(await PasswordService.comparePassword(password, (await pool.query('SELECT password_hash FROM core.users WHERE id=$1', [account.id])).rows[0].password_hash));
+});
+test('PostgreSQL: listagem de propostas agrupa itens em uma única consulta', async () => {
+  const original = pool.query; let selects = 0;
+  pool.query = (function (...args: any[]) {
+    const sql = typeof args[0] === 'string' ? args[0] : args[0].text;
+    if (/^select/i.test(sql)) selects++;
+    return original.apply(pool, args as any);
+  }) as typeof pool.query;
+  try {
+    const listed = await quoteRepository.findAll();
+    const quote = listed.find((row) => row.id === quoteId)!;
+    assert.equal(selects, 1); assert.equal(quote.items.length, 2);
+    assert.deepEqual(quote.items.map((i) => i.modelName).sort(), ['Modelo A', 'Modelo B']);
+    assert.ok(listed.every((q) => q.items.every((i) => i.quoteId === q.id)));
+  } finally { pool.query = original; }
+});
+
+test('PostgreSQL: login antigo em trânsito é recusado após redefinição', async () => {
+  const account = await resetAccount(); const service = new PasswordResetService();
+  const original = PasswordService.comparePassword;
+  let entered!: () => void; let resume!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const release = new Promise<void>((resolve) => { resume = resolve; });
+  PasswordService.comparePassword = async () => { entered(); await release; return true; };
+  try {
+    const pending = request('/api/auth/login', 'POST', { email: account.email, password: credentials.original });
+    await started;
+    assert.ok(await service.resetByEmail(account.email, credentials.updated));
+    resume();
+    assert.equal((await pending).status, 401);
+    assert.equal((await pool.query('SELECT * FROM core.sessions WHERE user_id=$1', [account.id])).rowCount, 0);
+  } finally { resume(); PasswordService.comparePassword = original; }
+});
+test('PostgreSQL: falha de auditoria no login desfaz sessão e não emite cookie', async () => {
+  const account = await resetAccount();
+  await pool.query(`CREATE FUNCTION core.test_fail_login_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.actor_id='${account.id}'::uuid AND NEW.action='AUTH_LOGIN_SUCCESS' THEN RAISE EXCEPTION 'Injected login audit failure'; END IF; RETURN NEW; END $$`);
+  await pool.query('CREATE TRIGGER test_fail_login_audit BEFORE INSERT ON core.audit_logs FOR EACH ROW EXECUTE FUNCTION core.test_fail_login_audit()');
+  try {
+    const response = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: account.email, password: credentials.original }) });
+    assert.equal(response.status, 500); assert.equal(response.headers.get('set-cookie'), null);
+    assert.equal((await pool.query('SELECT * FROM core.sessions WHERE user_id=$1', [account.id])).rowCount, 1);
+  } finally {
+    await pool.query('DROP TRIGGER test_fail_login_audit ON core.audit_logs'); await pool.query('DROP FUNCTION core.test_fail_login_audit()');
+  }
 });
