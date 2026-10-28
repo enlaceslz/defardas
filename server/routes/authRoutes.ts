@@ -8,6 +8,8 @@ import { RequestWithUser, requireAuth } from '../auth/rbac';
 import { sessionStore } from '../auth/sessionStore';
 import { userRepository, DEV_DEFAULT_PASSWORD } from '../db/userRepository';
 import { PasswordService } from '../auth/passwordService';
+import { passwordResetService } from '../auth/passwordResetService';
+import { unitOfWork } from '../db/unitOfWork';
 import { auditService } from '../services/auditService';
 import { authRateLimiter, passwordRecoveryRateLimiter } from '../middleware/rateLimiter';
 import { CSRF_COOKIE_NAME, generateCsrfToken } from '../middleware/csrf';
@@ -76,7 +78,8 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
     return res.status(403).json({ error: 'Esta conta de usuário está desativada. Contate o administrador.' });
   }
 
-  const isPasswordValid = await PasswordService.comparePassword(password, user.passwordHash);
+  const verifiedPasswordHash = user.passwordHash;
+  const isPasswordValid = await PasswordService.comparePassword(password, verifiedPasswordHash);
   if (!isPasswordValid) {
     await auditService.log({
       actorId: user.id,
@@ -92,16 +95,19 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
   }
 
   // Criação de sessão segura
-  const session = await sessionStore.createSession(
-    {
-      id: user.id,
-      fullName: user.fullName,
-      email: user.email,
-      role: user.role,
-    },
-    ip,
-    userAgent
-  );
+  const session = await unitOfWork(async () => {
+    // Uma troca de senha entre a comparação bcrypt e o INSERT não pode criar
+    // uma sessão nova usando a credencial antiga.
+    const current = await userRepository.findById(user.id);
+    if (!current?.isActive || current.passwordHash !== verifiedPasswordHash) return null;
+    const created = await sessionStore.createSession({ id: current.id, fullName: current.fullName,
+      email: current.email, role: current.role }, ip, userAgent);
+    await auditService.log({ actorId: current.id, actorName: current.fullName, actorRole: current.role,
+      entityName: 'auth', entityId: created.token.substring(0, 8), action: 'AUTH_LOGIN_SUCCESS',
+      notes: `Usuário '${current.fullName}' (${current.role}) autenticado com sucesso.`, ipAddress: ip });
+    return created;
+  });
+  if (!session) return res.status(401).json({ error: 'Credenciais inválidas. Verifique seu e-mail e senha.' });
 
   // Configuração do cookie HttpOnly
   res.cookie('defardas_session', session.token, {
@@ -110,17 +116,6 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
     sameSite: 'lax',
     path: '/',
     maxAge: 8 * 60 * 60 * 1000, // 8 horas
-  });
-
-  await auditService.log({
-    actorId: user.id,
-    actorName: user.fullName,
-    actorRole: user.role,
-    entityName: 'auth',
-    entityId: session.token.substring(0, 8),
-    action: 'AUTH_LOGIN_SUCCESS',
-    notes: `Usuário '${user.fullName}' (${user.role}) autenticado com sucesso.`,
-    ipAddress: ip,
   });
 
   let csrfToken = req.cookies?.[CSRF_COOKIE_NAME];
@@ -137,12 +132,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
 
   res.json({
     success: true,
-    user: {
-      id: user.id,
-      fullName: user.fullName,
-      email: user.email,
-      role: user.role,
-    },
+    user: session.user,
     token: session.token,
     csrfToken,
   });
@@ -229,9 +219,11 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
     return res.status(400).json({ error: 'Informe o e-mail cadastrado.' });
   }
 
+  // Sem canal de e-mail homologado, não confirmar uma entrega inexistente.
+  if (isProd) return res.status(503).json({ error: 'Recuperação por e-mail indisponível. Contate o administrador.', code: 'PASSWORD_RECOVERY_UNAVAILABLE' });
   const user = await userRepository.findByEmail(email);
-  if (user) {
-    const resetToken = userRepository.createPasswordResetToken(user.id, user.email);
+  if (user?.isActive) {
+    const resetToken = await passwordResetService.issue(user.id);
     await auditService.log({
       actorId: user.id,
       actorName: user.fullName,
@@ -253,7 +245,7 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
     }
   }
 
-  // Resposta segura (tempo constante / sem vazamento de existência de conta)
+  // Resposta genérica; em produção o fluxo permanece indisponível até integrar entrega.
   res.json({
     success: true,
     message: 'Se o e-mail estiver cadastrado, as instruções de recuperação foram geradas.',
@@ -264,7 +256,7 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
  * POST /api/auth/reset-password
  * Redefine a senha utilizando token válido
  */
-authRouter.post('/reset-password', async (req: RequestWithUser, res: Response) => {
+authRouter.post('/reset-password', passwordRecoveryRateLimiter, async (req: RequestWithUser, res: Response) => {
   const { token, newPassword } = req.body;
   if (typeof token !== 'string' || typeof newPassword !== 'string' || !token || !newPassword) {
     return res.status(400).json({ error: 'Token e nova senha são obrigatórios.' });
@@ -275,24 +267,10 @@ authRouter.post('/reset-password', async (req: RequestWithUser, res: Response) =
     return res.status(400).json({ error: strength.reason });
   }
 
-  const tokenRecord = userRepository.consumePasswordResetToken(token);
-  if (!tokenRecord) {
+  const completed = await passwordResetService.reset(token, newPassword, req.ip);
+  if (!completed) {
     return res.status(400).json({ error: 'Token de recuperação inválido ou expirado.' });
   }
-
-  await userRepository.updatePassword(tokenRecord.userId, newPassword);
-  await sessionStore.destroyAllUserSessions(tokenRecord.userId);
-
-  await auditService.log({
-    actorId: tokenRecord.userId,
-    actorName: tokenRecord.email,
-    actorRole: 'usuario',
-    entityName: 'auth',
-    entityId: tokenRecord.userId,
-    action: 'PASSWORD_RESET_COMPLETED',
-    notes: 'Senha redefinida com sucesso. Todas as sessões anteriores foram invalidadas.',
-    ipAddress: req.ip,
-  });
 
   res.json({ success: true, message: 'Senha redefinida com sucesso. Faça login com a nova senha.' });
 });

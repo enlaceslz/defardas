@@ -37,6 +37,7 @@ async function bootstrap() {
   if (isProd) {
     await pool.query('SELECT key FROM core.public_settings LIMIT 0');
     await pool.query('SELECT kind, value FROM core.number_counters LIMIT 0');
+    await pool.query('SELECT token_hash FROM core.password_reset_tokens LIMIT 0');
   }
   const app = express();
   app.disable('x-powered-by');

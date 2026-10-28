@@ -14,6 +14,7 @@ import {
   Users
 } from 'lucide-react';
 import { useAuth, UserRole, AVAILABLE_ROLES } from '../api/authContext';
+import { api } from '../api/client';
 
 interface LoginViewProps {
   onGoToPortal?: () => void;
@@ -49,9 +50,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
     }
   };
 
-  const handleQuickFill = (demoEmail: string) => {
+  const handleQuickFill = async (demoEmail: string) => {
+    if (!import.meta.env?.DEV) return;
+    const result = await api.getDevCredentials();
+    if (result.error || !result.data?.defaultPassword) {
+      setErrorMessage(result.error || 'Credenciais locais indisponíveis.');
+      return;
+    }
     setEmail(demoEmail);
-    setPassword('DeFardas@2026!');
+    setPassword(result.data.defaultPassword);
     setErrorMessage(null);
   };
 
@@ -203,7 +210,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-slate-300 font-semibold">Credenciais de Teste Homologadas:</span>
                     <span className="font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800/60">
-                      Senha: DeFardas@2026!
+                      Senha local gerada pelo servidor
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">

@@ -2,7 +2,7 @@
  * DE FARDAS ERP — Quote Repository (Drizzle ORM + Resilient Memory Store)
  * Gerencia persistência de propostas comerciais e decomposição de custos no PostgreSQL.
  */
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, asc } from 'drizzle-orm';
 import { db as drizzleDb } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
 import { quotes, quoteItems, Quote, QuoteItem, NewQuote, NewQuoteItem } from '../db/schema/quotes';
@@ -16,13 +16,20 @@ export class QuoteRepository {
     }
     if (fallbackDb.isConnected()) {
       try {
-        const rows = await drizzleDb.select().from(quotes).orderBy(desc(quotes.createdAt));
-        const results: QuoteEntity[] = [];
+        // Um único snapshot SQL para propostas e itens; evita N+1 e leituras partidas.
+        const rows = await drizzleDb.select({ quote: quotes, item: quoteItems }).from(quotes)
+          .leftJoin(quoteItems, eq(quoteItems.quoteId, quotes.id))
+          .orderBy(desc(quotes.createdAt), asc(quotes.id), asc(quoteItems.id));
+        const grouped = new Map<string, { quote: Quote; items: QuoteItem[] }>();
         for (const row of rows) {
-          const items = await drizzleDb.select().from(quoteItems).where(eq(quoteItems.quoteId, row.id));
-          results.push(this.mapToEntity(row, items));
+          let entry = grouped.get(row.quote.id);
+          if (!entry) {
+            entry = { quote: row.quote, items: [] };
+            grouped.set(row.quote.id, entry);
+          }
+          if (row.item) entry.items.push(row.item);
         }
-        return results;
+        return Array.from(grouped.values(), ({ quote, items }) => this.mapToEntity(quote, items));
       } catch (err) {
         throw err;
         console.warn('⚠️ [QuoteRepository] Erro ao listar propostas via Drizzle. Recorrendo à memória.', err);

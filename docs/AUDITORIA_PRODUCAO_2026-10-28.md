@@ -54,13 +54,13 @@ A alteração de metadata da OP não altera grade, modelo, valor negociado, fina
 ## Pendências para liberação operacional
 
 1. **Anexos privados/S3:** o upload completo e a validação de posse do arquivo ainda não estão implementados. A baixa exige autenticação bancária e URL HTTPS real, mas HTTPS sozinho não prova que o arquivo está no armazenamento privado contratado. Integrar upload privado, assinatura temporária, validação de MIME/tamanho e vínculo de evidência antes de operar dados reais.
-2. **Recuperação de senha e administração da equipe:** recuperação ainda gera token em memória e não entrega e-mail; falta fluxo de entrega e token persistente de uso único. Existe provisionamento inicial de admin por CLI, sem contas padrão; completar o gerenciamento seguro dos demais usuários.
+2. **Recuperação de senha e administração da equipe:** tokens agora são persistidos como hash, com troca/revogação/auditoria atômicas e recuperação administrativa via CLI. O endpoint público retorna 503 em produção até haver entrega real de e-mail e interface de redefinição. Existe provisionamento inicial de admin por CLI, sem contas padrão; completar o gerenciamento seguro dos demais usuários.
 3. **WhatsApp operacional:** WA-AKG no Compose é um placeholder que não executa servidor. Substituir por serviço homologado, implementar QR/reconexão reais, deduplicação de entrada e recibos de entrega. Meta precisa de credenciais e ensaio do contrato do provedor. Nenhuma mensagem foi enviada durante a auditoria.
 4. **Importação de backup legado:** endpoint de localStorage permanece bloqueado em produção. A interface não relata mais restauração fictícia. Restauração operacional suportada nesta entrega é o backup PostgreSQL testado; migração de JSON antigo precisa de normalização e validação específicas.
 5. **RBAC de leitura e privacidade:** as permissões de mutação existentes foram preservadas/aplicadas. Homologar com a diretoria quais perfis podem ler custos, financeiro e dados pessoais; autenticação sozinha não é uma matriz de visibilidade completa. Não foram inventadas políticas de comissão, desconto ou estorno.
 6. **Infraestrutura real:** faltam ensaio no servidor contratado, configuração de HTTPS/domínio e trust proxy conforme topologia, TLS do PostgreSQL remoto, acesso privado ao bucket, retenção/armazenamento externo de backups e alertas. A configuração Vercel atual publica SPA, não o ERP completo.
 7. **Homologação funcional/visual:** executar a jornada real com todos os perfis, artes/comprovantes reais, impressão e aparelhos usados na empresa, incluindo perda de rede, reinício e duas instâncias. Não considerar badges de teste na interface como evidência independente de produção.
-8. **Escala e ferramentas:** listagens ainda precisam de paginação e QuoteRepository mantém N+1 de itens. O lock global limita throughput; medir antes de granularizar. O audit npm original reportou quatro ocorrências moderadas na cadeia de desenvolvimento drizzle-kit/esbuild; não foi feito downgrade incompatível. Ferramentas de desenvolvimento saem da imagem final, mas devem continuar avaliadas no ambiente de engenharia.
+8. **Escala e ferramentas:** listagens ainda precisam de paginação. O N+1 de itens em QuoteRepository foi removido por JOIN em uma única consulta. O lock global limita throughput; medir antes de granularizar. O audit npm original reportou quatro ocorrências moderadas na cadeia de desenvolvimento drizzle-kit/esbuild; não foi feito downgrade incompatível. Ferramentas de desenvolvimento saem da imagem final, mas devem continuar avaliadas no ambiente de engenharia.
 
 ## Como prosseguir
 
@@ -69,3 +69,5 @@ A alteração de metadata da OP não altera grade, modelo, valor negociado, fina
 3. Configurar os dados reais da empresa na tela Configurações.
 4. Concluir os itens 1–5 acima e ensaiar a operação na infraestrutura contratada.
 5. Só liberar produção após registrar evidências e resolver os bloqueios; não foi executado merge ou deploy automaticamente.
+
+Continuação: ver [auditoria de autenticação e consultas](AUDITORIA_CONTINUACAO_2026-10-28.md) para alterações posteriores e suas evidências.

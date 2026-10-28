@@ -11,9 +11,8 @@ export class PasswordService {
    * Gera hash seguro para senha
    */
   public static async hashPassword(password: string): Promise<string> {
-    if (!password || password.length < 6) {
-      throw new Error('A senha deve conter no mínimo 6 caracteres.');
-    }
+    const strength = this.validatePasswordStrength(password);
+    if (!strength.valid) throw new Error(strength.reason);
     return bcrypt.hash(password, SALT_ROUNDS);
   }
 
@@ -36,6 +35,9 @@ export class PasswordService {
   public static validatePasswordStrength(password: string): { valid: boolean; reason?: string } {
     if (!password || password.length < 8) {
       return { valid: false, reason: 'A senha deve conter no mínimo 8 caracteres.' };
+    }
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      return { valid: false, reason: 'A senha deve conter no máximo 72 bytes em UTF-8.' };
     }
     const hasLetter = /[a-zA-Z]/.test(password);
     const hasNumber = /[0-9]/.test(password);

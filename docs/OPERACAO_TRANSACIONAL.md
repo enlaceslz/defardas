@@ -45,3 +45,13 @@ Para restauração, parar a aplicação e restaurar primeiro em banco isolado: `
 ## Evidências de engenharia
 
 A CI valida instalação, tipagem, 21 testes locais, 10 testes de PostgreSQL, backup/restauração e imagem de produção. Os bancos defardas_test/defardas_restore_test são descartáveis. O teste de concorrência usa um lock transacional global; ajustar somente com medições e testes de integridade.
+
+## Recuperação administrativa de senha
+
+Enquanto não houver entrega de e-mail homologada, `POST /api/auth/recover-password` responde 503 em produção, sem gerar token nem informar que enviou instruções. O endpoint de redefinição possui limitação de tentativas. A emissão pública não deve ser reativada apenas removendo esse bloqueio: requer entrega real, interface de redefinição e ensaio de segurança.
+
+Para uma recuperação autorizada, o operador com acesso ao host pode executar `npm run user:reset-password` após carregar `RESET_USER_EMAIL` e `RESET_USER_PASSWORD` no ambiente. A conta deve estar ativa. Não passar a senha na linha de comando nem gravá-la no histórico; obtê-la por entrada oculta ou pelo mecanismo de segredos já usado na infraestrutura. Remover as variáveis do shell ao terminar. O script não imprime a senha, não altera perfil, não reativa conta e não cria usuário.
+
+A migração `0004_small_mac_gargan` cria `core.password_reset_tokens`. Só o SHA-256 de tokens aleatórios é guardado; validade de uma hora, um token por usuário, substituição na nova emissão e consumo único. Troca de senha, revogação de todas as sessões/tokens e auditoria confirmam ou revertem juntas. O login revalida o hash antes de inserir a sessão na mesma transação, impedindo que uma tentativa em trânsito com a senha antiga sobreviva à redefinição.
+
+A recuperação por CLI é uma operação privilegiada do host, equivalente ao provisionamento inicial: restringir esse acesso aos operadores responsáveis. O evento `PASSWORD_RESET_BY_OPERATOR` identifica o canal administrativo; a identidade individual do operador deve ser rastreada pelo controle de acesso ao host. Nenhuma recuperação de conta operacional foi executada nesta entrega.
