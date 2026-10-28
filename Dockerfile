@@ -17,7 +17,7 @@ RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json* ./
 
 # Instalar todas as dependências (incluindo devDependencies para build)
-RUN npm install
+RUN npm ci
 
 # Copiar código-fonte completo
 COPY . .

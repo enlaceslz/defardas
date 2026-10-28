@@ -1,3 +1,4 @@
+import { verifyMetaWebhook, verifyWaAkgWebhook } from '../middleware/webhookAuth';
 /**
  * DE FARDAS ERP — Communication & WhatsApp Routes
  * Endpoints para central de atendimento omnichannel, canais Meta Cloud API / WA-AKG e webhooks.
@@ -19,9 +20,9 @@ communicationRouter.get('/webhooks/meta', (req: Request, res: Response) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  const verifyToken = process.env.META_WA_WEBHOOK_VERIFY_TOKEN || 'defardas_wa_webhook_secret_2026';
+  const verifyToken = process.env.META_WA_WEBHOOK_VERIFY_TOKEN;
 
-  if (mode === 'subscribe' && token === verifyToken) {
+  if (verifyToken && mode === 'subscribe' && token === verifyToken) {
     console.log('✅ [WhatsApp Webhook] Meta Cloud API verificado com sucesso.');
     return res.status(200).send(challenge);
   }
@@ -30,7 +31,7 @@ communicationRouter.get('/webhooks/meta', (req: Request, res: Response) => {
 });
 
 // Recebimento de mensagens da Meta WhatsApp Cloud API
-communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) => {
+communicationRouter.post('/webhooks/meta', verifyMetaWebhook, async (req: Request, res: Response) => {
   try {
     const body = req.body;
     if (body.object === 'whatsapp_business_account') {
@@ -65,7 +66,7 @@ communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) =
 });
 
 // Recebimento de mensagens do container isolado WA-AKG
-communicationRouter.post('/webhooks/wa-akg', async (req: Request, res: Response) => {
+communicationRouter.post('/webhooks/wa-akg', verifyWaAkgWebhook, async (req: Request, res: Response) => {
   try {
     const { from, senderName, text, id, mediaUrl, mediaType } = req.body;
     if (from && text) {
@@ -104,7 +105,10 @@ communicationRouter.get('/channels/:id/qr', async (req: RequestWithUser, res: Re
     return res.status(404).json({ error: 'Canal não encontrado' });
   }
 
-  // Gera simulação ou consulta container
+  if (process.env.NODE_ENV === 'production' && !channel.qrCode) {
+    return res.status(503).json({ error: 'QR Code indisponível no provedor.' });
+  }
+  // Prévia demonstrativa apenas em desenvolvimento
   const qrMock = channel.qrCode || `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="100%" height="100%" fill="%23fff"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%230f172a" font-family="sans-serif" font-size="12">QR Code Ativo: ${channel.phoneNumber}</text></svg>`;
 
   res.json({
@@ -121,6 +125,9 @@ communicationRouter.post('/channels/:id/reconnect', async (req: RequestWithUser,
     return res.status(404).json({ error: 'Canal não encontrado' });
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(501).json({ error: 'Reconexão ao provedor ainda não implementada.' });
+  }
   channel.status = 'connecting';
   channel.updatedAt = new Date().toISOString();
   await communicationRepository.saveChannel(channel);

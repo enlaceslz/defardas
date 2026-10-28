@@ -67,7 +67,7 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
  * NUNCA aceita 'x-user-role' ou 'x-user-id'.
  * NUNCA atribui administrador por padrão.
  */
-export function authMiddleware(req: RequestWithUser, _res: Response, next: NextFunction) {
+export async function authMiddleware(req: RequestWithUser, _res: Response, next: NextFunction) {
   let token: string | undefined;
 
   // 1. Tentar ler do cookie seguro HttpOnly
@@ -82,7 +82,7 @@ export function authMiddleware(req: RequestWithUser, _res: Response, next: NextF
   }
 
   if (token) {
-    const session = sessionStore.getSession(token);
+    const session = await sessionStore.getSession(token);
     if (session) {
       req.user = session.user;
       req.sessionToken = token;
@@ -170,7 +170,7 @@ export function requirePermission(permissionKey: string) {
       });
     }
 
-    const allowedRoles = PERMISSIONS[permissionKey] || ['admin'];
+    const allowedRoles = PERMISSIONS[permissionKey] || [];
     if (!allowedRoles.includes(req.user.role)) {
       const ip = req.ip || req.socket.remoteAddress || 'unknown';
       auditService.log({

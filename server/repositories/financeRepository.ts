@@ -10,11 +10,16 @@ import { FinancialTransactionEntity } from '../types/db';
 
 export class FinanceRepository {
   public async findAll(): Promise<FinancialTransactionEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(transactions).orderBy(desc(transactions.createdAt));
         return rows.map((r) => this.mapToEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('⚠️ [FinanceRepository] Erro ao listar lançamentos via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -22,6 +27,10 @@ export class FinanceRepository {
   }
 
   public async findById(id: string): Promise<FinancialTransactionEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(transactions).where(eq(transactions.id, id)).limit(1);
@@ -29,6 +38,7 @@ export class FinanceRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [FinanceRepository] Falha ao buscar transação ${id} via Drizzle.`, err);
       }
     }
@@ -36,7 +46,11 @@ export class FinanceRepository {
   }
 
   public async save(tx: FinancialTransactionEntity): Promise<FinancialTransactionEntity> {
-    fallbackDb.finance.set(tx.id, tx);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.finance.set(tx.id, tx);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -78,6 +92,7 @@ export class FinanceRepository {
             },
           });
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [FinanceRepository] Falha ao persistir transação ${tx.id} via Drizzle:`, err);
       }
     }
@@ -86,12 +101,17 @@ export class FinanceRepository {
   }
 
   public async delete(id: string): Promise<boolean> {
-    fallbackDb.finance.delete(id);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.finance.delete(id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(transactions).where(eq(transactions.id, id));
         return true;
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [FinanceRepository] Falha ao deletar transação ${id} via Drizzle:`, err);
       }
     }

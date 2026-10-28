@@ -33,14 +33,14 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
   }
 
   const { targetStage } = req.body;
-  if (!targetStage) {
+  if (!['aguardando_liberacao', 'corte', 'bordado_silk', 'costura', 'conferencia_qualidade', 'retrabalho', 'expedicao', 'entregue'].includes(targetStage)) {
     return res.status(400).json({ error: 'targetStage é obrigatório' });
   }
 
   const oldStage = order.stage;
 
   // PORTÃO RÍGIDO (GATE A.3.2): Transição de 'aguardando_liberacao' para 'corte' ou qualquer etapa fabril
-  if (oldStage === 'aguardando_liberacao' && targetStage !== 'aguardando_liberacao') {
+  if (targetStage !== 'aguardando_liberacao') {
     const isArtApproved = !!order.artApproved;
     const isPaymentConfirmed = !!order.entryPaymentConfirmed;
 
@@ -94,7 +94,7 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
 });
 
 // Aprovação Formal de Arte (Gate da Arte)
-ordersRouter.post('/:id/approve-art', async (req: RequestWithUser, res: Response) => {
+ordersRouter.post('/:id/approve-art', requirePermission('orders:approve_art'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const order = await orderRepository.findById(req.params.id);
   if (!order) {

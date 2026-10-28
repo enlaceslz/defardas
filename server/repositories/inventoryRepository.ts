@@ -10,11 +10,16 @@ import { InventoryItemEntity, StockMovementEntity } from '../types/db';
 
 export class InventoryRepository {
   public async findAllItems(): Promise<InventoryItemEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(items).orderBy(desc(items.createdAt));
         return rows.map((r) => this.mapToItemEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('⚠️ [InventoryRepository] Erro ao listar itens via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -22,6 +27,10 @@ export class InventoryRepository {
   }
 
   public async findItemById(id: string): Promise<InventoryItemEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(items).where(eq(items.id, id)).limit(1);
@@ -29,6 +38,7 @@ export class InventoryRepository {
           return this.mapToItemEntity(rows[0]);
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [InventoryRepository] Falha ao buscar item ${id} via Drizzle.`, err);
       }
     }
@@ -36,7 +46,11 @@ export class InventoryRepository {
   }
 
   public async saveItem(item: InventoryItemEntity): Promise<InventoryItemEntity> {
-    fallbackDb.inventory.set(item.id, item);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.inventory.set(item.id, item);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -72,6 +86,7 @@ export class InventoryRepository {
             },
           });
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [InventoryRepository] Falha ao persistir item ${item.id} via Drizzle:`, err);
       }
     }
@@ -80,11 +95,16 @@ export class InventoryRepository {
   }
 
   public async findAllMovements(): Promise<StockMovementEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(movements).orderBy(desc(movements.createdAt));
         return rows.map((r) => this.mapToMovementEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('⚠️ [InventoryRepository] Erro ao listar movimentações via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -92,7 +112,11 @@ export class InventoryRepository {
   }
 
   public async saveMovement(mov: StockMovementEntity): Promise<StockMovementEntity> {
-    fallbackDb.movements.set(mov.id, mov);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.movements.set(mov.id, mov);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -116,6 +140,7 @@ export class InventoryRepository {
           .values(newRecord)
           .onConflictDoNothing();
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [InventoryRepository] Falha ao persistir movimentação ${mov.id} via Drizzle:`, err);
       }
     }

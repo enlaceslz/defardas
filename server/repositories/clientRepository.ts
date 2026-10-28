@@ -10,11 +10,16 @@ import { ClientEntity } from '../types/db';
 
 export class ClientRepository {
   public async findAll(): Promise<ClientEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(clients).orderBy(desc(clients.createdAt));
         return rows.map((r) => this.mapToEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('⚠️ [ClientRepository] Erro na consulta Drizzle ao PostgreSQL. Recorrendo à memória.', err);
       }
     }
@@ -22,6 +27,10 @@ export class ClientRepository {
   }
 
   public async findById(id: string): Promise<ClientEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(clients).where(eq(clients.id, id)).limit(1);
@@ -29,6 +38,7 @@ export class ClientRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [ClientRepository] Falha ao buscar cliente ${id} no PostgreSQL.`, err);
       }
     }
@@ -36,6 +46,10 @@ export class ClientRepository {
   }
 
   public async findByCnpj(cnpj: string): Promise<ClientEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(clients).where(eq(clients.cnpj, cnpj)).limit(1);
@@ -43,6 +57,7 @@ export class ClientRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [ClientRepository] Falha ao buscar CNPJ ${cnpj}.`, err);
       }
     }
@@ -53,8 +68,12 @@ export class ClientRepository {
   }
 
   public async save(client: ClientEntity): Promise<ClientEntity> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     // Sincroniza sempre o cache em memória
-    fallbackDb.clients.set(client.id, client);
+    if (process.env.NODE_ENV !== 'production') fallbackDb.clients.set(client.id, client);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -96,6 +115,7 @@ export class ClientRepository {
             },
           });
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [ClientRepository] Falha ao persistir cliente ${client.id} via Drizzle:`, err);
       }
     }

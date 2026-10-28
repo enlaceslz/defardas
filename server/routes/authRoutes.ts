@@ -44,7 +44,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const userAgent = req.headers['user-agent'] || 'unknown';
 
-  if (!email || !password) {
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
     return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
   }
 
@@ -92,7 +92,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
   }
 
   // Criação de sessão segura
-  const session = sessionStore.createSession(
+  const session = await sessionStore.createSession(
     {
       id: user.id,
       fullName: user.fullName,
@@ -152,10 +152,10 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
  * POST /api/auth/logout
  * Encerra a sessão e remove o cookie HttpOnly
  */
-authRouter.post('/logout', requireAuth, (req: RequestWithUser, res: Response) => {
+authRouter.post('/logout', requireAuth, async (req: RequestWithUser, res: Response) => {
   const token = req.sessionToken;
   if (token) {
-    sessionStore.destroySession(token);
+    await sessionStore.destroySession(token);
   }
 
   res.clearCookie('defardas_session', { path: '/' });
@@ -225,7 +225,7 @@ authRouter.get('/dev-credentials', (_req: RequestWithUser, res: Response) => {
  */
 authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: RequestWithUser, res: Response) => {
   const { email } = req.body;
-  if (!email) {
+  if (typeof email !== 'string' || !email) {
     return res.status(400).json({ error: 'Informe o e-mail cadastrado.' });
   }
 
@@ -266,7 +266,7 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
  */
 authRouter.post('/reset-password', async (req: RequestWithUser, res: Response) => {
   const { token, newPassword } = req.body;
-  if (!token || !newPassword) {
+  if (typeof token !== 'string' || typeof newPassword !== 'string' || !token || !newPassword) {
     return res.status(400).json({ error: 'Token e nova senha são obrigatórios.' });
   }
 
@@ -281,7 +281,7 @@ authRouter.post('/reset-password', async (req: RequestWithUser, res: Response) =
   }
 
   await userRepository.updatePassword(tokenRecord.userId, newPassword);
-  sessionStore.destroyAllUserSessions(tokenRecord.userId);
+  await sessionStore.destroyAllUserSessions(tokenRecord.userId);
 
   auditService.log({
     actorId: tokenRecord.userId,
@@ -328,10 +328,10 @@ authRouter.post('/switch-role', requireAuth, async (req: RequestWithUser, res: R
 
   // Atualiza sessão atual
   if (req.sessionToken) {
-    sessionStore.destroySession(req.sessionToken);
+    await sessionStore.destroySession(req.sessionToken);
   }
 
-  const newSession = sessionStore.createSession(
+  const newSession = await sessionStore.createSession(
     {
       id: targetUser.id,
       fullName: targetUser.fullName,

@@ -10,11 +10,16 @@ import { ProductionOrderEntity } from '../types/db';
 
 export class OrderRepository {
   public async findAll(): Promise<ProductionOrderEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(productionOrders).orderBy(desc(productionOrders.createdAt));
         return rows.map((r) => this.mapToEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('⚠️ [OrderRepository] Erro ao listar OPs via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -22,6 +27,10 @@ export class OrderRepository {
   }
 
   public async findById(id: string): Promise<ProductionOrderEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(productionOrders).where(eq(productionOrders.id, id)).limit(1);
@@ -29,6 +38,7 @@ export class OrderRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [OrderRepository] Falha ao buscar OP ${id} via Drizzle.`, err);
       }
     }
@@ -36,6 +46,10 @@ export class OrderRepository {
   }
 
   public async findByIdempotencyKey(key: string): Promise<ProductionOrderEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(productionOrders).where(eq(productionOrders.idempotencyKey, key)).limit(1);
@@ -43,6 +57,7 @@ export class OrderRepository {
           return this.mapToEntity(rows[0]);
         }
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [OrderRepository] Falha ao buscar chave de idempotência ${key}.`, err);
       }
     }
@@ -53,7 +68,11 @@ export class OrderRepository {
   }
 
   public async save(order: ProductionOrderEntity): Promise<ProductionOrderEntity> {
-    fallbackDb.orders.set(order.id, order);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.orders.set(order.id, order);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -117,6 +136,7 @@ export class OrderRepository {
             },
           });
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [OrderRepository] Falha ao persistir OP ${order.id} via Drizzle:`, err);
       }
     }
@@ -125,12 +145,17 @@ export class OrderRepository {
   }
 
   public async delete(id: string): Promise<boolean> {
-    fallbackDb.orders.delete(id);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.orders.delete(id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(productionOrders).where(eq(productionOrders.id, id));
         return true;
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [OrderRepository] Falha ao deletar OP ${id} via Drizzle:`, err);
       }
     }

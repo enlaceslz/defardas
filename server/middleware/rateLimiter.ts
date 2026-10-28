@@ -40,8 +40,7 @@ export class InMemoryRateLimiter {
 
   public middleware() {
     return (req: Request, res: Response, next: NextFunction) => {
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-                 req.ip ||
+      const ip = req.ip ||
                  req.socket.remoteAddress ||
                  'unknown';
 

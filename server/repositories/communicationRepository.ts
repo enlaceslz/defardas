@@ -21,11 +21,16 @@ import { WhatsAppChannelEntity, ConversationEntity, MessageEntity } from '../typ
 export class CommunicationRepository {
   // Channels
   public async findAllChannels(): Promise<WhatsAppChannelEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(channels).orderBy(desc(channels.createdAt));
         return rows.map((r) => this.mapToChannelEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('⚠️ [CommunicationRepository] Erro ao listar canais via Drizzle. Recorrendo à memória.', err);
       }
     }
@@ -33,11 +38,16 @@ export class CommunicationRepository {
   }
 
   public async findChannelById(id: string): Promise<WhatsAppChannelEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(channels).where(eq(channels.id, id)).limit(1);
         if (rows.length > 0) return this.mapToChannelEntity(rows[0]);
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [CommunicationRepository] Falha ao buscar canal ${id}.`, err);
       }
     }
@@ -45,7 +55,11 @@ export class CommunicationRepository {
   }
 
   public async saveChannel(channel: WhatsAppChannelEntity): Promise<WhatsAppChannelEntity> {
-    fallbackDb.channels.set(channel.id, channel);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.channels.set(channel.id, channel);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -74,6 +88,7 @@ export class CommunicationRepository {
             },
           });
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [CommunicationRepository] Falha ao persistir canal ${channel.id}:`, err);
       }
     }
@@ -83,11 +98,16 @@ export class CommunicationRepository {
 
   // Conversations
   public async findAllConversations(): Promise<ConversationEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(conversations).orderBy(desc(conversations.lastMessageAt));
         return rows.map((r) => this.mapToConversationEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn('⚠️ [CommunicationRepository] Erro ao listar conversas via Drizzle.', err);
       }
     }
@@ -95,11 +115,16 @@ export class CommunicationRepository {
   }
 
   public async findConversationById(id: string): Promise<ConversationEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(conversations).where(eq(conversations.id, id)).limit(1);
         if (rows.length > 0) return this.mapToConversationEntity(rows[0]);
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [CommunicationRepository] Falha ao buscar conversa ${id}.`, err);
       }
     }
@@ -107,11 +132,16 @@ export class CommunicationRepository {
   }
 
   public async findConversationByRemoteJid(remoteJid: string): Promise<ConversationEntity | null> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(conversations).where(eq(conversations.remoteJid, remoteJid)).limit(1);
         if (rows.length > 0) return this.mapToConversationEntity(rows[0]);
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [CommunicationRepository] Falha ao buscar remoteJid ${remoteJid}.`, err);
       }
     }
@@ -122,7 +152,11 @@ export class CommunicationRepository {
   }
 
   public async saveConversation(conv: ConversationEntity): Promise<ConversationEntity> {
-    fallbackDb.conversations.set(conv.id, conv);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.conversations.set(conv.id, conv);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -157,6 +191,7 @@ export class CommunicationRepository {
             },
           });
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [CommunicationRepository] Falha ao persistir conversa ${conv.id}:`, err);
       }
     }
@@ -166,6 +201,10 @@ export class CommunicationRepository {
 
   // Messages
   public async findMessagesByConversation(conversationId: string): Promise<MessageEntity[]> {
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb
@@ -175,6 +214,7 @@ export class CommunicationRepository {
           .orderBy(messages.createdAt);
         return rows.map((r) => this.mapToMessageEntity(r));
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.warn(`⚠️ [CommunicationRepository] Falha ao buscar mensagens da conversa ${conversationId}.`, err);
       }
     }
@@ -182,7 +222,11 @@ export class CommunicationRepository {
   }
 
   public async saveMessage(msg: MessageEntity): Promise<MessageEntity> {
-    fallbackDb.messages.set(msg.id, msg);
+    await fallbackDb.ready;
+    if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
+      throw new Error('PostgreSQL indisponível.');
+    }
+    if (process.env.NODE_ENV !== 'production') fallbackDb.messages.set(msg.id, msg);
 
     if (fallbackDb.isConnected()) {
       try {
@@ -211,6 +255,7 @@ export class CommunicationRepository {
             },
           });
       } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err;
         console.error(`❌ [CommunicationRepository] Falha ao persistir mensagem ${msg.id}:`, err);
       }
     }

@@ -35,8 +35,11 @@ export class DatabaseManager {
   public conversations: Map<string, any> = new Map();
   public messages: Map<string, any> = new Map();
 
+  public readonly ready: Promise<void>;
+
   constructor() {
-    this.initDatabase();
+    this.ready = this.initDatabase();
+    void this.ready.catch(() => {});
   }
 
   private async initDatabase() {
@@ -49,17 +52,18 @@ export class DatabaseManager {
         console.log('✅ [DATABASE] Conectado com sucesso ao PostgreSQL próprio da DE FARDAS via Drizzle ORM.');
       } catch (err) {
         if (process.env.NODE_ENV === 'production') {
-          console.error('❌ [DATABASE] Falha crítica de conexão com o PostgreSQL em produção (P0-001):', err);
+          throw new Error('PostgreSQL indisponível em produção.', { cause: err });
         } else {
           console.warn('⚠️ [DATABASE] Conexão com PostgreSQL não disponível no ambiente local. Inicializando estrutura transacional de desenvolvimento.', err);
         }
         this.isConnectedToPostgres = false;
       }
     } else {
+      if (process.env.NODE_ENV === 'production') throw new Error('DATABASE_URL obrigatória em produção.');
       console.log('ℹ️ [DATABASE] DATABASE_URL não definida. Operando no modo de desenvolvimento transacional.');
     }
 
-    this.seedInitialDemoData();
+    if (process.env.NODE_ENV !== 'production') this.seedInitialDemoData();
   }
 
   public getDrizzle() {

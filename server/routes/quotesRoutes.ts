@@ -30,7 +30,7 @@ quotesRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
 });
 
 // Criar nova proposta comercial
-quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
+quotesRouter.post('/', requirePermission('quotes:create'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
 
@@ -117,7 +117,7 @@ quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
     }
   }
 
-  const quoteId = `quote-${Date.now()}`;
+  const quoteId = crypto.randomUUID();
   const quoteNumber = sequenceService.nextQuoteNumber();
   const entryAmount = Math.round((negotiatedTotalAmount * 0.5) * 100) / 100;
   const balanceAmount = negotiatedTotalAmount - entryAmount;
@@ -186,7 +186,7 @@ quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
 });
 
 // Atualizar status comercial
-quotesRouter.patch('/:id/status', async (req: RequestWithUser, res: Response) => {
+quotesRouter.patch('/:id/status', requirePermission('quotes:edit'), async (req: RequestWithUser, res: Response) => {
   const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
@@ -194,6 +194,12 @@ quotesRouter.patch('/:id/status', async (req: RequestWithUser, res: Response) =>
 
   const oldStatus = quote.commercialStatus;
   const newStatus = req.body.status;
+  if (quote.isLocked || quote.commercialStatus === 'convertido_em_pedido') {
+    return res.status(409).json({ error: 'Proposta convertida está bloqueada.' });
+  }
+  if (!['rascunho', 'enviado', 'em_negociacao', 'aprovado', 'recusado', 'cancelado'].includes(newStatus)) {
+    return res.status(400).json({ error: 'Status comercial inválido.' });
+  }
   quote.commercialStatus = newStatus;
   quote.updatedAt = new Date().toISOString();
 
@@ -215,15 +221,14 @@ quotesRouter.patch('/:id/status', async (req: RequestWithUser, res: Response) =>
 });
 
 // Conversão IDEMPOTENTE de Orçamento em Pedido / Ordem de Produção (Regra B.2.2 & Gate A.3.2)
-quotesRouter.post('/:id/convert-to-order', async (req: RequestWithUser, res: Response) => {
+quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_order'), async (req: RequestWithUser, res: Response) => {
   const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
   }
 
   // Idempotency Key
-  const customIdempotencyKey = req.headers['idempotency-key'] as string;
-  const idempotencyKey = customIdempotencyKey || `convert_quote_${quote.id}_v${quote.version}`;
+  const idempotencyKey = `convert_quote_${quote.id}_v${quote.version}`;
 
   // Verificar se já existe uma OP gerada com esta idempotencyKey
   const existingOrder = await orderRepository.findByIdempotencyKey(idempotencyKey);

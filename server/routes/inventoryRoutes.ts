@@ -75,7 +75,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
   }
 
   const qty = Number(quantity);
-  if (isNaN(qty) || qty <= 0) {
+  if (!Number.isFinite(qty) || qty <= 0) {
     return res.status(400).json({ error: 'Quantidade deve ser um número positivo' });
   }
 

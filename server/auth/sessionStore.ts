@@ -1,11 +1,5 @@
-/**
- * DE FARDAS ERP — Session Store & Token Management
- * Sessões com identificadores criptograficamente seguros (CSPRNG), expiração
- * automática, suporte a cookies HttpOnly e persistência no PostgreSQL (core.sessions).
- * Correção P0-002: Persistência de sessões para sobrevivência a reinícios do servidor.
- */
-import crypto from 'crypto';
-import { AuthenticatedUser } from './rbac';
+import crypto from 'node:crypto';
+import type { AuthenticatedUser } from './rbac';
 import { pool } from '../db/index';
 
 export interface SessionRecord {
@@ -18,153 +12,80 @@ export interface SessionRecord {
 }
 
 class SessionStore {
-  private sessions: Map<string, SessionRecord> = new Map();
-  // Duração padrão da sessão: 8 horas (jornada de trabalho fabril)
-  private readonly SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
+  private sessions = new Map<string, SessionRecord>();
+  private readonly duration = 8 * 60 * 60 * 1000;
+  private get persistent() { return process.env.NODE_ENV === 'production' || Boolean(process.env.DATABASE_URL); }
 
   constructor() {
-    this.loadActiveSessionsFromDb();
-    // Limpeza periódica de sessões expiradas a cada 30 minutos
-    setInterval(() => this.cleanupExpired(), 30 * 60 * 1000).unref();
+    setInterval(() => { void this.cleanupExpired().catch((err) => console.error('[AUTH] Falha na limpeza de sessões:', err)); }, 30 * 60 * 1000).unref();
   }
 
-  /**
-   * Carrega sessões ativas do PostgreSQL para a memória durante inicialização do processo
-   */
-  public async loadActiveSessionsFromDb(): Promise<void> {
-    try {
-      const res = await pool.query<{
-        token: string;
-        user_id: string;
-        user_role: string;
-        user_full_name: string;
-        user_email: string;
-        created_at: Date;
-        expires_at: Date;
-        ip_address: string | null;
-        user_agent: string | null;
-      }>(`
-        SELECT token, user_id, user_role, user_full_name, user_email, created_at, expires_at, ip_address, user_agent
-        FROM core.sessions
-        WHERE expires_at > NOW()
-      `);
-
-      for (const row of res.rows) {
-        this.sessions.set(row.token, {
-          token: row.token,
-          user: {
-            id: row.user_id,
-            role: row.user_role as any,
-            fullName: row.user_full_name,
-            email: row.user_email,
-          },
-          createdAt: new Date(row.created_at),
-          expiresAt: new Date(row.expires_at),
-          ipAddress: row.ip_address || undefined,
-          userAgent: row.user_agent || undefined,
-        });
-      }
-      if (res.rows.length > 0) {
-        console.log(`🔒 [AUTH] ${res.rows.length} sessões ativas carregadas com sucesso do PostgreSQL.`);
-      }
-    } catch {
-      // Ignorar se a tabela core.sessions ainda não estiver migrada
-    }
-  }
-
-  /**
-   * Cria nova sessão para usuário autenticado e persiste no PostgreSQL
-   */
-  public createSession(user: AuthenticatedUser, ipAddress?: string, userAgent?: string): SessionRecord {
-    // Gera token de 256 bits com entropia criptográfica
-    const token = crypto.randomBytes(32).toString('hex');
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + this.SESSION_DURATION_MS);
-
+  public async createSession(user: AuthenticatedUser, ipAddress?: string, userAgent?: string): Promise<SessionRecord> {
     const record: SessionRecord = {
-      token,
-      user,
-      createdAt: now,
-      expiresAt,
-      ipAddress,
-      userAgent,
+      token: crypto.randomBytes(32).toString('hex'), user, createdAt: new Date(),
+      expiresAt: new Date(Date.now() + this.duration), ipAddress, userAgent,
     };
-
-    this.sessions.set(token, record);
-
-    // Persistência assíncrona no PostgreSQL
-    pool.query(
-      `INSERT INTO core.sessions (token, user_id, user_role, user_full_name, user_email, created_at, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (token) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-      [token, user.id, user.role, user.fullName, user.email, now, expiresAt, ipAddress || null, userAgent || null]
-    ).catch(() => {});
-
+    if (this.persistent) {
+      await pool.query(`INSERT INTO core.sessions
+        (token, user_id, user_role, user_full_name, user_email, created_at, expires_at, ip_address, user_agent)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [record.token, user.id, user.role, user.fullName, user.email, record.createdAt, record.expiresAt, ipAddress || null, userAgent?.slice(0, 255) || null]);
+    } else {
+      this.sessions.set(record.token, record);
+    }
     return record;
   }
 
-  /**
-   * Recupera sessão válida pelo token
-   */
-  public getSession(token: string): SessionRecord | null {
-    if (!token) return null;
+  public async getSession(token: string): Promise<SessionRecord | null> {
+    if (!/^[a-f0-9]{64}$/.test(token)) return null;
+    if (this.persistent) {
+      // Consulta autoritativa em cada pedido: logout e desativação valem em todas as instâncias.
+      const result = await pool.query(`SELECT s.created_at, s.expires_at, s.ip_address, s.user_agent,
+        u.id, u.full_name, u.email, u.role FROM core.sessions s
+        JOIN core.users u ON u.id = s.user_id
+        WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_active = TRUE`, [token]);
+      const row = result.rows[0];
+      if (!row) return null;
+      return { token, user: { id: row.id, fullName: row.full_name, email: row.email, role: row.role },
+        createdAt: new Date(row.created_at), expiresAt: new Date(row.expires_at),
+        ipAddress: row.ip_address, userAgent: row.user_agent };
+    }
     const session = this.sessions.get(token);
-    if (!session) return null;
-
-    // Verificar expiração
-    if (new Date() > session.expiresAt) {
+    if (!session || session.expiresAt <= new Date()) {
       this.sessions.delete(token);
-      pool.query(`DELETE FROM core.sessions WHERE token = $1`, [token]).catch(() => {});
       return null;
     }
-
     return session;
   }
 
-  /**
-   * Destrói sessão (Logout)
-   */
-  public destroySession(token: string): boolean {
-    if (!token) return false;
-    const deleted = this.sessions.delete(token);
-    pool.query(`DELETE FROM core.sessions WHERE token = $1`, [token]).catch(() => {});
-    return deleted;
+  public async destroySession(token: string): Promise<boolean> {
+    if (this.persistent) {
+      const result = await pool.query('DELETE FROM core.sessions WHERE token = $1', [token]);
+      return (result.rowCount || 0) > 0;
+    }
+    return this.sessions.delete(token);
   }
 
-  /**
-   * Invalida todas as sessões ativas de determinado usuário (ex: troca de senha)
-   */
-  public destroyAllUserSessions(userId: string): number {
-    let count = 0;
-    for (const [token, session] of this.sessions.entries()) {
-      if (session.user.id === userId) {
-        this.sessions.delete(token);
-        count++;
-      }
+  public async destroyAllUserSessions(userId: string): Promise<number> {
+    if (this.persistent) {
+      const result = await pool.query('DELETE FROM core.sessions WHERE user_id = $1', [userId]);
+      return result.rowCount || 0;
     }
-    pool.query(`DELETE FROM core.sessions WHERE user_id = $1`, [userId]).catch(() => {});
+    let count = 0;
+    for (const [token, session] of this.sessions) {
+      if (session.user.id === userId) { this.sessions.delete(token); count++; }
+    }
     return count;
   }
 
-  /**
-   * Remove sessões expiradas da memória e do banco
-   */
-  public cleanupExpired(): void {
-    const now = new Date();
-    for (const [token, session] of this.sessions.entries()) {
-      if (now > session.expiresAt) {
-        this.sessions.delete(token);
+  public async cleanupExpired(): Promise<void> {
+    if (this.persistent) {
+      await pool.query('DELETE FROM core.sessions WHERE expires_at <= NOW()');
+    } else {
+      for (const [token, session] of this.sessions) {
+        if (session.expiresAt <= new Date()) this.sessions.delete(token);
       }
     }
-    pool.query(`DELETE FROM core.sessions WHERE expires_at <= NOW()`).catch(() => {});
-  }
-
-  /**
-   * Contagem de sessões ativas
-   */
-  public get activeSessionsCount(): number {
-    return this.sessions.size;
   }
 }
-
 export const sessionStore = new SessionStore();

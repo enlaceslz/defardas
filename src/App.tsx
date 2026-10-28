@@ -79,9 +79,10 @@ export default function App() {
 
         setState((prev) => {
           const updated = { ...prev };
-          if (ordersRes.data && Array.isArray(ordersRes.data) && ordersRes.data.length > 0) {
+          if (ordersRes.data && Array.isArray(ordersRes.data)) {
             updated.orders = ordersRes.data.map((o: any) => ({
               id: o.orderNumber || o.id,
+              backendId: o.id,
               quoteId: o.quoteId,
               quoteVersion: o.quoteVersion || 1,
               clientId: o.clientId,
@@ -124,9 +125,10 @@ export default function App() {
               assignedTeam: o.assignedTeam,
             }));
           }
-          if (quotesRes.data && Array.isArray(quotesRes.data) && quotesRes.data.length > 0) {
+          if (quotesRes.data && Array.isArray(quotesRes.data)) {
             updated.quotes = quotesRes.data.map((q: any) => ({
               id: q.quoteNumber || q.id,
+              backendId: q.id,
               version: q.version || 1,
               clientId: q.clientId,
               clientName: q.clientName,
@@ -176,9 +178,10 @@ export default function App() {
               notes: q.notes,
             }));
           }
-          if (invRes.data && Array.isArray(invRes.data) && invRes.data.length > 0) {
+          if (invRes.data && Array.isArray(invRes.data)) {
             updated.inventory = invRes.data.map((i: any) => ({
               id: i.code || i.id,
+              backendId: i.id,
               code: i.code || i.id,
               name: i.name,
               category: i.category,
@@ -193,9 +196,10 @@ export default function App() {
               lastRestocked: i.lastRestocked || new Date().toISOString().split('T')[0],
             }));
           }
-          if (clientsRes.data && Array.isArray(clientsRes.data) && clientsRes.data.length > 0) {
+          if (clientsRes.data && Array.isArray(clientsRes.data)) {
             updated.clients = clientsRes.data.map((c: any) => ({
               id: c.code || c.id,
+              backendId: c.id,
               companyName: c.companyName,
               tradeName: c.tradeName,
               cnpj: c.cnpj,
@@ -212,9 +216,10 @@ export default function App() {
               createdAt: c.createdAt ? c.createdAt.split('T')[0] : '2026-01-01',
             }));
           }
-          if (finRes.data && Array.isArray(finRes.data) && finRes.data.length > 0) {
+          if (finRes.data && Array.isArray(finRes.data)) {
             updated.finance = finRes.data.map((f: any) => ({
               id: f.transactionNumber || f.id,
+              backendId: f.id,
               type: f.type,
               subType: f.subType,
               description: f.description,
@@ -269,8 +274,8 @@ export default function App() {
 
   const handleUpdateOrderStage = async (orderId: string, nextStage: OperationalStage) => {
     // Validação estrita do Portão A.3.2 com o backend
-    const res = await api.advanceOrderStage(orderId, nextStage);
-    if (res.status === 422) {
+    const res = await api.advanceOrderStage(state.orders.find((o) => o.id === orderId)?.backendId || orderId, nextStage);
+    if (res.status < 200 || res.status >= 300) {
       alert(`Bloqueio do Portão de Liberação Fabril (Gate A.3.2):\n\n${res.error || 'A Ordem de Produção não pode avançar para corte sem sinal de 50% confirmado com comprovante e arte formalmente aprovada.'}`);
       return;
     }
@@ -303,7 +308,7 @@ export default function App() {
             entryReceiptUrl: `comprovante_manual_${Date.now()}.pdf`,
             financialStatus: 'entrada_confirmada',
             canStartProduction: canStart,
-            stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
+            stage: o.stage,
           };
         }
         return o;
@@ -313,7 +318,11 @@ export default function App() {
 
   // PRD Gate 2: Aprovação formal da Arte / Layout
   const handleApproveArt = async (orderId: string) => {
-    await api.approveOrderArt(orderId, user?.fullName || 'Cliente (WhatsApp)');
+    const response = await api.approveOrderArt(state.orders.find((o) => o.id === orderId)?.backendId || orderId, user?.fullName || 'Cliente (WhatsApp)');
+    if (response.status < 200 || response.status >= 300) {
+      alert(response.error || 'Não foi possível aprovar a arte.');
+      return;
+    }
 
     setState((prev) => ({
       ...prev,
@@ -326,7 +335,7 @@ export default function App() {
             artApprovalDate: new Date().toISOString().split('T')[0],
             artApprovedBy: user?.fullName || 'Cliente (WhatsApp)',
             canStartProduction: canStart,
-            stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
+            stage: o.stage,
           };
         }
         return o;
@@ -705,7 +714,7 @@ export default function App() {
               financialStatus: 'entrada_confirmada' as const,
               entryReceiptUrl: `comprovante_${voucherNumber}.pdf`,
               canStartProduction: canStart,
-              stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
+              stage: o.stage,
             };
           }
           return o;

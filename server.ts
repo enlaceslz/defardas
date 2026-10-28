@@ -1,12 +1,15 @@
+import 'dotenv/config';
+import 'express-async-errors';
 /**
  * DE FARDAS ERP — Full-Stack Server Entry Point
  * Conecta o backend modular Express com PostgreSQL / Data Store e monta o Vite dev server.
  */
-import express from 'express';
+import express, { ErrorRequestHandler } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
+import type { RawBodyRequest } from './server/middleware/webhookAuth';
 import { csrfProtection } from './server/middleware/csrf';
 import { authMiddleware } from './server/auth/rbac';
 import { authRouter } from './server/routes/authRoutes';
@@ -28,10 +31,19 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const isProd = process.env.NODE_ENV === 'production';
 
 async function bootstrap() {
+  await db.ready;
   const app = express();
+  app.disable('x-powered-by');
+  app.use('/api', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    res.set('X-Content-Type-Options', 'nosniff');
+    next();
+  });
 
   // Middlewares básicos
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '10mb', verify: (req: RawBodyRequest, _res, buffer) => {
+    if (req.originalUrl?.split('?')[0] === '/api/communication/webhooks/meta') req.rawBody = Buffer.from(buffer);
+  } }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(cookieParser());
 
@@ -53,28 +65,25 @@ async function bootstrap() {
   app.use('/api/audit', auditRouter);
   app.use('/api/migration', migrationRouter);
 
-  // Endpoint de Saúde e Diagnóstico da Fundação
-  app.get('/api/health', (_req, res) => {
-    res.json({
-      status: 'healthy',
-      app: 'DE FARDAS ERP & PCP Industrial',
-      version: '1.6.0-P0',
-      database: {
-        type: 'PostgreSQL',
-        connectedToRemote: db.isConnected(),
-        mode: db.isConnected() ? 'PostgreSQL Pool Ativo' : 'Transacional Resiliente',
-      },
-      counts: {
-        clients: db.clients.size,
-        leads: db.leads.size,
-        quotes: db.quotes.size,
-        orders: db.orders.size,
-        finance: db.finance.size,
-        inventory: db.inventory.size,
-      },
-      timestamp: new Date().toISOString(),
-    });
+  // Readiness: consulta real, sem expor contagens ou dados internos.
+  app.get('/api/health', async (_req, res) => {
+    try {
+      await db.getPool()!.query('SELECT 1');
+      res.json({ status: 'healthy' });
+    } catch {
+      res.status(503).json({ status: 'unavailable' });
+    }
   });
+
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Endpoint não encontrado.' });
+  });
+  const apiErrorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+    console.error('[API] Falha na requisição:', err);
+    const status = err.status === 400 ? 400 : err.status === 413 ? 413 : 500;
+    res.status(status).json({ error: status === 500 ? 'Falha interna. A operação não foi confirmada.' : 'Requisição inválida.' });
+  };
+  app.use('/api', apiErrorHandler);
 
   // Integração com Vite: Middleware Mode em desenvolvimento
   if (!isProd) {
