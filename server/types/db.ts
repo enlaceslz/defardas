@@ -253,3 +253,49 @@ export interface StockMovementEntity {
   isDemo: boolean;
   createdAt: string;
 }
+
+export interface WhatsAppChannelEntity {
+  id: string;
+  provider: 'meta_cloud' | 'wa_akg';
+  channelName: string;
+  phoneNumber: string;
+  status: 'connected' | 'connecting' | 'disconnected' | 'qr_ready' | 'error';
+  qrCode?: string;
+  config?: any;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationEntity {
+  id: string;
+  channelId: string;
+  clientId?: string;
+  leadId?: string;
+  remoteJid: string;
+  customerName: string;
+  customerPhone: string;
+  status: 'open' | 'pending' | 'resolved' | 'closed';
+  assignedAgentId?: string;
+  unreadCount: number;
+  lastMessageText?: string;
+  lastMessageAt?: string;
+  tags?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MessageEntity {
+  id: string;
+  conversationId: string;
+  externalId?: string;
+  direction: 'inbound' | 'outbound';
+  senderName?: string;
+  messageType: 'text' | 'image' | 'document' | 'audio' | 'template';
+  body: string;
+  mediaUrl?: string;
+  mediaMimeType?: string;
+  status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
+  errorMessage?: string;
+  createdAt: string;
+}

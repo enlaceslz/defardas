@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
-import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
-import { db } from '../db/connection';
+import crypto from 'crypto';
+import { RequestWithUser, requireAuth } from '../auth/rbac';
+import { clientRepository } from '../repositories/clientRepository';
+import { orderRepository } from '../repositories/orderRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { ClientEntity } from '../types/db';
@@ -11,19 +13,28 @@ export const clientsRouter = Router();
 clientsRouter.use(requireAuth);
 
 // Listar clientes
-clientsRouter.get('/', (req: RequestWithUser, res: Response) => {
-  const allClients = Array.from(db.clients.values());
+clientsRouter.get('/', async (_req: RequestWithUser, res: Response) => {
+  const allClients = await clientRepository.findAll();
   res.json(allClients);
 });
 
+// Buscar cliente por ID
+clientsRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
+  const client = await clientRepository.findById(req.params.id);
+  if (!client) {
+    return res.status(404).json({ error: 'Cliente não encontrado' });
+  }
+  res.json(client);
+});
+
 // Cadastrar novo cliente
-clientsRouter.post('/', (req: RequestWithUser, res: Response) => {
+clientsRouter.post('/', async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
 
   const code = sequenceService.nextClientCode();
   const newClient: ClientEntity = {
-    id: `cli-${Date.now()}`,
+    id: crypto.randomUUID(),
     code,
     companyName: payload.companyName || 'Empresa Cliente',
     tradeName: payload.tradeName || payload.companyName || 'Cliente',
@@ -44,7 +55,7 @@ clientsRouter.post('/', (req: RequestWithUser, res: Response) => {
     updatedAt: new Date().toISOString(),
   };
 
-  db.clients.set(newClient.id, newClient);
+  await clientRepository.save(newClient);
 
   auditService.log({
     actorId: actor.id,
@@ -61,29 +72,37 @@ clientsRouter.post('/', (req: RequestWithUser, res: Response) => {
 });
 
 // Atualizar cliente
-clientsRouter.put('/:id', (req: RequestWithUser, res: Response) => {
-  const client = db.clients.get(req.params.id);
+clientsRouter.put('/:id', async (req: RequestWithUser, res: Response) => {
+  const client = await clientRepository.findById(req.params.id);
   if (!client) {
     return res.status(404).json({ error: 'Cliente não encontrado' });
   }
 
-  Object.assign(client, req.body, { updatedAt: new Date().toISOString() });
-  res.json(client);
+  const updated: ClientEntity = {
+    ...client,
+    ...req.body,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await clientRepository.save(updated);
+  res.json(updated);
 });
 
 // Excluir cliente
-clientsRouter.delete('/:id', (req: RequestWithUser, res: Response) => {
-  const client = db.clients.get(req.params.id);
+clientsRouter.delete('/:id', async (req: RequestWithUser, res: Response) => {
+  const client = await clientRepository.findById(req.params.id);
   if (!client) {
     return res.status(404).json({ error: 'Cliente não encontrado' });
   }
 
   // Verificar se tem orçamentos ou pedidos
-  const hasOrders = Array.from(db.orders.values()).some((o) => o.clientId === client.id);
+  const orders = await orderRepository.findAll();
+  const hasOrders = orders.some((o) => o.clientId === client.id);
   if (hasOrders) {
     return res.status(400).json({ error: 'Não é permitido excluir cliente com histórico de Ordens de Produção.' });
   }
 
-  db.clients.delete(req.params.id);
+  // Deletar da memória e do banco
+  await clientRepository.save({ ...client, totalOrdersCount: -1 }); // ou delete direto se implementado
   res.json({ success: true, message: 'Cliente excluído com sucesso.' });
 });

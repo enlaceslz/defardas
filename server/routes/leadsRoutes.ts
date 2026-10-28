@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
-import { db } from '../db/connection';
+import { leadRepository } from '../repositories/leadRepository';
+import { clientRepository } from '../repositories/clientRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { LeadEntity, ClientEntity } from '../types/db';
@@ -8,13 +10,13 @@ import { LeadEntity, ClientEntity } from '../types/db';
 export const leadsRouter = Router();
 
 // Listar todos os leads centralizados para o CRM da confecção (Apenas equipe interna autenticada)
-leadsRouter.get('/', requireAuth, requirePermission('crm:view_leads'), (req: RequestWithUser, res: Response) => {
-  const allLeads = Array.from(db.leads.values());
+leadsRouter.get('/', requireAuth, requirePermission('crm:view_leads'), async (_req: RequestWithUser, res: Response) => {
+  const allLeads = await leadRepository.findAll();
   res.json(allLeads);
 });
 
 // Captura pública de lead vinda do Portal Público (Ambiente 1 do PRD)
-leadsRouter.post('/', (req: Request, res: Response) => {
+leadsRouter.post('/', async (req: Request, res: Response) => {
   const { clientName, companyName, phone, email, category, estimatedQty, notes } = req.body;
 
   if (!clientName || !companyName || !phone || !category) {
@@ -22,7 +24,7 @@ leadsRouter.post('/', (req: Request, res: Response) => {
   }
 
   const leadNumber = sequenceService.nextLeadNumber();
-  const leadId = `lead-${Date.now()}`;
+  const leadId = crypto.randomUUID();
 
   const newLead: LeadEntity = {
     id: leadId,
@@ -40,17 +42,18 @@ leadsRouter.post('/', (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   };
 
-  db.leads.set(newLead.id, newLead);
+  await leadRepository.save(newLead);
 
   // Cadastrar ou vincular cliente na carteira se for novo
-  let matchedClient = Array.from(db.clients.values()).find(
+  const allClients = await clientRepository.findAll();
+  let matchedClient = allClients.find(
     (c) => c.phone === phone || c.companyName.toLowerCase() === companyName.toLowerCase()
   );
 
   if (!matchedClient) {
     const clientCode = sequenceService.nextClientCode();
     matchedClient = {
-      id: `cli-${Date.now()}`,
+      id: crypto.randomUUID(),
       code: clientCode,
       companyName: companyName.toUpperCase(),
       tradeName: companyName,
@@ -69,7 +72,7 @@ leadsRouter.post('/', (req: Request, res: Response) => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    db.clients.set(matchedClient.id, matchedClient);
+    await clientRepository.save(matchedClient);
   }
 
   auditService.log({
@@ -91,8 +94,8 @@ leadsRouter.post('/', (req: Request, res: Response) => {
 });
 
 // Atualizar status do lead (Apenas vendedores, gerentes e admin)
-leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clients'), (req: RequestWithUser, res: Response) => {
-  const lead = db.leads.get(req.params.id);
+leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clients'), async (req: RequestWithUser, res: Response) => {
+  const lead = await leadRepository.findById(req.params.id);
   if (!lead) {
     return res.status(404).json({ error: 'Lead não encontrado' });
   }
@@ -101,5 +104,6 @@ leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clie
   if (status) lead.status = status;
   if (sellerId) lead.assignedSellerId = sellerId;
 
+  await leadRepository.save(lead);
   res.json({ success: true, lead });
 });

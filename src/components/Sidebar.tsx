@@ -18,7 +18,8 @@ import {
   ExternalLink,
   Layers,
   Sparkles,
-  Scissors
+  Scissors,
+  MessageSquare
 } from 'lucide-react';
 import { CompanyProfile } from '../types/erp';
 
@@ -107,6 +108,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Users,
           badge: null,
           badgeStyle: '',
+        },
+        {
+          id: 'whatsapp',
+          label: 'Central WhatsApp',
+          icon: MessageSquare,
+          badge: 'Online',
+          badgeStyle: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
         },
       ],
     },

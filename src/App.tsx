@@ -10,6 +10,7 @@ import { FinancialView } from './components/FinancialView';
 import { SettingsView } from './components/SettingsView';
 import { PublicPortalView } from './components/PublicPortalView';
 import { LoginView } from './components/LoginView';
+import { WhatsAppOmnichannelView } from './components/WhatsAppOmnichannelView';
 
 import { NewOrderModal } from './components/NewOrderModal';
 import { NewQuoteModal } from './components/NewQuoteModal';
@@ -57,10 +58,185 @@ export default function App() {
   const [isHelpManualOpen, setIsHelpManualOpen] = useState(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
-  // Sync to localStorage
+  // Sync de backup para localStorage
   useEffect(() => {
     saveERPState(state);
   }, [state]);
+
+  // Carregar dados reais e autoritativos do backend PostgreSQL quando autenticado
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const fetchServerState = async () => {
+      try {
+        const [ordersRes, quotesRes, invRes, clientsRes, finRes] = await Promise.all([
+          api.getOrders(),
+          api.getQuotes(),
+          api.getInventoryItems(),
+          api.getClients(),
+          api.getTransactions(),
+        ]);
+
+        setState((prev) => {
+          const updated = { ...prev };
+          if (ordersRes.data && Array.isArray(ordersRes.data) && ordersRes.data.length > 0) {
+            updated.orders = ordersRes.data.map((o: any) => ({
+              id: o.orderNumber || o.id,
+              quoteId: o.quoteId,
+              quoteVersion: o.quoteVersion || 1,
+              clientId: o.clientId,
+              clientName: o.clientName,
+              itemTitle: o.itemTitle,
+              category: o.category,
+              fabricName: o.fabricName,
+              fabricColor: o.fabricColor,
+              sizes: o.sizes || { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
+              totalPieces: o.totalPieces,
+              customizations: o.customizations || [],
+              costBreakdown: o.costBreakdown || {
+                materialUnitCost: 25,
+                outsourcedSewingUnitCost: 15,
+                customizationUnitCost: 6,
+                freightPerUnit: 1.5,
+                technicalLossPercentage: 2,
+                calculatedBaseCost: 48,
+                markupPercentage: 50,
+                suggestedUnitPrice: 72,
+                negotiatedUnitPrice: 72,
+                discountPercentage: 0,
+                belowSuggestedAuthorized: false,
+                estimatedMarginPercentage: 33,
+              },
+              materials: o.materials || [],
+              commercialStatus: o.commercialStatus,
+              financialStatus: o.financialStatus,
+              stage: o.stage,
+              artApproved: o.artApproved,
+              artApprovalDate: o.artApprovalDate,
+              artApprovedBy: o.artApprovedBy,
+              entryPaymentConfirmed: o.entryPaymentConfirmed,
+              entryReceiptUrl: o.entryReceiptUrl,
+              canStartProduction: Boolean(o.entryPaymentConfirmed && o.artApproved),
+              priority: o.priority,
+              creationDate: o.creationDate,
+              targetDeliveryDate: o.targetDeliveryDate,
+              technicalNotes: o.technicalNotes,
+              assignedTeam: o.assignedTeam,
+            }));
+          }
+          if (quotesRes.data && Array.isArray(quotesRes.data) && quotesRes.data.length > 0) {
+            updated.quotes = quotesRes.data.map((q: any) => ({
+              id: q.quoteNumber || q.id,
+              version: q.version || 1,
+              clientId: q.clientId,
+              clientName: q.clientName,
+              clientCnpj: q.clientCnpj,
+              clientContact: q.sellerName,
+              clientPhone: '(98) 98841-2090',
+              clientEmail: 'compras@cliente.com.br',
+              sellerName: q.sellerName,
+              date: q.date,
+              validUntil: q.validUntil,
+              items: (q.items || []).map((it: any) => ({
+                id: it.id,
+                modelName: it.modelName,
+                category: it.category,
+                fabricName: it.fabricName,
+                fabricColor: it.fabricColor,
+                sizes: it.sizes || { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
+                totalQuantity: it.totalQuantity || it.quantity || 1,
+                costBreakdown: {
+                  materialUnitCost: it.materialUnitCost || 25,
+                  outsourcedSewingUnitCost: it.outsourcedSewingUnitCost || 15,
+                  customizationUnitCost: it.customizationUnitCost || 6,
+                  freightPerUnit: it.freightUnitCost || 1.5,
+                  technicalLossPercentage: it.technicalLossPercentage || 2,
+                  calculatedBaseUnitCost: it.calculatedBaseUnitCost || 48,
+                  markupPercentage: it.markupPercentage || 50,
+                  suggestedUnitPrice: it.suggestedUnitPrice || 72,
+                  negotiatedUnitPrice: it.negotiatedUnitPrice || 72,
+                  discountPercentage: 0,
+                  belowSuggestedAuthorized: false,
+                  estimatedMarginPercentage: 33,
+                },
+                unitFinalPrice: it.negotiatedUnitPrice || 72,
+                totalPrice: it.totalItemPrice || 72,
+                customizations: it.customizations || [],
+              })),
+              subtotal: q.suggestedTotalAmount,
+              discountPercentage: 0,
+              totalAmount: q.negotiatedTotalAmount,
+              entryPercentage: 50,
+              entryAmount: q.entryAmount,
+              balanceDueAtDelivery: q.balanceAmount,
+              paymentTerms: q.paymentTerms,
+              productionLeadDays: q.productionLeadDays,
+              status: q.commercialStatus,
+              artApproved: q.artApproved,
+              notes: q.notes,
+            }));
+          }
+          if (invRes.data && Array.isArray(invRes.data) && invRes.data.length > 0) {
+            updated.inventory = invRes.data.map((i: any) => ({
+              id: i.code || i.id,
+              code: i.code || i.id,
+              name: i.name,
+              category: i.category,
+              unit: i.unit,
+              currentStock: i.physicalStock ?? i.currentStock ?? 0,
+              allocatedStock: i.allocatedStock ?? 0,
+              inPartnersCustodyStock: i.inPartnersCustodyStock ?? 0,
+              minStock: i.minStock ?? 50,
+              costPrice: i.unitCostPrice ?? i.costPrice ?? 0,
+              supplier: i.supplier || 'Fornecedor Homologado',
+              location: i.location || 'Almoxarifado Central',
+              lastRestocked: i.lastRestocked || new Date().toISOString().split('T')[0],
+            }));
+          }
+          if (clientsRes.data && Array.isArray(clientsRes.data) && clientsRes.data.length > 0) {
+            updated.clients = clientsRes.data.map((c: any) => ({
+              id: c.code || c.id,
+              companyName: c.companyName,
+              tradeName: c.tradeName,
+              cnpj: c.cnpj,
+              contactName: c.contactName,
+              phone: c.phone,
+              email: c.email,
+              address: c.address,
+              city: c.city,
+              state: c.state,
+              segment: c.segment,
+              standardUniformNotes: c.standardUniformNotes,
+              totalOrdersCount: c.totalOrdersCount,
+              totalSpent: c.totalSpent,
+              createdAt: c.createdAt ? c.createdAt.split('T')[0] : '2026-01-01',
+            }));
+          }
+          if (finRes.data && Array.isArray(finRes.data) && finRes.data.length > 0) {
+            updated.finance = finRes.data.map((f: any) => ({
+              id: f.transactionNumber || f.id,
+              type: f.type,
+              subType: f.subType,
+              description: f.description,
+              category: f.category,
+              amount: f.amount,
+              dueDate: f.dueDate,
+              paidDate: f.paidDate,
+              status: f.status,
+              paymentMethod: f.paymentMethod,
+              referenceId: f.referenceId,
+              receiptEvidenceUrl: f.receiptEvidenceUrl,
+            }));
+          }
+          return updated;
+        });
+      } catch (err) {
+        console.warn('⚠️ [ERP Frontend] Falha ao sincronizar dados com o backend:', err);
+      }
+    };
+
+    fetchServerState();
+  }, [isAuthenticated]);
 
   // Orders Actions
   const handleSaveOrder = (savedOrder: ProductionOrder) => {
@@ -91,7 +267,14 @@ export default function App() {
     }
   };
 
-  const handleUpdateOrderStage = (orderId: string, nextStage: OperationalStage) => {
+  const handleUpdateOrderStage = async (orderId: string, nextStage: OperationalStage) => {
+    // Validação estrita do Portão A.3.2 com o backend
+    const res = await api.advanceOrderStage(orderId, nextStage);
+    if (res.status === 422) {
+      alert(`Bloqueio do Portão de Liberação Fabril (Gate A.3.2):\n\n${res.error || 'A Ordem de Produção não pode avançar para corte sem sinal de 50% confirmado com comprovante e arte formalmente aprovada.'}`);
+      return;
+    }
+
     setState((prev) => ({
       ...prev,
       orders: prev.orders.map((o) => {
@@ -129,7 +312,9 @@ export default function App() {
   };
 
   // PRD Gate 2: Aprovação formal da Arte / Layout
-  const handleApproveArt = (orderId: string) => {
+  const handleApproveArt = async (orderId: string) => {
+    await api.approveOrderArt(orderId, user?.fullName || 'Cliente (WhatsApp)');
+
     setState((prev) => ({
       ...prev,
       orders: prev.orders.map((o) => {
@@ -139,7 +324,7 @@ export default function App() {
             ...o,
             artApproved: true,
             artApprovalDate: new Date().toISOString().split('T')[0],
-            artApprovedBy: 'Cliente (WhatsApp)',
+            artApprovedBy: user?.fullName || 'Cliente (WhatsApp)',
             canStartProduction: canStart,
             stage: canStart && o.stage === 'aguardando_liberacao' ? 'corte' : o.stage,
           };
@@ -686,6 +871,10 @@ export default function App() {
                 onToggleStatus={handleToggleTransactionStatus}
                 onConfirmPaymentWithVoucher={handleConfirmPaymentWithVoucher}
               />
+            )}
+
+            {currentTab === 'whatsapp' && (
+              <WhatsAppOmnichannelView />
             )}
 
             {currentTab === 'settings' && (

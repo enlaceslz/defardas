@@ -1,7 +1,8 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
-import { db } from '../db/connection';
+import { financeRepository } from '../repositories/financeRepository';
+import { orderRepository } from '../repositories/orderRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { FinancialTransactionEntity } from '../types/db';
@@ -12,13 +13,13 @@ export const financeRouter = Router();
 financeRouter.use(requireAuth);
 
 // Listar transações financeiras
-financeRouter.get('/transactions', (req: RequestWithUser, res: Response) => {
-  const allTrx = Array.from(db.finance.values());
+financeRouter.get('/transactions', async (_req: RequestWithUser, res: Response) => {
+  const allTrx = await financeRepository.findAll();
   res.json(allTrx);
 });
 
 // Criar novo lançamento financeiro
-financeRouter.post('/transactions', requirePermission('finance:create_transaction'), (req: RequestWithUser, res: Response) => {
+financeRouter.post('/transactions', requirePermission('finance:create_transaction'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
 
@@ -42,7 +43,7 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
     updatedAt: new Date().toISOString(),
   };
 
-  db.finance.set(newTrx.id, newTrx);
+  await financeRepository.save(newTrx);
 
   auditService.log({
     actorId: actor.id,
@@ -59,9 +60,9 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
 });
 
 // Confirmação de Pagamento com Comprovante Real (Liquidação e Liberação do Sinal)
-financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finance:confirm_receipt'), (req: RequestWithUser, res: Response) => {
+financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finance:confirm_receipt'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const trx = db.finance.get(req.params.id);
+  const trx = await financeRepository.findById(req.params.id);
   if (!trx) {
     return res.status(404).json({ error: 'Lançamento financeiro não encontrado' });
   }
@@ -85,17 +86,18 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
   trx.confirmationNotes = confirmationNotes || 'Comprovante bancário conferido e autenticado.';
   trx.updatedAt = new Date().toISOString();
 
+  await financeRepository.save(trx);
+
   let linkedOrderUpdated = false;
   let updatedOrder = null;
 
   // PONTE DO PORTÃO (GATE BRIDGE): Se for entrada de pedido (sinal de 50%), liberar a Ordem de Produção!
   if (trx.subType === 'entrada_pedido' && (trx.productionOrderId || trx.referenceId)) {
     // Buscar OP pelo productionOrderId ou pelo orderNumber/referenceId
-    let order = trx.productionOrderId ? db.orders.get(trx.productionOrderId) : undefined;
+    let order = trx.productionOrderId ? await orderRepository.findById(trx.productionOrderId) : null;
     if (!order && trx.referenceId) {
-      order = Array.from(db.orders.values()).find(
-        (o) => o.orderNumber === trx.referenceId || o.quoteId === trx.quoteId
-      );
+      const orders = await orderRepository.findAll();
+      order = orders.find((o) => o.orderNumber === trx.referenceId || (trx.quoteId && o.quoteId === trx.quoteId)) || null;
     }
 
     if (order) {
@@ -106,6 +108,8 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
       order.entryVerifiedById = actor.id;
       order.entryVerificationDate = new Date().toISOString();
       order.updatedAt = new Date().toISOString();
+
+      await orderRepository.save(order);
 
       linkedOrderUpdated = true;
       updatedOrder = order;
@@ -155,8 +159,8 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
 });
 
 // Excluir lançamento
-financeRouter.delete('/transactions/:id', requirePermission('finance:delete_transaction'), (req: RequestWithUser, res: Response) => {
-  const trx = db.finance.get(req.params.id);
+financeRouter.delete('/transactions/:id', requirePermission('finance:delete_transaction'), async (req: RequestWithUser, res: Response) => {
+  const trx = await financeRepository.findById(req.params.id);
   if (!trx) {
     return res.status(404).json({ error: 'Lançamento financeiro não encontrado' });
   }
@@ -165,7 +169,7 @@ financeRouter.delete('/transactions/:id', requirePermission('finance:delete_tran
     return res.status(400).json({ error: 'Não é permitido excluir um lançamento financeiro já liquidado. Utilize estorno compensatório.' });
   }
 
-  db.finance.delete(req.params.id);
+  await financeRepository.delete(req.params.id);
 
   auditService.log({
     actorId: req.user!.id,

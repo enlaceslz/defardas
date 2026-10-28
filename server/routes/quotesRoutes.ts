@@ -1,7 +1,9 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
-import { db } from '../db/connection';
+import { quoteRepository } from '../repositories/quoteRepository';
+import { orderRepository } from '../repositories/orderRepository';
+import { financeRepository } from '../repositories/financeRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { PricingEngine } from '../services/pricingEngine';
@@ -13,14 +15,14 @@ export const quotesRouter = Router();
 quotesRouter.use(requireAuth);
 
 // Listar orçamentos
-quotesRouter.get('/', (req: RequestWithUser, res: Response) => {
-  const allQuotes = Array.from(db.quotes.values());
+quotesRouter.get('/', async (_req: RequestWithUser, res: Response) => {
+  const allQuotes = await quoteRepository.findAll();
   res.json(allQuotes);
 });
 
 // Buscar orçamento por ID
-quotesRouter.get('/:id', (req: RequestWithUser, res: Response) => {
-  const quote = db.quotes.get(req.params.id);
+quotesRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
+  const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
   }
@@ -28,7 +30,7 @@ quotesRouter.get('/:id', (req: RequestWithUser, res: Response) => {
 });
 
 // Criar nova proposta comercial
-quotesRouter.post('/', (req: RequestWithUser, res: Response) => {
+quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
 
@@ -161,7 +163,7 @@ quotesRouter.post('/', (req: RequestWithUser, res: Response) => {
     items: processedItems.map((it) => ({ ...it, quoteId })),
   };
 
-  db.quotes.set(newQuote.id, newQuote);
+  await quoteRepository.save(newQuote);
 
   auditService.log({
     actorId: actor.id,
@@ -184,8 +186,8 @@ quotesRouter.post('/', (req: RequestWithUser, res: Response) => {
 });
 
 // Atualizar status comercial
-quotesRouter.patch('/:id/status', (req: RequestWithUser, res: Response) => {
-  const quote = db.quotes.get(req.params.id);
+quotesRouter.patch('/:id/status', async (req: RequestWithUser, res: Response) => {
+  const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
   }
@@ -194,6 +196,8 @@ quotesRouter.patch('/:id/status', (req: RequestWithUser, res: Response) => {
   const newStatus = req.body.status;
   quote.commercialStatus = newStatus;
   quote.updatedAt = new Date().toISOString();
+
+  await quoteRepository.save(quote);
 
   auditService.log({
     actorId: req.user!.id,
@@ -211,8 +215,8 @@ quotesRouter.patch('/:id/status', (req: RequestWithUser, res: Response) => {
 });
 
 // Conversão IDEMPOTENTE de Orçamento em Pedido / Ordem de Produção (Regra B.2.2 & Gate A.3.2)
-quotesRouter.post('/:id/convert-to-order', (req: RequestWithUser, res: Response) => {
-  const quote = db.quotes.get(req.params.id);
+quotesRouter.post('/:id/convert-to-order', async (req: RequestWithUser, res: Response) => {
+  const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
   }
@@ -222,9 +226,7 @@ quotesRouter.post('/:id/convert-to-order', (req: RequestWithUser, res: Response)
   const idempotencyKey = customIdempotencyKey || `convert_quote_${quote.id}_v${quote.version}`;
 
   // Verificar se já existe uma OP gerada com esta idempotencyKey
-  const existingOrder = Array.from(db.orders.values()).find(
-    (o) => o.idempotencyKey === idempotencyKey || o.quoteId === quote.id
-  );
+  const existingOrder = await orderRepository.findByIdempotencyKey(idempotencyKey);
 
   if (existingOrder) {
     return res.status(200).json({
@@ -281,12 +283,12 @@ quotesRouter.post('/:id/convert-to-order', (req: RequestWithUser, res: Response)
     updatedAt: new Date().toISOString(),
   };
 
-  db.orders.set(newOrder.id, newOrder);
+  await orderRepository.save(newOrder);
 
   // Lançamentos Financeiros Idempotentes: Sinal de 50% + Saldo na Entrega
   const finSinalNumber = sequenceService.nextFinanceNumber();
   const finSinal: FinancialTransactionEntity = {
-    id: `fin-${Date.now()}-sinal`,
+    id: crypto.randomUUID(),
     transactionNumber: finSinalNumber,
     productionOrderId: newOrder.id,
     quoteId: quote.id,
@@ -306,7 +308,7 @@ quotesRouter.post('/:id/convert-to-order', (req: RequestWithUser, res: Response)
 
   const finSaldoNumber = sequenceService.nextFinanceNumber();
   const finSaldo: FinancialTransactionEntity = {
-    id: `fin-${Date.now()}-saldo`,
+    id: crypto.randomUUID(),
     transactionNumber: finSaldoNumber,
     productionOrderId: newOrder.id,
     quoteId: quote.id,
@@ -324,14 +326,15 @@ quotesRouter.post('/:id/convert-to-order', (req: RequestWithUser, res: Response)
     updatedAt: new Date().toISOString(),
   };
 
-  db.finance.set(finSinal.id, finSinal);
-  db.finance.set(finSaldo.id, finSaldo);
+  await financeRepository.save(finSinal);
+  await financeRepository.save(finSaldo);
 
   // Atualizar a proposta como convertida
   quote.commercialStatus = 'convertido_em_pedido';
   quote.convertedOrderId = newOrder.id;
   quote.isLocked = true;
   quote.updatedAt = new Date().toISOString();
+  await quoteRepository.save(quote);
 
   auditService.log({
     actorId: req.user!.id,
@@ -362,8 +365,8 @@ quotesRouter.post('/:id/convert-to-order', (req: RequestWithUser, res: Response)
 });
 
 // Excluir proposta
-quotesRouter.delete('/:id', requirePermission('quotes:delete'), (req: RequestWithUser, res: Response) => {
-  const quote = db.quotes.get(req.params.id);
+quotesRouter.delete('/:id', requirePermission('quotes:delete'), async (req: RequestWithUser, res: Response) => {
+  const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
   }
@@ -372,7 +375,7 @@ quotesRouter.delete('/:id', requirePermission('quotes:delete'), (req: RequestWit
     return res.status(400).json({ error: 'Não é permitido excluir uma proposta já convertida em Ordem de Produção.' });
   }
 
-  db.quotes.delete(req.params.id);
+  await quoteRepository.delete(req.params.id);
 
   auditService.log({
     actorId: req.user!.id,

@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
-import { db } from '../db/connection';
+import { orderRepository } from '../repositories/orderRepository';
 import { auditService } from '../services/auditService';
 import { ProductionOrderEntity } from '../types/db';
 
@@ -10,14 +10,14 @@ export const ordersRouter = Router();
 ordersRouter.use(requireAuth);
 
 // Listar Ordens de Produção
-ordersRouter.get('/', (req: RequestWithUser, res: Response) => {
-  const allOrders = Array.from(db.orders.values());
+ordersRouter.get('/', async (_req: RequestWithUser, res: Response) => {
+  const allOrders = await orderRepository.findAll();
   res.json(allOrders);
 });
 
 // Buscar OP por ID
-ordersRouter.get('/:id', (req: RequestWithUser, res: Response) => {
-  const order = db.orders.get(req.params.id);
+ordersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
+  const order = await orderRepository.findById(req.params.id);
   if (!order) {
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
@@ -25,9 +25,9 @@ ordersRouter.get('/:id', (req: RequestWithUser, res: Response) => {
 });
 
 // Avanço de Etapa com Verificação Rígida de Portão (Gate A.3.2 do PRD)
-ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'), (req: RequestWithUser, res: Response) => {
+ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const order = db.orders.get(req.params.id);
+  const order = await orderRepository.findById(req.params.id);
   if (!order) {
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
@@ -72,6 +72,7 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
 
   order.stage = targetStage;
   order.updatedAt = new Date().toISOString();
+  await orderRepository.save(order);
 
   auditService.log({
     actorId: actor.id,
@@ -93,19 +94,20 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
 });
 
 // Aprovação Formal de Arte (Gate da Arte)
-ordersRouter.post('/:id/approve-art', (req: RequestWithUser, res: Response) => {
+ordersRouter.post('/:id/approve-art', async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const order = db.orders.get(req.params.id);
+  const order = await orderRepository.findById(req.params.id);
   if (!order) {
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
 
-  const { approverName, notes, fileUrl } = req.body;
+  const { approverName, fileUrl } = req.body;
   order.artApproved = true;
   order.artApprovedBy = approverName || actor.fullName;
   order.artApprovalDate = new Date().toISOString();
   order.technicalNotes = `${order.technicalNotes || ''} [Arte aprovada por ${order.artApprovedBy} em ${new Date().toLocaleDateString('pt-BR')}].`;
   order.updatedAt = new Date().toISOString();
+  await orderRepository.save(order);
 
   auditService.log({
     actorId: actor.id,
@@ -131,13 +133,13 @@ ordersRouter.post('/:id/approve-art', (req: RequestWithUser, res: Response) => {
 });
 
 // Exclusão de OP
-ordersRouter.delete('/:id', requirePermission('orders:delete'), (req: RequestWithUser, res: Response) => {
-  const order = db.orders.get(req.params.id);
+ordersRouter.delete('/:id', requirePermission('orders:delete'), async (req: RequestWithUser, res: Response) => {
+  const order = await orderRepository.findById(req.params.id);
   if (!order) {
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
 
-  db.orders.delete(req.params.id);
+  await orderRepository.delete(req.params.id);
 
   auditService.log({
     actorId: req.user!.id,

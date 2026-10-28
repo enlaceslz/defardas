@@ -1,0 +1,37 @@
+# ==============================================================================
+# DE FARDAS ERP — Docker Compose Desenvolvimento Local
+# Sobe apenas o PostgreSQL e o Redis expondo portas para o npm run dev
+# ==============================================================================
+
+services:
+  postgres-dev:
+    image: postgres:16-alpine
+    container_name: defardas-postgres-dev
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: defardas_user
+      POSTGRES_PASSWORD: defardas_password
+      POSTGRES_DB: defardas_db
+      TZ: America/Fortaleza
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U defardas_user -d defardas_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-dev:
+    image: redis:7-alpine
+    container_name: defardas-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:

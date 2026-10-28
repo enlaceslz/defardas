@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
-import { db } from '../db/connection';
+import { inventoryRepository } from '../repositories/inventoryRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { InventoryItemEntity, StockMovementEntity } from '../types/db';
@@ -12,13 +12,13 @@ export const inventoryRouter = Router();
 inventoryRouter.use(requireAuth);
 
 // Listar itens do estoque
-inventoryRouter.get('/items', (req: RequestWithUser, res: Response) => {
-  const allItems = Array.from(db.inventory.values());
+inventoryRouter.get('/items', async (_req: RequestWithUser, res: Response) => {
+  const allItems = await inventoryRepository.findAllItems();
   res.json(allItems);
 });
 
 // Cadastrar novo item de estoque
-inventoryRouter.post('/items', requirePermission('inventory:adjust'), (req: RequestWithUser, res: Response) => {
+inventoryRouter.post('/items', requirePermission('inventory:adjust'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
 
@@ -42,7 +42,7 @@ inventoryRouter.post('/items', requirePermission('inventory:adjust'), (req: Requ
     updatedAt: new Date().toISOString(),
   };
 
-  db.inventory.set(newItem.id, newItem);
+  await inventoryRepository.saveItem(newItem);
 
   auditService.log({
     actorId: actor.id,
@@ -59,17 +59,17 @@ inventoryRouter.post('/items', requirePermission('inventory:adjust'), (req: Requ
 });
 
 // Listar movimentações
-inventoryRouter.get('/movements', (req: RequestWithUser, res: Response) => {
-  const allMovements = Array.from(db.movements.values());
+inventoryRouter.get('/movements', async (_req: RequestWithUser, res: Response) => {
+  const allMovements = await inventoryRepository.findAllMovements();
   res.json(allMovements);
 });
 
 // Registrar movimentação de estoque por evento compensatório (Regra B.3.5)
-inventoryRouter.post('/movements', requirePermission('inventory:create_movement'), (req: RequestWithUser, res: Response) => {
+inventoryRouter.post('/movements', requirePermission('inventory:create_movement'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const { itemId, productionOrderId, type, quantity, reason, referenceDoc } = req.body;
 
-  const item = db.inventory.get(itemId);
+  const item = await inventoryRepository.findItemById(itemId);
   if (!item) {
     return res.status(404).json({ error: 'Item de estoque não encontrado' });
   }
@@ -125,6 +125,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
   }
 
   item.updatedAt = new Date().toISOString();
+  await inventoryRepository.saveItem(item);
 
   const movementNumber = sequenceService.nextMovementNumber();
   const movement: StockMovementEntity = {
@@ -144,7 +145,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
     createdAt: new Date().toISOString(),
   };
 
-  db.movements.set(movement.id, movement);
+  await inventoryRepository.saveMovement(movement);
 
   auditService.log({
     actorId: actor.id,

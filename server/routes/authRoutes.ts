@@ -9,16 +9,37 @@ import { sessionStore } from '../auth/sessionStore';
 import { userRepository, DEV_DEFAULT_PASSWORD } from '../db/userRepository';
 import { PasswordService } from '../auth/passwordService';
 import { auditService } from '../services/auditService';
+import { authRateLimiter, passwordRecoveryRateLimiter } from '../middleware/rateLimiter';
+import { CSRF_COOKIE_NAME, generateCsrfToken } from '../middleware/csrf';
 
 export const authRouter = Router();
 
 const isProd = process.env.NODE_ENV === 'production';
 
 /**
- * POST /api/auth/login
- * Realiza autenticação com credenciais reais
+ * GET /api/auth/csrf-token
+ * Fornece e sincroniza o token CSRF para a camada de cliente
  */
-authRouter.post('/login', async (req: RequestWithUser, res: Response) => {
+authRouter.get('/csrf-token', (req, res) => {
+  let token = req.cookies?.[CSRF_COOKIE_NAME];
+  if (!token) {
+    token = generateCsrfToken();
+    res.cookie(CSRF_COOKIE_NAME, token, {
+      httpOnly: false,
+      secure: isProd,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 8 * 60 * 60 * 1000,
+    });
+  }
+  res.json({ csrfToken: token });
+});
+
+/**
+ * POST /api/auth/login
+ * Realiza autenticação com credenciais reais protegida por rate limiting
+ */
+authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Response) => {
   const { email, password } = req.body;
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const userAgent = req.headers['user-agent'] || 'unknown';
@@ -102,6 +123,18 @@ authRouter.post('/login', async (req: RequestWithUser, res: Response) => {
     ipAddress: ip,
   });
 
+  let csrfToken = req.cookies?.[CSRF_COOKIE_NAME];
+  if (!csrfToken) {
+    csrfToken = generateCsrfToken();
+    res.cookie(CSRF_COOKIE_NAME, csrfToken, {
+      httpOnly: false,
+      secure: isProd,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 8 * 60 * 60 * 1000,
+    });
+  }
+
   res.json({
     success: true,
     user: {
@@ -111,6 +144,7 @@ authRouter.post('/login', async (req: RequestWithUser, res: Response) => {
       role: user.role,
     },
     token: session.token,
+    csrfToken,
   });
 });
 
@@ -189,7 +223,7 @@ authRouter.get('/dev-credentials', (_req: RequestWithUser, res: Response) => {
  * POST /api/auth/recover-password
  * Gera token seguro para recuperação de senha sem enumerar contas
  */
-authRouter.post('/recover-password', async (req: RequestWithUser, res: Response) => {
+authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: RequestWithUser, res: Response) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ error: 'Informe o e-mail cadastrado.' });

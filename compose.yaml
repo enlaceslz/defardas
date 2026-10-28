@@ -1,0 +1,117 @@
+# ==============================================================================
+# DE FARDAS ERP — Docker Compose Produção
+# Arquitetura com Banco PostgreSQL Próprio, Redis, ERP e WA-AKG Isolado
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Aplicação Principal DE FARDAS (Frontend SPA + Backend Modular Express)
+  # ----------------------------------------------------------------------------
+  defardas-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: defardas-app
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-defardas_user}:${POSTGRES_PASSWORD:-defardas_secure_pass_2026}@defardas-postgres:5432/${POSTGRES_DB:-defardas_db}?sslmode=disable
+      - REDIS_URL=redis://defardas-redis:6379
+      - WA_AKG_ENDPOINT=http://defardas-wa-akg:8080
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      defardas-postgres:
+        condition: service_healthy
+      defardas-redis:
+        condition: service_healthy
+    networks:
+      - defardas-internal
+      - defardas-external
+    volumes:
+      - app_uploads:/app/uploads
+      - app_logs:/app/logs
+
+  # ----------------------------------------------------------------------------
+  # 2. Banco de Dados Principal: PostgreSQL 16 (Drizzle ORM)
+  # ----------------------------------------------------------------------------
+  defardas-postgres:
+    image: postgres:16-alpine
+    container_name: defardas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-defardas_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-defardas_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-defardas_db}
+      TZ: America/Fortaleza
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - defardas-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-defardas_user} -d ${POSTGRES_DB:-defardas_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # 3. Cache & Filas Assíncronas: Redis 7
+  # ----------------------------------------------------------------------------
+  defardas-redis:
+    image: redis:7-alpine
+    container_name: defardas-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --save 60 1
+    volumes:
+      - redis_data:/data
+    networks:
+      - defardas-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 4. Central WhatsApp QR Code (WA-AKG em Container Isolado)
+  # ----------------------------------------------------------------------------
+  defardas-wa-akg:
+    image: node:20-alpine
+    container_name: defardas-wa-akg
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "echo 'WA-AKG Service Container Initialized' && tail -f /dev/null"
+    environment:
+      - PORT=8080
+      - WA_AKG_API_KEY=${WA_AKG_API_KEY:-wa_akg_defardas_secret}
+    volumes:
+      - wa_akg_auth:/app/auth_session
+    networks:
+      - defardas-internal
+
+# ==============================================================================
+# Redes e Volumes Persistentes
+# ==============================================================================
+networks:
+  defardas-internal:
+    driver: bridge
+    internal: true
+  defardas-external:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: defardas_postgres_data
+  redis_data:
+    name: defardas_redis_data
+  app_uploads:
+    name: defardas_app_uploads
+  app_logs:
+    name: defardas_app_logs
+  wa_akg_auth:
+    name: defardas_wa_akg_auth

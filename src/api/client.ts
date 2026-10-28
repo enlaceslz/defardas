@@ -22,6 +22,7 @@ export interface UserSessionData {
 class ApiClient {
   private baseUrl: string = '/api';
   private sessionToken: string | null = null;
+  private csrfToken: string | null = null;
 
   constructor() {
     // P1-005: Não persistir tokens sensíveis em localStorage (prevenção contra XSS)
@@ -47,6 +48,39 @@ class ApiClient {
     return this.sessionToken;
   }
 
+  private getCookie(name: string): string | null {
+    if (typeof document === 'undefined') return null;
+    const match = document.cookie.match(new RegExp('(^|;\\s*)(' + name + ')=([^;]*)'));
+    return match ? decodeURIComponent(match[3]) : null;
+  }
+
+  public getCsrfToken(): string | null {
+    if (!this.csrfToken) {
+      this.csrfToken = this.getCookie('defardas_csrf_token');
+    }
+    return this.csrfToken;
+  }
+
+  public setCsrfToken(token: string | null) {
+    this.csrfToken = token;
+  }
+
+  public async fetchCsrfToken(): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/auth/csrf-token`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.csrfToken) {
+          this.csrfToken = data.csrfToken;
+          return data.csrfToken;
+        }
+      }
+    } catch (e) {
+      // Ignorar erro silenciosamente
+    }
+    return this.getCsrfToken();
+  }
+
   private getHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -64,12 +98,15 @@ class ApiClient {
 
   // Auth: Login real com bcrypt no backend
   public async login(email: string, password: string) {
-    const res = await this.request<{ success: boolean; user: UserSessionData; token: string }>('/auth/login', {
+    const res = await this.request<{ success: boolean; user: UserSessionData; token: string; csrfToken?: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
     if (res.data?.token) {
       this.setToken(res.data.token);
+    }
+    if (res.data?.csrfToken) {
+      this.setCsrfToken(res.data.csrfToken);
     }
     return res;
   }
@@ -245,6 +282,49 @@ class ApiClient {
     });
   }
 
+  // Communication & WhatsApp
+  public async getChannels() {
+    return this.request<any[]>('/communication/channels', { method: 'GET' });
+  }
+
+  public async getChannelQr(channelId: string) {
+    return this.request<any>(`/communication/channels/${channelId}/qr`, { method: 'GET' });
+  }
+
+  public async reconnectChannel(channelId: string) {
+    return this.request<any>(`/communication/channels/${channelId}/reconnect`, { method: 'POST' });
+  }
+
+  public async getConversations() {
+    return this.request<any[]>('/communication/conversations', { method: 'GET' });
+  }
+
+  public async getConversationMessages(conversationId: string) {
+    return this.request<any[]>(`/communication/conversations/${conversationId}/messages`, { method: 'GET' });
+  }
+
+  public async sendConversationMessage(conversationId: string, body: string, mediaUrl?: string) {
+    return this.request<any>(`/communication/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body, mediaUrl }),
+    });
+  }
+
+  public async sendTemplateMessage(payload: {
+    templateType: 'quote_ready' | 'downpayment_confirmed';
+    clientPhone: string;
+    clientName: string;
+    quoteNumber?: string;
+    orderNumber?: string;
+    amount?: number;
+    voucherNumber?: string;
+  }) {
+    return this.request<any>('/communication/send-template', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // Audit
   public async getAuditLogs(limit: number = 50) {
     return this.request<any[]>(`/audit/logs?limit=${limit}`, { method: 'GET' });
@@ -260,10 +340,22 @@ class ApiClient {
 
   private async request<T>(path: string, options: RequestInit): Promise<ApiResponse<T>> {
     try {
-      const mergedHeaders = {
+      const method = (options.method || 'GET').toUpperCase();
+      const mergedHeaders: Record<string, string> = {
         ...this.getHeaders(),
         ...(options.headers as Record<string, string> || {}),
       };
+
+      // Injetar cabeçalho de proteção CSRF em requisições de mutação
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        let csrf = this.getCsrfToken();
+        if (!csrf && path !== '/auth/login' && path !== '/auth/recover-password' && path !== '/leads') {
+          csrf = await this.fetchCsrfToken();
+        }
+        if (csrf) {
+          mergedHeaders['x-csrf-token'] = csrf;
+        }
+      }
 
       const res = await fetch(`${this.baseUrl}${path}`, {
         ...options,

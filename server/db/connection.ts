@@ -31,6 +31,9 @@ export class DatabaseManager {
   public finance: Map<string, FinancialTransactionEntity> = new Map();
   public inventory: Map<string, InventoryItemEntity> = new Map();
   public movements: Map<string, StockMovementEntity> = new Map();
+  public channels: Map<string, any> = new Map();
+  public conversations: Map<string, any> = new Map();
+  public messages: Map<string, any> = new Map();
 
   constructor() {
     this.initDatabase();
@@ -310,6 +313,72 @@ export class DatabaseManager {
       updatedAt: '2026-10-20T15:00:00Z',
     };
     this.finance.set(fin1.id, fin1);
+
+    // 7. Canais WhatsApp (Meta WhatsApp Cloud API e WA-AKG QR Code)
+    const ch1 = {
+      id: 'ch-meta-official',
+      provider: 'meta_cloud',
+      channelName: 'DE FARDAS — WhatsApp Business Cloud (Oficial)',
+      phoneNumber: '+55 98 98841-2090',
+      status: 'connected',
+      isActive: true,
+      createdAt: '2026-10-01T08:00:00Z',
+      updatedAt: '2026-10-01T08:00:00Z',
+    };
+    const ch2 = {
+      id: 'ch-wa-akg-qr',
+      provider: 'wa_akg',
+      channelName: 'DE FARDAS — WA-AKG (Conexão QR Code)',
+      phoneNumber: '+55 98 98123-4567',
+      status: 'connected',
+      qrCode: null,
+      isActive: true,
+      createdAt: '2026-10-01T08:00:00Z',
+      updatedAt: '2026-10-01T08:00:00Z',
+    };
+    this.channels.set(ch1.id, ch1);
+    this.channels.set(ch2.id, ch2);
+
+    // Conversa demonstrativa do Hospital Guará
+    const conv1 = {
+      id: 'conv-hospital-guara',
+      channelId: ch1.id,
+      clientId: c1.id,
+      remoteJid: '5598988412090@s.whatsapp.net',
+      customerName: 'Dra. Camila Vasconcelos',
+      customerPhone: '(98) 98841-2090',
+      status: 'open',
+      unreadCount: 0,
+      lastMessageText: 'Olá! Aprovamos o layout dos jalecos Oxfordine. Segue o comprovante de sinal.',
+      lastMessageAt: '2026-10-20T14:35:00Z',
+      tags: ['cliente_vip', 'hospitalar', 'op_ativa'],
+      createdAt: '2026-10-20T10:00:00Z',
+      updatedAt: '2026-10-20T14:35:00Z',
+    };
+    this.conversations.set(conv1.id, conv1);
+
+    const msg1 = {
+      id: 'msg-001',
+      conversationId: conv1.id,
+      direction: 'outbound',
+      senderName: 'Atendimento DE FARDAS',
+      messageType: 'text',
+      body: 'Olá Dra. Camila! Conforme conversamos, estamos enviando o orçamento ORC-2026-1001 com a decomposição de custos para os jalecos e scrubs.',
+      status: 'read',
+      createdAt: '2026-10-20T10:15:00Z',
+    };
+    const msg2 = {
+      id: 'msg-002',
+      conversationId: conv1.id,
+      direction: 'inbound',
+      senderName: 'Dra. Camila Vasconcelos',
+      messageType: 'text',
+      body: 'Olá! Aprovamos o layout dos jalecos Oxfordine. Segue o comprovante de sinal.',
+      status: 'read',
+      createdAt: '2026-10-20T14:35:00Z',
+    };
+    this.messages.set(msg1.id, msg1);
+    this.messages.set(msg2.id, msg2);
   }
 }
 

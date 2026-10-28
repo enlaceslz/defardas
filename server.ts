@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
+import { csrfProtection } from './server/middleware/csrf';
 import { authMiddleware } from './server/auth/rbac';
 import { authRouter } from './server/routes/authRoutes';
 import { quotesRouter } from './server/routes/quotesRoutes';
@@ -17,6 +18,7 @@ import { leadsRouter } from './server/routes/leadsRoutes';
 import { clientsRouter } from './server/routes/clientsRoutes';
 import { auditRouter } from './server/routes/auditRoutes';
 import { migrationRouter } from './server/routes/migrationRoutes';
+import { communicationRouter } from './server/routes/communicationRoutes';
 import { db } from './server/db/connection';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +35,9 @@ async function bootstrap() {
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(cookieParser());
 
+  // Proteção contra CSRF em todas as rotas da API
+  app.use('/api', csrfProtection);
+
   // Middleware de Autenticação / RBAC em todas as rotas de API
   app.use('/api', authMiddleware);
 
@@ -44,6 +49,7 @@ async function bootstrap() {
   app.use('/api/inventory', inventoryRouter);
   app.use('/api/leads', leadsRouter);
   app.use('/api/clients', clientsRouter);
+  app.use('/api/communication', communicationRouter);
   app.use('/api/audit', auditRouter);
   app.use('/api/migration', migrationRouter);
 
