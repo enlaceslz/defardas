@@ -33,7 +33,7 @@ Data: 28/10/2026. Repositório: `enlaceslz/defardas`. Trabalho na branch `fix/pr
 ## Evidências
 
 - 21 testes locais passaram: 15 de segurança/HTTP e 6 de componentes/adaptadores/isolamento de cache.
-- 8 testes com PostgreSQL 16 real passaram na CI: gravação dos itens/custos, 8 conversões simultâneas, gate por API e constraint SQL, repetição de baixa, quitação do saldo, rollback por falha injetada no segundo título, concorrência de estoque e auditoria persistente.
+- 10 testes com PostgreSQL 16 real passaram na CI: gravação dos itens/custos, 8 conversões simultâneas, gate por API e constraint SQL, repetição de baixa, quitação do saldo, rollback por falha injetada no segundo título, concorrência de estoque, auditoria persistente, perfil institucional e provisionamento CLI sem substituição de conta.
 - Backup e restauração em outro banco descartável passaram na CI, com conferência de existência de OPs restauradas.
 - `npm run lint`, `npm run build`, `git diff --check` e sintaxe Bash passaram localmente.
 - Bundle JS principal ficou em aproximadamente 464 kB minificado / 119 kB gzip, abaixo do aviso anterior de 500 kB; não houve reescrita visual das telas principais.

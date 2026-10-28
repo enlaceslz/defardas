@@ -13,6 +13,8 @@ import { clientsRouter } from '../server/routes/clientsRoutes';
 import { quotesRouter } from '../server/routes/quotesRoutes';
 import { ordersRouter } from '../server/routes/ordersRoutes';
 import { financeRouter } from '../server/routes/financeRoutes';
+import { settingsRouter } from '../server/routes/settingsRoutes';
+import { spawnSync } from 'node:child_process';
 import { inventoryRouter } from '../server/routes/inventoryRoutes';
 import type { Server } from 'node:http';
 
@@ -47,6 +49,7 @@ before(async () => {
   const session = await sessionStore.createSession({ id: userId, fullName: 'Integration Admin', email: `${userId}@example.invalid`, role: 'admin' });
   headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` };
   const app = express(); app.use(express.json()); app.use(cookieParser()); app.use('/api', authMiddleware);
+  app.use('/api', settingsRouter);
   app.use('/api/clients', clientsRouter); app.use('/api/quotes', quotesRouter); app.use('/api/orders', ordersRouter);
   app.use('/api/finance', financeRouter); app.use('/api/inventory', inventoryRouter);
   app.use((err: any, _req: any, res: any, _next: any) => { res.status(err.status || 500).json({ error: err.message }); });
@@ -124,4 +127,25 @@ test('PostgreSQL: eventos auditados sobrevivem a nova conexão', async () => {
   const result = await pool.query("SELECT * FROM core.audit_logs WHERE entity_id=$1 AND action='CONVERT_QUOTE_TO_ORDER'", [quoteId]);
   assert.equal(result.rowCount, 1);
   assert.equal(result.rows[0].new_data.orderIds.length, 2);
+});
+
+test('PostgreSQL: perfil institucional persiste e preserva capacidade zero', async () => {
+  const result = await request('/api/settings/profile', 'PUT', { name: 'Empresa de Teste', tradeName: 'Marca Teste', foundedYear: 0, productionCapacityPiecesMonth: 0 });
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  const stored = await request('/api/public-config');
+  assert.equal(stored.data.profile.name, 'Empresa de Teste');
+  assert.equal(stored.data.profile.productionCapacityPiecesMonth, 0);
+});
+test('PostgreSQL: provisionamento CLI não mostra senha nem substitui conta existente', async () => {
+  const email = `provision-${crypto.randomUUID()}@example.invalid`;
+  const password = `Test-${crypto.randomUUID()}-9`;
+  const options = { env: { ...process.env, ADMIN_EMAIL: email, ADMIN_NAME: 'Provision Test', ADMIN_PASSWORD: password }, encoding: 'utf8' as const, timeout: 15000 };
+  const first = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/create-admin.ts'], options);
+  assert.equal(first.status, 0, first.stderr);
+  assert.ok(!first.stdout.includes(password));
+  const user = (await pool.query('SELECT password_hash,role FROM core.users WHERE email=$1', [email])).rows[0];
+  assert.equal(user.role, 'admin'); assert.ok(user.password_hash.startsWith('$2'));
+  const second = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/create-admin.ts'], options);
+  assert.equal(second.status, 1); assert.match(second.stderr, /já cadastrado/);
+  assert.equal((await pool.query('SELECT password_hash FROM core.users WHERE email=$1', [email])).rows[0].password_hash, user.password_hash);
 });

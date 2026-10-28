@@ -44,4 +44,4 @@ Para restauração, parar a aplicação e restaurar primeiro em banco isolado: `
 
 ## Evidências de engenharia
 
-A CI valida instalação, tipagem, 21 testes locais, 8 testes de PostgreSQL, backup/restauração e imagem de produção. Os bancos defardas_test/defardas_restore_test são descartáveis. O teste de concorrência usa um lock transacional global; ajustar somente com medições e testes de integridade.
+A CI valida instalação, tipagem, 21 testes locais, 10 testes de PostgreSQL, backup/restauração e imagem de produção. Os bancos defardas_test/defardas_restore_test são descartáveis. O teste de concorrência usa um lock transacional global; ajustar somente com medições e testes de integridade.
