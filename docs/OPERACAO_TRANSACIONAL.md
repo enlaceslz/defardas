@@ -55,3 +55,9 @@ Para uma recuperação autorizada, o operador com acesso ao host pode executar `
 A migração `0004_small_mac_gargan` cria `core.password_reset_tokens`. Só o SHA-256 de tokens aleatórios é guardado; validade de uma hora, um token por usuário, substituição na nova emissão e consumo único. Troca de senha, revogação de todas as sessões/tokens e auditoria confirmam ou revertem juntas. O login revalida o hash antes de inserir a sessão na mesma transação, impedindo que uma tentativa em trânsito com a senha antiga sobreviva à redefinição.
 
 A recuperação por CLI é uma operação privilegiada do host, equivalente ao provisionamento inicial: restringir esse acesso aos operadores responsáveis. O evento `PASSWORD_RESET_BY_OPERATOR` identifica o canal administrativo; a identidade individual do operador deve ser rastreada pelo controle de acesso ao host. Nenhuma recuperação de conta operacional foi executada nesta entrega.
+
+## Isolamento da demonstração local
+
+As rotas de credenciais demonstrativas, recuperação com token na resposta e simulação de perfis só ficam disponíveis sem `DATABASE_URL` e com `NODE_ENV` ausente, `development` ou `test`. Ambientes desconhecidos fecham esse acesso. Configurar um banco, mesmo local ou de homologação, desativa essas facilidades antes de consultar usuários ou emitir tokens/sessões.
+
+A importação de localStorage também permanece indisponível nesses ambientes persistentes: responde 501, sem alterar memória nem anunciar gravação no PostgreSQL. O fluxo persistente de importação continua pendente. A recuperação administrativa por `user:reset-password` permanece disponível para o operador autorizado, conforme procedimento acima.

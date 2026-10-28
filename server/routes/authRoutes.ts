@@ -13,6 +13,7 @@ import { unitOfWork } from '../db/unitOfWork';
 import { auditService } from '../services/auditService';
 import { authRateLimiter, passwordRecoveryRateLimiter } from '../middleware/rateLimiter';
 import { CSRF_COOKIE_NAME, generateCsrfToken } from '../middleware/csrf';
+import { isLocalDemoEnvironment } from '../auth/demoEnvironment';
 
 export const authRouter = Router();
 
@@ -190,7 +191,7 @@ authRouter.get('/me', (req: RequestWithUser, res: Response) => {
  * NUNCA acessível em produção
  */
 authRouter.get('/dev-credentials', (_req: RequestWithUser, res: Response) => {
-  if (isProd) {
+  if (!isLocalDemoEnvironment()) {
     return res.status(404).json({ error: 'Não encontrado.' });
   }
 
@@ -220,7 +221,7 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
   }
 
   // Sem canal de e-mail homologado, não confirmar uma entrega inexistente.
-  if (isProd) return res.status(503).json({ error: 'Recuperação por e-mail indisponível. Contate o administrador.', code: 'PASSWORD_RECOVERY_UNAVAILABLE' });
+  if (!isLocalDemoEnvironment()) return res.status(503).json({ error: 'Recuperação por e-mail indisponível. Contate o administrador.', code: 'PASSWORD_RECOVERY_UNAVAILABLE' });
   const user = await userRepository.findByEmail(email);
   if (user?.isActive) {
     const resetToken = await passwordResetService.issue(user.id);
@@ -280,9 +281,9 @@ authRouter.post('/reset-password', passwordRecoveryRateLimiter, async (req: Requ
  * Simulador de perfis estritamente restrito a desenvolvimento e exigindo sessão admin
  */
 authRouter.post('/switch-role', requireAuth, async (req: RequestWithUser, res: Response) => {
-  if (isProd) {
+  if (!isLocalDemoEnvironment()) {
     return res.status(403).json({
-      error: 'Simulador de perfis estritamente bloqueado em ambiente de produção.',
+      error: 'Simulador de perfis disponível apenas na demonstração local sem banco configurado.',
       code: 'DEV_ONLY',
     });
   }

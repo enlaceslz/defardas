@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { RequestWithUser, requirePermission } from '../auth/rbac';
 import { db } from '../db/connection';
 import { auditService } from '../services/auditService';
+import { isLocalDemoEnvironment } from '../auth/demoEnvironment';
 
 export const migrationRouter = Router();
 
@@ -10,7 +11,7 @@ migrationRouter.use(requirePermission('system:import_data'));
 
 // Endpoint seguro e idempotente para migrar dados do localStorage
 migrationRouter.post('/import-local-storage', async (req: RequestWithUser, res: Response) => {
-  if (process.env.NODE_ENV === 'production') {
+  if (!isLocalDemoEnvironment()) {
     return res.status(501).json({ error: 'Importação persistente ainda não implementada. Nenhum dado foi importado.' });
   }
   const actor = req.user!;
