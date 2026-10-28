@@ -8,7 +8,6 @@ import express, { ErrorRequestHandler } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 import type { RawBodyRequest } from './server/middleware/webhookAuth';
 import { csrfProtection } from './server/middleware/csrf';
 import { authMiddleware } from './server/auth/rbac';
@@ -23,6 +22,9 @@ import { auditRouter } from './server/routes/auditRoutes';
 import { migrationRouter } from './server/routes/migrationRoutes';
 import { communicationRouter } from './server/routes/communicationRoutes';
 import { db } from './server/db/connection';
+import { pool } from './server/db/index';
+import { InputError } from './server/validation/input';
+import { settingsRouter } from './server/routes/settingsRoutes';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +34,10 @@ const isProd = process.env.NODE_ENV === 'production';
 
 async function bootstrap() {
   await db.ready;
+  if (isProd) {
+    await pool.query('SELECT key FROM core.public_settings LIMIT 0');
+    await pool.query('SELECT kind, value FROM core.number_counters LIMIT 0');
+  }
   const app = express();
   app.disable('x-powered-by');
   app.use('/api', (_req, res, next) => {
@@ -54,6 +60,7 @@ async function bootstrap() {
   app.use('/api', authMiddleware);
 
   // Rotas da API Modular do ERP DE FARDAS
+  app.use('/api', settingsRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/quotes', quotesRouter);
   app.use('/api/orders', ordersRouter);
@@ -80,14 +87,15 @@ async function bootstrap() {
   });
   const apiErrorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     console.error('[API] Falha na requisição:', err);
-    const status = err.status === 400 ? 400 : err.status === 413 ? 413 : 500;
-    res.status(status).json({ error: status === 500 ? 'Falha interna. A operação não foi confirmada.' : 'Requisição inválida.' });
+    const status = err.status === 400 ? 400 : err.status === 413 ? 413 : ['23505', '23503'].includes(err.code) ? 409 : err.code === '23514' ? 422 : 500;
+    res.status(status).json({ error: err instanceof InputError ? err.message : status === 500 ? 'Falha interna. A operação não foi confirmada.' : status === 409 ? 'Conflito com registros existentes. Atualize a tela e confira os vínculos.' : 'Requisição inválida.' });
   };
   app.use('/api', apiErrorHandler);
 
   // Integração com Vite: Middleware Mode em desenvolvimento
   if (!isProd) {
-    const vite = await createViteServer({
+    const { createServer } = await import('vite');
+    const vite = await createServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
@@ -102,9 +110,15 @@ async function bootstrap() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 [DE FARDAS ERP] Servidor ouvindo em http://0.0.0.0:${PORT}`);
   });
+  const shutdown = () => {
+    server.close(() => { void pool.end().then(() => process.exit(0)); });
+    setTimeout(() => process.exit(1), 15000).unref();
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 }
 
 bootstrap().catch((err) => {

@@ -14,3 +14,7 @@ coverage
 .vscode
 .idea
 .aistudio
+
+.env*
+!.env.example
+backups

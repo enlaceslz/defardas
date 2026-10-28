@@ -41,7 +41,7 @@ class UserRepository {
   private async initUsers() {
     if (this.isInitialized) return;
     // Contas demonstrativas nunca devem existir no processo de produção.
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production' || process.env.DATABASE_URL) {
       this.isInitialized = true;
       return;
     }

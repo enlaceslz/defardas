@@ -63,7 +63,7 @@ export class DatabaseManager {
       console.log('ℹ️ [DATABASE] DATABASE_URL não definida. Operando no modo de desenvolvimento transacional.');
     }
 
-    if (process.env.NODE_ENV !== 'production') this.seedInitialDemoData();
+    if (!dbUrl && process.env.NODE_ENV !== 'production') this.seedInitialDemoData();
   }
 
   public getDrizzle() {

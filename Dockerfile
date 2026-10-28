@@ -23,7 +23,7 @@ RUN npm ci
 COPY . .
 
 # Compilar frontend com Vite
-RUN npm run build
+RUN npm run build && npm prune --omit=dev --ignore-scripts
 
 # ------------------------------------------------------------------------------
 # Estágio 2: Runner de Produção Leve e Seguro
@@ -49,6 +49,7 @@ RUN addgroup -S -g 1001 defardas && \
 COPY --from=builder --chown=defardas:defardas /app/package.json ./
 COPY --from=builder --chown=defardas:defardas /app/node_modules ./node_modules
 COPY --from=builder --chown=defardas:defardas /app/dist ./dist
+COPY --from=builder --chown=defardas:defardas /app/scripts ./scripts
 COPY --from=builder --chown=defardas:defardas /app/server ./server
 COPY --from=builder --chown=defardas:defardas /app/server.ts ./server.ts
 COPY --from=builder --chown=defardas:defardas /app/drizzle ./drizzle

@@ -27,6 +27,7 @@ interface SidebarProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
   activeOrdersCount: number;
+  activePieces: number;
   lowStockCount: number;
   pendingQuotesCount: number;
   profile: CompanyProfile;
@@ -42,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentTab,
   onSelectTab,
   activeOrdersCount,
+  activePieces,
   lowStockCount,
   pendingQuotesCount,
   profile,
@@ -147,10 +149,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   // Capacity calculation based on company profile (e.g., 5000 pcs)
-  const capacityTotal = profile.productionCapacityPiecesMonth || 5000;
+  const capacityTotal = profile.productionCapacityPiecesMonth;
   // Estimated active pieces in production (approx 350 pcs per active order if not directly summed here)
-  const estimatedActivePieces = Math.min(capacityTotal, Math.max(1200, activeOrdersCount * 380));
-  const capacityPercent = Math.min(100, Math.round((estimatedActivePieces / capacityTotal) * 100));
+  const estimatedActivePieces = activePieces;
+  const capacityPercent = capacityTotal > 0 ? Math.min(100, Math.round((activePieces / capacityTotal) * 100)) : 0;
 
   const sidebarContent = (
     <div className="flex flex-col h-full justify-between select-none bg-slate-900 text-slate-300">
@@ -289,12 +291,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             {/* Progress Bar */}
             <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-              <div 
-                className={`h-full rounded-full transition-all duration-500 ${
-                  capacityPercent > 90 ? 'bg-rose-500' : capacityPercent > 70 ? 'bg-blue-500' : 'bg-emerald-500'
-                }`}
-                style={{ width: `${capacityPercent}%` }}
-              />
+              <progress aria-label="Ocupação da capacidade" max={100} value={capacityPercent} className="h-full w-full accent-blue-500" />
             </div>
             <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
               <span>{estimatedActivePieces.toLocaleString('pt-BR')} em confecção</span>

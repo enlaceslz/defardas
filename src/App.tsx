@@ -64,6 +64,10 @@ export default function App() {
   const [isHelpManualOpen, setIsHelpManualOpen] = useState(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
+  useEffect(() => { void api.getPublicConfig().then((response) => {
+    if (response.status === 200 && response.data?.profile) setState((previous) => ({ ...previous, profile: response.data!.profile }));
+  }); }, []);
+
   const refreshServerState = useCallback(async () => {
     const identity = user?.id;
     if (!identity) return;
@@ -80,7 +84,7 @@ export default function App() {
   }, [user?.id]);
 
   useEffect(() => {
-    setState(emptyState()); setLoadedFor(null);
+    setState((previous) => ({ ...emptyState(), profile: previous.profile })); setLoadedFor(null);
     setSelectedOrderForTicket(null); setSelectedQuoteForPrint(null);
     setIsNewOrderModalOpen(false); setIsNewQuoteModalOpen(false);
     setSyncError('');
@@ -122,6 +126,11 @@ export default function App() {
     clientId: databaseId(state.clients, quote.clientId), commercialStatus: quote.status }));
   const handleUpdateQuoteStatus = async (id: string, status: CommercialStatus) => { await mutate(() => api.updateQuoteStatus(databaseId(state.quotes, id), status)); };
   const handleConvertQuoteToOrder = async (quote: Quote) => {
+    if (quote.status !== 'aprovado' && quote.status !== 'convertido_em_pedido') {
+      if (!confirm(`Registrar aprovação comercial da proposta ${quote.id} e gerar as ordens de produção?`)) return;
+      const approval = await api.updateQuoteStatus(quote.backendId || quote.id, 'aprovado');
+      if (approval.status !== 200) { alert(approval.error || 'Aprovação não confirmada.'); await refreshServerState(); return; }
+    }
     if (await mutate(() => api.convertQuoteToOrder(quote.backendId || quote.id))) {
       setSelectedQuoteForPrint(null); setCurrentTab('orders');
     }
@@ -159,9 +168,12 @@ export default function App() {
   const handleConfirmPaymentWithVoucher = async (id: string, voucher: string, notes: string, evidenceUrl: string) =>
     mutate(() => api.confirmPayment(databaseId(state.finance, id), { receiptVoucherNumber: voucher, receiptEvidenceUrl: evidenceUrl, confirmationNotes: notes }));
 
-  // Profile & Reset
-  const handleSaveProfile = (profile: CompanyProfile) => {
-    setState((prev) => ({ ...prev, profile }));
+  // Profile público é persistido no servidor; dados privados não vão ao navegador.
+  const handleSaveProfile = async (profile: CompanyProfile) => {
+    const response = await api.saveProfile(profile);
+    if (response.status !== 200) { alert(response.error || 'Falha ao salvar perfil.'); return false; }
+    setState((previous) => ({ ...previous, profile: response.data }));
+    return true;
   };
 
   const handleRestoreState = async (restored: ERPState) => mutate(() => api.importLocalStorageData(restored));
@@ -199,6 +211,7 @@ export default function App() {
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
         activeOrdersCount={activeOrdersCount}
+        activePieces={state.orders.filter((order) => !['entregue', 'aguardando_liberacao'].includes(order.stage)).reduce((sum, order) => sum + order.totalPieces, 0)}
         lowStockCount={lowStockCount}
         pendingQuotesCount={pendingQuotesCount}
         profile={state.profile}

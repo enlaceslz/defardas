@@ -98,6 +98,9 @@ class ApiClient {
   public updateClient(id: string, payload: any) { return this.request<any>(`/clients/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
   public deleteClient(id: string) { return this.request<any>(`/clients/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
 
+  public getPublicConfig() { return this.request<{ profile: any }>('/public-config', { method: 'GET' }); }
+  public saveProfile(profile: any) { return this.request<any>('/settings/profile', { method: 'PUT', body: JSON.stringify(profile) }); }
+
   // Health
   public async getHealth() {
     return this.request<any>('/health', { method: 'GET' });

@@ -22,6 +22,13 @@
       "when": 1793207132384,
       "tag": "0002_condemned_mysterio",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793207520381,
+      "tag": "0003_simple_ozymandias",
+      "breakpoints": true
     }
   ]
 }
