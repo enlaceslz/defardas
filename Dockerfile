@@ -14,7 +14,7 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 # Copiar manifestos de dependências
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json .npmrc ./
 
 # Instalar todas as dependências (incluindo devDependencies para build)
 RUN npm ci
