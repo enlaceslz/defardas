@@ -4,7 +4,7 @@ import 'express-async-errors';
  * DE FARDAS ERP — Full-Stack Server Entry Point
  * Conecta o backend modular Express com PostgreSQL / Data Store e monta o Vite dev server.
  */
-import express, { ErrorRequestHandler } from 'express';
+import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -23,7 +23,8 @@ import { migrationRouter } from './server/routes/migrationRoutes';
 import { communicationRouter } from './server/routes/communicationRoutes';
 import { db } from './server/db/connection';
 import { pool } from './server/db/index';
-import { InputError } from './server/validation/input';
+import { apiErrorHandler } from './server/middleware/apiErrorHandler';
+import { logOperationalError } from './server/observability/errors';
 import { settingsRouter } from './server/routes/settingsRoutes';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -86,11 +87,6 @@ async function bootstrap() {
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Endpoint não encontrado.' });
   });
-  const apiErrorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
-    console.error('[API] Falha na requisição:', err);
-    const status = err.status === 400 ? 400 : err.status === 413 ? 413 : ['23505', '23503'].includes(err.code) ? 409 : err.code === '23514' ? 422 : 500;
-    res.status(status).json({ error: err instanceof InputError ? err.message : status === 500 ? 'Falha interna. A operação não foi confirmada.' : status === 409 ? 'Conflito com registros existentes. Atualize a tela e confira os vínculos.' : 'Requisição inválida.' });
-  };
   app.use('/api', apiErrorHandler);
 
   // Integração com Vite: Middleware Mode em desenvolvimento
@@ -123,6 +119,6 @@ async function bootstrap() {
 }
 
 bootstrap().catch((err) => {
-  console.error('❌ Falha fatal ao iniciar o servidor DE FARDAS ERP:', err);
+  logOperationalError('startup', err);
   process.exit(1);
 });

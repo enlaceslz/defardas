@@ -1,3 +1,4 @@
+import { logOperationalError } from '../observability/errors';
 import crypto from 'node:crypto';
 import type { AuthenticatedUser } from './rbac';
 import { query } from '../db/index';
@@ -17,7 +18,7 @@ class SessionStore {
   private get persistent() { return process.env.NODE_ENV === 'production' || Boolean(process.env.DATABASE_URL); }
 
   constructor() {
-    setInterval(() => { void this.cleanupExpired().catch((err) => console.error('[AUTH] Falha na limpeza de sessões:', err)); }, 30 * 60 * 1000).unref();
+    setInterval(() => { void this.cleanupExpired().catch((err) => logOperationalError('session_cleanup', err)); }, 30 * 60 * 1000).unref();
   }
 
   public async createSession(user: AuthenticatedUser, ipAddress?: string, userAgent?: string): Promise<SessionRecord> {

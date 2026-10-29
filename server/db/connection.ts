@@ -1,3 +1,4 @@
+import { logOperationalError } from '../observability/errors';
 /**
  * DE FARDAS ERP — Database Manager & Connection Store
  * Gerencia a conexão com o PostgreSQL próprio da DE FARDAS (via DATABASE_URL)
@@ -54,12 +55,12 @@ export class DatabaseManager {
         if (process.env.NODE_ENV === 'production') {
           throw new Error('PostgreSQL indisponível em produção.', { cause: err });
         } else {
-          console.warn('⚠️ [DATABASE] Conexão com PostgreSQL não disponível no ambiente local. Inicializando estrutura transacional de desenvolvimento.', err);
+          logOperationalError('database_connect', err);
         }
         this.isConnectedToPostgres = false;
       }
     } else {
-      if (process.env.NODE_ENV === 'production') throw new Error('DATABASE_URL obrigatória em produção.');
+      if (process.env.NODE_ENV === 'production') throw Object.assign(new Error('DATABASE_URL obrigatória em produção.'), { code: 'DATABASE_URL_MISSING' });
       console.log('ℹ️ [DATABASE] DATABASE_URL não definida. Operando no modo de desenvolvimento transacional.');
     }
 
