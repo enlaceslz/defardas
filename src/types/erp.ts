@@ -91,6 +91,7 @@ export interface MaterialRequirement {
 }
 
 export interface ProductionOrder {
+  revision?: number; // Revisão autoritativa retornada pelo servidor.
   backendId?: string;
   id: string; // Ex: OP-2026-101
   orderNumber?: string;

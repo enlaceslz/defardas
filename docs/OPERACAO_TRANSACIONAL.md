@@ -249,7 +249,7 @@ A primeira confirmação exige nome válido; corpo ausente retorna 400. Aprovaç
 
 POST /api/orders/:id/advance-stage valida targetStage e os portões existentes antes de verificar se a OP já está nessa etapa. Mesmo destino retorna 200 com alreadyAtStage=true e a OP atual, sem alterar completionDate, updatedAt ou inserir ADVANCE_STAGE. Isso preserva a data de uma entrega feita em dia anterior. Corpo ausente recebe 400. Uma transição real continua alterando etapa/data e auditando na mesma transação; falha de auditoria reverte a alteração.
 
-A proteção usa a etapa atual, não uma chave durável de comando: se outra transição ocorrer antes de um reenvio antigo, esse pedido ainda será tratado como transição pelo contrato existente. Não há nova ordem obrigatória de etapas, controle de versão ou política de reabertura nesta entrega. Nenhum portão é dispensado, inclusive em registros históricos inconsistentes. Não corrige datas/históricos já alterados por reenvios anteriores.
+A proteção da etapa atual é complementada pela revisão obrigatória descrita abaixo, que bloqueia transições de leitura antiga. Não é chave durável de comando e não define nova ordem obrigatória de etapas ou política de reabertura. Nenhum portão é dispensado, inclusive em registros históricos inconsistentes. Não corrige datas/históricos já alterados por reenvios anteriores.
 
 ### Auditoria de tentativas bloqueadas pelo portão
 
@@ -302,3 +302,13 @@ A existência de uma OP isolada não confirma conversão completa. Ao encontrar 
 Divergência retorna 409/QUOTE_CONVERSION_INCOMPLETE sem reservar números, reconstruir registros ou alterar estados/auditoria. Inclui OP antiga sem quote_item_id, título ausente/desvinculado, versão divergente ou títulos sem OPs. Exige reconciliação histórica específica; não tentar recriar silenciosamente parte de uma conversão.
 
 Replay íntegro retorna OP principal apontada pela proposta, conjunto de OPs e financeTransactions atuais. Título já pago conserva status/evidência; não volta a pendente e a auditoria de conversão não se repete. Etapas, datas, pagamentos e demais estados não são recalculados. Essa verificação estrutural não autentica evidências nem substitui reconciliação financeira/operacional completa, política de estorno ou correção de dados históricos.
+
+### Revisão obrigatória na mudança de etapa da OP
+
+Migração 0006_order_revision adiciona revision inteiro com valor inicial 1 e trigger BEFORE UPDATE que incrementa a revisão a cada atualização da OP, inclusive metadados, aprovação, financeiro e SQL direto com trigger ativo. Rollback reverte também o incremento. Leitura e respostas de gravação expõem a revisão efetiva. Não usar updatedAt como token: timestamps podem coincidir ou perder precisão no transporte.
+
+POST /api/orders/:id/advance-stage exige expectedRevision inteiro positivo obtido na leitura. Ausência/tipo inválido retorna 400. Para destino diferente da etapa atual, revisão divergente retorna 409/ORDER_REVISION_CONFLICT sem alteração/auditoria de avanço. A leitura de mutação mantém FOR UPDATE na linha até commit/rollback, além da UoW existente. Duas etapas diferentes com a mesma revisão têm um vencedor; ação antiga não volta a aplicar após ciclo de ida/volta.
+
+Os gates continuam obrigatórios. Mesmo destino, após validar token e gates, devolve a OP atual como alreadyAtStage sem escrever, mesmo que a revisão recebida seja antiga; isso não aplica transição. A revisão não é uma chave durável de comando e não reproduz uma resposta histórica. Não define sequência comercial de etapas, reabertura, estorno ou política nova de produção. Outros editores não recebem precondição de escrita por esta entrega, mas suas gravações invalidam revisões antigas da mudança de etapa.
+
+A interface envia a revisão que exibiu; em conflito recarrega os dados e informa falha, sem repetir a ação automaticamente. Revisão ausente na tela também exige nova leitura antes de outra ação. Atualizar clientes da API para enviar o novo campo; não buscar uma revisão nova e repetir silenciosamente uma intenção antiga.

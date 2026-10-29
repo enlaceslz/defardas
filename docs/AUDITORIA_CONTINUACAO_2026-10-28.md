@@ -330,3 +330,13 @@ Achado: qualquer OP encontrada fazia a rota retornar alreadyConverted=true sem c
 Correções: consulta financeira por quote_id e validação estrutural de proposta, ponteiro principal, OP por item/versão/cliente/quantidade e recebíveis únicos com valores/vínculos compatíveis. Histórico incompleto retorna 409/QUOTE_CONVERSION_INCOMPLETE antes de numerar/gravar; inclui títulos sem OPs e OP histórica sem item. Nenhuma reconstrução automática. Replay íntegro inclui títulos atuais e OP principal consistente, sem alterar pagamento/estado/auditoria.
 
 Validação local: 100 testes, tipagem, build e diff-check aprovados. Novo teste HTTP cobre falta/divergência de OP/título/status/ponteiro/valor, ausência de numeração, preservação de estado e título pago. Dois testes PostgreSQL adicionados cobrem oito cenários parciais, estado/contador/auditoria intactos e replay após baixa real de sinal; dependem da CI. Sem migração, banco real, mensagem externa, merge ou deploy. Não substitui reconciliação histórica completa ou autenticação da evidência.
+
+## Continuação de 29/10/2026: revisão persistente contra transição atrasada
+
+Base: PR #29, commit 355eb34b; CI 40960567134 aprovada.
+
+Achado: no-op da etapa atual não impedia que um pedido atrasado alterasse etapa após outra transição, inclusive depois de ida/volta. Timestamp em milissegundos não fornece token robusto de versão.
+
+Correção: migração 0006 com revision inicial 1 e trigger de incremento por UPDATE, inclusive SQL; repositório retorna revisão efetiva. Advance-stage exige expectedRevision, mantém lock de linha e UoW, e recusa divergência para transição real com 409. No-op conserva gates e estado. UI transmite revisão lida e recarrega conflito sem repetir ação. Contrato exige atualização dos clientes; bootstrap verifica nova coluna. Demais editores apenas incrementam revisão, sem novo CAS nesta entrega.
+
+Validação local: 103 testes, tipagem, build e diff-check aprovados. Dois testes HTTP cobrem campo obrigatório, atraso, ida/volta, concorrência e rollback de revisão; teste de cliente confirma token/código e chamada única; adaptador preserva revisão. Dois testes PostgreSQL adicionados cobrem trigger, arte/financeiro/SQL, concorrência, atraso e rollback; dependem da CI. Snapshot/journal gerados pelo Drizzle; segunda geração não encontra diff. Trigger é SQL customizado. Bundle 465,24 kB / 119,74 kB gzip; compile_applet indisponível, build Vite usado. Sem migração em banco real, mensagem externa, merge ou deploy. Não implementa chave durável de comando nem novas regras de sequência/reabertura.

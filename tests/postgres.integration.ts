@@ -45,6 +45,10 @@ const item = (model: string, quantity: number, material = 10) => ({ modelName: m
   materialUnitCost: material, outsourcedSewingUnitCost: 5, customizationUnitCost: 1, freightUnitCost: 1,
   technicalLossPercentage: 0, markupPercentage: 50 });
 async function request(path: string, method = 'GET', body?: any) {
+  if (path.endsWith('/advance-stage') && method === 'POST' && body && body.expectedRevision === undefined) {
+    const current = await fetch(base + path.replace('/advance-stage', ''), { headers });
+    body = { ...body, expectedRevision: (await current.json()).revision };
+  }
   const response = await fetch(base + path, { method, headers: { ...headers, ...(['/api/inventory/movements', '/api/finance/transactions'].includes(path) && method === 'POST' ? { 'idempotency-key': crypto.randomUUID() } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: response.status, data: await response.json() };
 }
@@ -1205,4 +1209,42 @@ test('PostgreSQL: replay completo retorna títulos atuais e conserva pagamento e
   assert.deepEqual((await pool.query('SELECT * FROM financeiro.transactions WHERE quote_id=$1 ORDER BY id', [quote.id])).rows, before);
   assert.deepEqual((await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows, counters);
   assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='CONVERT_QUOTE_TO_ORDER' AND entity_id=$1", [quote.id])).rows[0].count, '1');
+});
+
+test('PostgreSQL: revisão muda em toda atualização e ação atrasada não sobrescreve etapa nem ciclo de retorno', async () => {
+  const quote = await createQuote(); const created = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(created.status, 201);
+  const id = created.data.orders[0].id; assert.equal(created.data.orders[0].revision, 1);
+  await request(`/api/orders/${id}/approve-art`, 'POST', { approverName: 'Cliente' });
+  const entry = created.data.financeTransactions.find((title: any) => title.subType === 'entrada_pedido');
+  await request(`/api/finance/transactions/${entry.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'CAS', receiptEvidenceUrl: 'https://example.invalid/cas' });
+  const initial = (await request(`/api/orders/${id}`)).data; assert.equal(initial.revision, 3);
+  const path = `/api/orders/${id}/advance-stage`;
+  const noToken = await fetch(base + path, { method: 'POST', headers, body: JSON.stringify({ targetStage: 'corte' }) }); assert.equal(noToken.status, 400);
+  const first = await request(path, 'POST', { targetStage: 'corte', expectedRevision: initial.revision }); assert.equal(first.status, 200); assert.equal(first.data.order.revision, 4);
+  assert.equal((await request(path, 'POST', { targetStage: 'corte', expectedRevision: initial.revision })).data.alreadyAtStage, true);
+  await pool.query("UPDATE producao.production_orders SET technical_notes='SQL fixture update' WHERE id=$1", [id]);
+  assert.equal((await request(`/api/orders/${id}`)).data.revision, 5);
+  const late = await request(path, 'POST', { targetStage: 'costura', expectedRevision: 4 }); assert.equal(late.status, 409); assert.equal(late.data.code, 'ORDER_REVISION_CONFLICT');
+  assert.equal((await request(path, 'POST', { targetStage: 'aguardando_liberacao', expectedRevision: 5 })).data.order.revision, 6);
+  assert.equal((await request(path, 'POST', { targetStage: 'corte', expectedRevision: initial.revision })).status, 409);
+  const saved = (await request(`/api/orders/${id}`)).data; assert.equal(saved.stage, 'aguardando_liberacao'); assert.equal(saved.revision, 6);
+});
+
+test('PostgreSQL: concorrência por revisão tem um vencedor e falha de auditoria reverte contador de revisão', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const quote = await createQuote(); const created = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(created.status, 201);
+  const id = created.data.orders[0].id; await request(`/api/orders/${id}/approve-art`, 'POST', { approverName: 'Cliente' });
+  const entry = created.data.financeTransactions.find((title: any) => title.subType === 'entrada_pedido');
+  await request(`/api/finance/transactions/${entry.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'CAS-ROLLBACK', receiptEvidenceUrl: 'https://example.invalid/cas' });
+  const current = (await request(`/api/orders/${id}`)).data; const path = `/api/orders/${id}/advance-stage`;
+  const responses = await Promise.all(['corte', 'costura'].map((targetStage) => request(path, 'POST', { targetStage, expectedRevision: current.revision })));
+  assert.equal(responses.filter((r) => r.status === 200).length, 1); assert.equal(responses.filter((r) => r.status === 409).length, 1);
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rows[0]; assert.equal(before.revision, current.revision + 1);
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected revision audit failure'); };
+    assert.equal((await request(path, 'POST', { targetStage: 'expedicao', expectedRevision: before.revision })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rows[0], before);
+  assert.equal((await request(path, 'POST', { targetStage: 'expedicao', expectedRevision: before.revision })).data.order.revision, before.revision + 1);
 });

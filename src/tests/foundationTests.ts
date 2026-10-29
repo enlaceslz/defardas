@@ -276,7 +276,7 @@ export class FoundationTestSuite {
     // ========================================================================
     const t7Start = performance.now();
     try {
-      const advanceRes = await api.advanceOrderStage('op1111111-1111-1111-1111-111111111111', 'corte');
+      const advanceRes = await api.advanceOrderStage('op1111111-1111-1111-1111-111111111111', 'corte', 1);
 
       if (advanceRes.status === 422 && advanceRes.error?.includes('Gate A.3.2')) {
         record({

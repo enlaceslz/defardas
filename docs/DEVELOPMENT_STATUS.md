@@ -11,7 +11,7 @@ As correções estão em PRs incrementais. A revisão parte do PR #23 (`4701bea2
 | Persistência | PostgreSQL obrigatório em produção; sem fallback operacional para memória; transações compartilham cliente e lock. Memória é demonstração local sem banco configurado. |
 | Identidade | Sessões verificadas no banco, senhas bcrypt, troca de senha e revogação transacionais. Provisionamento e gestão de equipe por CLI disponíveis. E-mail de recuperação segue indisponível em produção. |
 | Comercial | Markup sobre custo, decomposição por item e validação da capacidade SQL. Conversão gera uma OP por item e sinal/saldo sem duplicação em repetição. |
-| Produção | Corte exige arte e entrada confirmadas; aprovação repetida conserva metadados. Repetir etapa atual preserva conclusão; reenvio após outra transição ainda precisa de versionamento/chave durável. |
+| Produção | Corte exige arte e entrada confirmadas; aprovação repetida conserva metadados. Repetir etapa atual preserva conclusão; transição real exige revisão da leitura. Não há chave durável para reprodução de comandos antigos. |
 | Financeiro/estoque | Precisão validada, mutações e auditoria transacionais, idempotência nos cadastros financeiros e movimentos operacionais. Comprovante com URL válida não é evidência autenticada. |
 | Auditoria | Logs persistentes e acesso administrativo. Bloqueio do gate é auditado após rollback; existe janela de queda entre as duas transações. |
 | Interface | API autoritativa, formulários aguardam resultado e mantêm rascunho em falha; testes de componentes em JSDOM não homologam celular/impressão reais. |
@@ -33,3 +33,5 @@ Continuação de prazos: 97 testes locais, tipagem e build aprovados. Cabeçalho
 Continuação financeira: 99 testes locais, tipagem e build aprovados. Conversão exige duas parcelas positivas e coerentes com percentual/total dos itens antes de gravar; leitura não disfarça percentual histórico. Não altera preço comercial ou arredondamento existente. Evidência PostgreSQL/Docker deve ser conferida na CI do PR correspondente.
 
 Continuação do replay: 100 testes locais, tipagem e build aprovados. Histórico de conversão parcial não recebe falso sucesso; proposta, OPs e recebíveis precisam ter vínculos consistentes. Reenvio íntegro conserva pagamento e auditoria. Consultar o runbook e a CI do PR correspondente para limites e evidências; reconciliação histórica automática não foi implementada.
+
+Continuação de concorrência: 103 testes locais, tipagem e build aprovados. Migração 0006 adiciona revisão por OP; avanço de etapa exige revisão lida e recusa ação antiga. UI recarrega conflito sem repetir a operação. Schema/trigger e contratos de clientes devem ser atualizados em manutenção; confirmar CI do PR correspondente. Outras escritas não recebem CAS nesta entrega.

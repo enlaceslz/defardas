@@ -161,6 +161,7 @@ test('aprovação inválida ou auditoria com falha não altera OP e permite nova
 
 
 async function advanceStage(id: string, body?: any) {
+  if (body && body.expectedRevision === undefined) body = { ...body, expectedRevision: db.orders.get(id)?.revision ?? 1 };
   const response = await fetch(`${base}/orders/${id}/advance-stage`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: response.status, data: await response.json() };
@@ -219,4 +220,34 @@ test('bloqueio de gate é auditado sem alterar OP; falha ao auditar retorna erro
   assert.deepEqual(db.orders.get(id), originalOrder);
   assert.equal((await advanceStage(id, { targetStage: 'corte' })).status, 422);
   assert.equal((await auditService.getRecentLogs(500, 'producao.production_orders', orderNumber)).filter((log) => log.action === 'GATE_BYPASS_ATTEMPT').length, 2);
+});
+
+test('etapa exige revisão, recusa ação atrasada e protege ciclo de retorno sem alterar no-op', async () => {
+  const id = crypto.randomUUID();
+  db.orders.set(id, { id, revision: 1, orderNumber: `CAS-${id.slice(0,8)}`, stage: 'aguardando_liberacao', artApproved: true, entryPaymentConfirmed: true } as any);
+  const raw = await fetch(`${base}/orders/${id}/advance-stage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetStage: 'corte' }) });
+  assert.equal(raw.status, 400);
+  const first = await advanceStage(id, { targetStage: 'corte', expectedRevision: 1 }); assert.equal(first.status, 200); assert.equal(first.data.order.revision, 2);
+  const before = structuredClone(db.orders.get(id));
+  const late = await advanceStage(id, { targetStage: 'costura', expectedRevision: 1 }); assert.equal(late.status, 409); assert.equal(late.data.code, 'ORDER_REVISION_CONFLICT');
+  assert.deepEqual(db.orders.get(id), before);
+  const same = await advanceStage(id, { targetStage: 'corte', expectedRevision: 1 }); assert.equal(same.status, 200); assert.equal(same.data.alreadyAtStage, true);
+  assert.deepEqual(db.orders.get(id), before);
+  assert.equal((await advanceStage(id, { targetStage: 'aguardando_liberacao', expectedRevision: 2 })).data.order.revision, 3);
+  assert.equal((await advanceStage(id, { targetStage: 'corte', expectedRevision: 1 })).status, 409);
+  assert.equal(db.orders.get(id)?.stage, 'aguardando_liberacao'); assert.equal(db.orders.get(id)?.revision, 3);
+});
+
+test('duas etapas concorrentes da mesma revisão têm um vencedor e rollback conserva revisão', async () => {
+  const id = crypto.randomUUID();
+  db.orders.set(id, { id, revision: 1, orderNumber: `CAS-${id.slice(0,8)}`, stage: 'aguardando_liberacao', artApproved: true, entryPaymentConfirmed: true } as any);
+  const responses = await Promise.all(['corte', 'costura'].map((targetStage) => advanceStage(id, { targetStage, expectedRevision: 1 })));
+  assert.equal(responses.filter((r) => r.status === 200).length, 1); assert.equal(responses.filter((r) => r.status === 409).length, 1);
+  assert.equal(db.orders.get(id)?.revision, 2); const before = structuredClone(db.orders.get(id)); const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected revision audit failure'); };
+    assert.equal((await advanceStage(id, { targetStage: 'expedicao', expectedRevision: 2 })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual(db.orders.get(id), before);
+  assert.equal((await advanceStage(id, { targetStage: 'expedicao', expectedRevision: 2 })).data.order.revision, 3);
 });

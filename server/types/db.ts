@@ -155,6 +155,7 @@ export interface QuoteEntity {
 }
 
 export interface ProductionOrderEntity {
+  revision: number;
   quoteItemId?: string;
   id: string;
   orderNumber: string; // Ex: OP-2026-0101

@@ -63,9 +63,10 @@ test('adaptadores preservam zero e o custo do item correto em propostas com vár
   const mapped = mapQuote(quote, []);
   assert.equal(mapped.backendId, 'q'); assert.equal(mapped.items[0].costBreakdown.markupPercentage, 0);
   assert.equal(mapped.items[0].unitFinalPrice, 0);
-  const mappedOrder = mapOrder({ ...order, quoteId: 'q', quoteItemId: 'two' }, [], [quote]);
+  const mappedOrder = mapOrder({ ...order, revision: 7, quoteId: 'q', quoteItemId: 'two' }, [], [quote]);
   assert.equal(mappedOrder.costBreakdown.negotiatedUnitPrice, 50);
   assert.equal(mappedOrder.canStartProduction, false);
+  assert.equal(mappedOrder.revision, 7);
 });
 test('estado inicial remove dados privados legados de localStorage', () => {
   localStorage.setItem('defardas_clients_v2', JSON.stringify([{ name: 'private-test' }]));
@@ -221,4 +222,20 @@ test('formulário financeiro conserva chave em falha e bloqueia duplo envio', as
   fireEvent.submit(form); assert.equal(keys.length, 2); assert.equal(keys[0], keys[1]);
   await act(async () => { finish(true); });
   await waitFor(() => assert.equal(component.container.querySelector('form') === null, true));
+});
+
+
+test('cliente envia revisão da leitura para etapa e preserva código de conflito sem repetir chamada', async () => {
+  const { api } = await import('../src/api/client');
+  const originalFetch = globalThis.fetch; const oldCsrf = api.getCsrfToken(); const requests: any[] = [];
+  api.setCsrfToken('test-revision-csrf');
+  globalThis.fetch = async (_url, options) => {
+    requests.push(options);
+    return new Response(JSON.stringify({ error: 'Updated order', code: 'ORDER_REVISION_CONFLICT' }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const response = await api.advanceOrderStage('uuid-test', 'corte', 7);
+    assert.equal(response.status, 409); assert.equal(response.code, 'ORDER_REVISION_CONFLICT');
+    assert.equal(requests.length, 1); assert.deepEqual(JSON.parse(requests[0].body), { targetStage: 'corte', expectedRevision: 7 });
+  } finally { globalThis.fetch = originalFetch; api.setCsrfToken(oldCsrf); }
 });

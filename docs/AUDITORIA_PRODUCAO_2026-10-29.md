@@ -28,7 +28,7 @@ Mudanças de compatibilidade: proxy em outro container/host precisa de bind/rede
 | PROD-03 / P0 | Nenhum ensaio no host real; CI é ambiente descartável | Validar DNS/HTTPS/proxy/TLS remoto, permissões e persistência de volumes, segredos, monitoramento e recuperação em cópia isolada. Definir responsáveis, RPO/RTO e cópia externa de backups |
 | PROD-04 / P1 | E-mail de recuperação retorna 503; recuperação administrativa CLI existe | Homologar provedor de entrega e interface de redefinição, ou registrar procedimento administrativo operacional aceito. Não afirmar envio inexistente |
 | PROD-05 / P1 | QR/reconexão/recibos de entrega não homologados; reconciliação CLI cobre envio incerto | Homologar provedor e contrato; ensaiar timeout, duplicação de webhook e recibos reais antes de ativar o canal. Mensagem aceita não equivale a entregue |
-| PROD-06 / P1 | Reenvio da etapa atual é seguro; após outra transição ainda falta chave durável/versão | Implementar precondição/versionamento ou comandos persistidos com testes de concorrência e reenvio atrasado |
+| PROD-06 / em validação | Revisão persistida e precondição implementadas para mudança de etapa; chave durável não implementada | Confirmar CI e ensaio da migração 0006/clientes; outros editores não recebem CAS nesta entrega |
 | PROD-07 / P1 | Cancelamento/estorno, revisão de arte, retenção/anonimização e alçada definitiva têm decisões pendentes | Homologar regras e trilha compensatória antes de habilitar automações; manter comissão e emissão fiscal sem ativação automática |
 | PROD-08 / P1 | Lock global, listagens sem paginação e rate limit em memória | Medir carga/topologia real, paginar e definir limitação distribuída se houver múltiplas instâncias; não declarar capacidade sem ensaio |
 | PROD-09 / P1 | Importação JSON antiga é bloqueada em operação | Só migrar dados legados por normalização, ensaio e conferência financeira/comercial; restauração operacional é PostgreSQL |
@@ -86,3 +86,9 @@ Validação local passa a 99 testes; dois testes PostgreSQL adicionais verificam
 Após o PR #28, o replay deixa de usar existência de uma OP como prova de conclusão. São conferidos vínculos de proposta/itens/versões e os dois recebíveis; histórico incompleto retorna conflito sem recriação ou reparo. Replay íntegro devolve títulos atuais e preserva baixa/auditoria. Consulta financeira é limitada à proposta.
 
 Validação local passa a 100 testes; dois testes PostgreSQL novos cobrem oito divergências estruturais e reenvio após baixa real de sinal. Conferir CI do novo PR; última CI de base: 40959659799, PR #28. A mudança não reconcilia automaticamente dados antigos, evidências ou todos os estados operacionais/financeiros. Bloqueios operacionais anteriores permanecem.
+
+## Continuação: proteção contra mudança de etapa atrasada
+
+Após o PR #29, a OP recebe revision persistida e incrementada por trigger na migração 0006. Transição exige expectedRevision da leitura e recusa tela desatualizada com conflito; lock de linha mantém comparação e gravação na mesma transação. UI recarrega conflito sem reenviar intenção. No-op ainda conserva estado/gates, sem reescrita. Outros editores incrementam revisão, mas não passam a exigir CAS.
+
+Validação local passa a 103 testes; testes PostgreSQL novos cobrem trigger, concorrência e rollback. Conferir CI do novo PR. Migração e frontend devem ser implantados juntos, após ensaio em cópia; startup exige coluna nova. Última CI de base: 40960567134, PR #29. Não foi migrado banco real nem implementada chave durável de comandos; demais bloqueios operacionais permanecem.

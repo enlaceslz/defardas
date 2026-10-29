@@ -29,7 +29,7 @@ ordersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
 // Avanço de Etapa com Verificação Rígida de Portão (Gate A.3.2 do PRD)
 ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const order = await orderRepository.findById(req.params.id);
+  const order = await orderRepository.findByIdForUpdate(req.params.id);
   if (!order) {
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
@@ -39,6 +39,7 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
     return res.status(400).json({ error: 'targetStage é obrigatório' });
   }
 
+  const expectedRevision = number(req.body.expectedRevision, 'Revisão esperada da OP', 1, true);
   const oldStage = order.stage;
 
   // PORTÃO RÍGIDO (GATE A.3.2): Transição de 'aguardando_liberacao' para 'corte' ou qualquer etapa fabril
@@ -76,6 +77,10 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
   // Mantém os portões acima, inclusive para OP histórica em estado inconsistente.
   if (oldStage === targetStage) {
     return res.json({ success: true, alreadyAtStage: true, message: `OP já está na etapa ${targetStage}.`, order });
+  }
+
+  if (expectedRevision !== (order.revision ?? 1)) {
+    return res.status(409).json({ error: 'A OP foi alterada desde a leitura. Atualize os dados antes de mudar a etapa.', code: 'ORDER_REVISION_CONFLICT' });
   }
 
   order.stage = targetStage;
