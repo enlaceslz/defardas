@@ -240,6 +240,16 @@ export class CommunicationRepository {
     return null;
   }
 
+  public async findMessageById(id: string): Promise<MessageEntity | null> {
+    await fallbackDb.ready;
+    if ((process.env.DATABASE_URL || process.env.NODE_ENV === 'production') && !fallbackDb.isConnected()) throw new Error('PostgreSQL indisponível.');
+    if (fallbackDb.isConnected()) {
+      const rows = await drizzleDb.select().from(messages).where(eq(messages.id, id)).limit(1);
+      return rows[0] ? this.mapToMessageEntity(rows[0]) : null;
+    }
+    return fallbackDb.messages.get(id) || null;
+  }
+
   public async saveMessage(msg: MessageEntity): Promise<MessageEntity> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {

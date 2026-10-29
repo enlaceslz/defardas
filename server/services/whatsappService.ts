@@ -2,13 +2,13 @@ import { unitOfWork } from '../db/unitOfWork';
 /**
  * DE FARDAS ERP — WhatsApp Omnichannel Service
  * Suporta Provedor Oficial (Meta WhatsApp Cloud API) e Provedor QR Code (WA-AKG isolado).
- * Integra atendimento ao CRM; deduplicação e recibos do provedor ainda estão pendentes.
+ * Integra atendimento ao CRM; deduplicação de requisições disponível; recibos do provedor ainda estão pendentes.
  */
 import crypto from 'crypto';
 import { InputError, text } from '../validation/input';
 
 export class CommunicationError extends Error {
-  constructor(message: string, public status: 404 | 503) { super(message); }
+  constructor(message: string, public status: 404 | 409 | 503) { super(message); }
 }
 import { communicationRepository } from '../repositories/communicationRepository';
 import { clientRepository } from '../repositories/clientRepository';
@@ -18,6 +18,9 @@ import { MessageEntity, ConversationEntity } from '../types/db';
 
 export interface SendMessageOptions {
   conversationId: string;
+  idempotencyKey?: string;
+  actorId?: string;
+  actorRole?: string;
   body: string;
   senderName?: string;
   messageType?: 'text' | 'image' | 'document' | 'template';
@@ -40,43 +43,53 @@ export class WhatsAppService {
         options.mediaUrl !== undefined || options.mediaMimeType !== undefined) {
       throw new InputError('Somente mensagens de texto são suportadas neste fluxo.');
     }
-    const conv = await communicationRepository.findConversationById(options.conversationId);
-    if (!conv) {
-      throw new CommunicationError('Conversa não encontrada.', 404);
-    }
+    const key = options.idempotencyKey || crypto.randomUUID();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new InputError('Chave de repetição inválida.');
+    const hash = crypto.createHash('sha256').update(`${options.actorId || 'system'}:${key.toLowerCase()}`).digest('hex');
+    const messageId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+    const prepared = await unitOfWork(async () => {
+      const existing = await communicationRepository.findMessageById(messageId);
+      if (existing) {
+        if (existing.direction !== 'outbound' || existing.conversationId !== options.conversationId || existing.body !== body) {
+          throw new CommunicationError('Chave de repetição já usada para outra mensagem.', 409);
+        }
+        return { message: existing };
+      }
+      const conv = await communicationRepository.findConversationById(options.conversationId);
+      if (!conv) {
+        throw new CommunicationError('Conversa não encontrada.', 404);
+      }
 
-    const channel = await communicationRepository.findChannelById(conv.channelId);
-    if (!channel) {
-      throw new CommunicationError('Canal de WhatsApp não configurado.', 503);
-    }
+      const channel = await communicationRepository.findChannelById(conv.channelId);
+      if (!channel) {
+        throw new CommunicationError('Canal de WhatsApp não configurado.', 503);
+      }
 
-    if (!channel.isActive || channel.status !== 'connected') {
-      throw new CommunicationError('Canal de WhatsApp inativo ou desconectado.', 503);
-    }
-    if ((channel.provider === 'meta_cloud' && (!this.metaToken?.trim() || !this.metaPhoneNumberId?.trim())) ||
-        (channel.provider === 'wa_akg' && !this.waAkgApiKey?.trim()) ||
-        !['meta_cloud', 'wa_akg'].includes(channel.provider)) {
-      throw new CommunicationError('Provedor WhatsApp não configurado.', 503);
-    }
-    const cleanPhone = conv.customerPhone.replace(/\D/g, '');
-    if (!cleanPhone) throw new InputError('Telefone da conversa inválido.');
+      if (!channel.isActive || channel.status !== 'connected') {
+        throw new CommunicationError('Canal de WhatsApp inativo ou desconectado.', 503);
+      }
+      if ((channel.provider === 'meta_cloud' && (!this.metaToken?.trim() || !this.metaPhoneNumberId?.trim())) ||
+          (channel.provider === 'wa_akg' && !this.waAkgApiKey?.trim()) ||
+          !['meta_cloud', 'wa_akg'].includes(channel.provider)) {
+        throw new CommunicationError('Provedor WhatsApp não configurado.', 503);
+      }
+      const cleanPhone = conv.customerPhone.replace(/\D/g, '');
+      if (!cleanPhone) throw new InputError('Telefone da conversa inválido.');
 
-    const messageId = crypto.randomUUID();
-    const externalId = `wa_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-
-    const newMsg: MessageEntity = {
-      id: messageId,
-      conversationId: conv.id,
-      externalId,
-      direction: 'outbound',
-      senderName: options.senderName || 'Atendimento DE FARDAS',
-      messageType: options.messageType || 'text',
-      body,
-      mediaUrl: options.mediaUrl,
-      mediaMimeType: options.mediaMimeType,
-      status: 'sent',
-      createdAt: new Date().toISOString(),
-    };
+      const message: MessageEntity = {
+        id: messageId, conversationId: conv.id, direction: 'outbound',
+        senderName: options.senderName || 'Atendimento DE FARDAS', messageType: 'text', body,
+        status: 'pending', createdAt: new Date().toISOString(),
+      };
+      await communicationRepository.saveMessage(message);
+      await auditService.log({ actorId: options.actorId, actorName: options.senderName || 'DE FARDAS',
+        actorRole: options.actorRole || 'atendimento', entityName: 'communication.messages', entityId: message.id,
+        action: 'WHATSAPP_SEND_REQUESTED', notes: 'Solicitação registrada antes de contatar o provedor.' });
+      return { message, channel, cleanPhone };
+    });
+    if (!prepared.channel) return prepared.message;
+    const { channel, cleanPhone } = prepared;
+    const newMsg = { ...prepared.message, status: 'sent' as MessageEntity['status'] };
 
     // Disparo real conforme o provedor do canal
     if (channel.provider === 'meta_cloud' && this.metaToken && this.metaPhoneNumberId) {
@@ -126,24 +139,21 @@ export class WhatsAppService {
       newMsg.errorMessage = 'Provedor WhatsApp não configurado.';
     }
 
-    await communicationRepository.saveMessage(newMsg);
-
-    // Atualiza conversa
-    conv.lastMessageText = body;
-    conv.lastMessageAt = new Date().toISOString();
-    conv.updatedAt = new Date().toISOString();
-    await communicationRepository.saveConversation(conv);
-
-    await auditService.log({
-      actorName: options.senderName || 'DE FARDAS',
-      actorRole: 'atendimento',
-      entityName: 'communication.messages',
-      entityId: newMsg.id,
-      action: newMsg.status === 'failed' ? 'WHATSAPP_MESSAGE_FAILED' : 'SEND_WHATSAPP_MESSAGE',
-      notes: `Tentativa de envio. Provedor: ${channel.provider}. Estado: ${newMsg.status}.`,
+    return unitOfWork(async () => {
+      await communicationRepository.saveMessage(newMsg);
+      // Recarregar dentro da transação preserva atualizações de entrada ocorridas durante o envio.
+      const conv = await communicationRepository.findConversationById(options.conversationId);
+      if (!conv) throw new CommunicationError('Conversa não encontrada.', 404);
+      conv.lastMessageText = body;
+      conv.lastMessageAt = new Date().toISOString();
+      conv.updatedAt = new Date().toISOString();
+      await communicationRepository.saveConversation(conv);
+      await auditService.log({ actorId: options.actorId, actorName: options.senderName || 'DE FARDAS',
+        actorRole: options.actorRole || 'atendimento', entityName: 'communication.messages', entityId: newMsg.id,
+        action: newMsg.status === 'failed' ? 'WHATSAPP_MESSAGE_FAILED' : 'SEND_WHATSAPP_MESSAGE',
+        notes: `Tentativa de envio. Provedor: ${channel.provider}. Estado: ${newMsg.status}.` });
+      return newMsg;
     });
-
-    return newMsg;
   }
 
   /**

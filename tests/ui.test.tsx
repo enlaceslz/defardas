@@ -185,3 +185,25 @@ test('troca de conversa preserva rascunhos separados e ignora histórico atrasad
     await component.findByText('Histórico segundo');
   });
 });
+
+test('envio pendente preserva rascunho e reutiliza chave sem nova intenção de envio', async () => {
+  await withCommunication(async () => {
+    const keys: string[] = [];
+    api.sendConversationMessage = async (_id, _body, _media, key) => {
+      keys.push(key!);
+      return { status: 201, data: { id: 'pending-message', body: 'Pendente', status: 'pending', direction: 'outbound', createdAt: new Date().toISOString() } };
+    };
+    const component = render(<WhatsAppOmnichannelView />);
+    const input = await component.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Pendente' } });
+    fireEvent.submit(input.closest('form')!);
+    await component.findByRole('alert');
+    await waitFor(() => assert.equal(component.getByRole('button', { name: 'Enviar' }).hasAttribute('disabled'), false));
+    assert.equal(input.value, 'Pendente');
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => assert.equal(keys.length, 2));
+    assert.equal(keys[0], keys[1]);
+    await waitFor(() => assert.equal(component.getByRole('button', { name: 'Enviar' }).hasAttribute('disabled'), false));
+    assert.equal(component.getAllByLabelText('Status: pending').length, 1);
+  });
+});

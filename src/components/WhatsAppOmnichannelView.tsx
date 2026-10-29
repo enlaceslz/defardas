@@ -60,6 +60,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
   const [sendError, setSendError] = useState('');
   const [qrError, setQrError] = useState('');
   const [isQrLoading, setIsQrLoading] = useState(false);
+  const attempts = useRef<Record<string, { body: string; key: string }>>({});
   const qrRequest = useRef(0);
   const activeId = useRef<string | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -129,13 +130,17 @@ export const WhatsAppOmnichannelView: React.FC = () => {
     if (!conversationId || !body.trim()) return;
     await submit(async () => {
       setSendError('');
-      const res = await api.sendConversationMessage(conversationId, body.trim());
+      const attempt = attempts.current[conversationId];
+      const key = attempt?.body === body.trim() ? attempt.key : crypto.randomUUID();
+      attempts.current[conversationId] = { body: body.trim(), key };
+      const res = await api.sendConversationMessage(conversationId, body.trim(), undefined, key);
       if (activeId.current !== conversationId) return false;
-      if (res.status !== 201 || !res.data?.id || res.data.status === 'failed') {
+      if (res.status !== 201 || !res.data?.id || !['sent', 'delivered', 'read'].includes(res.data.status)) {
         setSendError(res.error || 'Envio não confirmado. Confira o histórico antes de tentar novamente.');
         if (res.data?.id) setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
         return false;
       }
+      delete attempts.current[conversationId];
       setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
       if (clearDraft) setInputMessage((current) => current.trim() === body.trim() ? '' : current);
       setConversations((prev) => prev.map((c) => c.id === conversationId
