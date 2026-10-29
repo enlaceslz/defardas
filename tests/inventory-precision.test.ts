@@ -5,6 +5,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { inventoryRouter } from '../server/routes/inventoryRoutes';
 import { inventoryRepository } from '../server/repositories/inventoryRepository';
+import { auditService } from '../server/services/auditService';
 import { sequenceService } from '../server/services/sequenceService';
 import { db } from '../server/db/connection';
 await db.ready;
@@ -18,8 +19,8 @@ const server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => 
 const base = `http://127.0.0.1:${(server.address() as any).port}/inventory`;
 after(() => { server.closeAllConnections(); server.close(); });
 const item = () => ({ name: 'Precision item', category: 'tecido', unit: 'metros', physicalStock: 0.1, minStock: 0, unitCostPrice: 1.25 });
-async function request(path: string, body: any, method = 'POST') {
-  const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+async function request(path: string, body: any, method = 'POST', key?: string) {
+  const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...(key ? { 'idempotency-key': key } : {}) }, body: JSON.stringify(body) });
   return { status: response.status, data: await response.json() };
 }
 
@@ -53,4 +54,31 @@ test('conflito de número do movimento reverte saldo e não substitui histórico
   } finally { sequenceService.nextMovementNumber = original; }
   assert.equal((await inventoryRepository.findItemById(created.data.id))?.physicalStock, 0.1);
   assert.equal((await inventoryRepository.findAllMovements()).filter((movement) => movement.itemId === created.data.id).length, 1);
+});
+
+test('reenvios concorrentes da mesma chave movimentam uma vez e conflito não altera saldo', async () => {
+  const created = await request('/items', { ...item(), physicalStock: 0 });
+  const key = crypto.randomUUID(); const payload = { itemId: created.data.id, type: 'entrada_compra', quantity: 3, referenceDoc: 'Test' };
+  const results = await Promise.all(Array.from({ length: 8 }, () => request('/movements', payload, 'POST', key)));
+  assert.equal(results.filter((result) => result.status === 201).length, 1);
+  assert.equal(results.filter((result) => result.status === 200).length, 7);
+  assert.equal(new Set(results.map((result) => result.data.movement.id)).size, 1);
+  assert.equal((await inventoryRepository.findItemById(created.data.id))?.physicalStock, 3);
+  assert.equal((await request('/movements', { ...payload, quantity: 4 }, 'POST', key)).status, 409);
+  assert.equal((await request('/movements', { ...payload, referenceDoc: 'Changed' }, 'POST', key)).status, 409);
+  assert.equal((await inventoryRepository.findAllMovements()).filter((movement) => movement.itemId === created.data.id).length, 1);
+});
+
+test('falha de auditoria não consome chave; retry confirma uma única movimentação', async () => {
+  const created = await request('/items', { ...item(), physicalStock: 0 });
+  const key = crypto.randomUUID(); const payload = { itemId: created.data.id, type: 'entrada_compra', quantity: 2 };
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected idempotent inventory failure'); };
+    assert.equal((await request('/movements', payload, 'POST', key)).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal((await inventoryRepository.findItemById(created.data.id))?.physicalStock, 0);
+  const saved = await request('/movements', payload, 'POST', key); assert.equal(saved.status, 201);
+  assert.equal((await request('/movements', payload, 'POST', key)).status, 200);
+  assert.equal((await inventoryRepository.findItemById(created.data.id))?.physicalStock, 2);
 });

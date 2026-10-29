@@ -178,8 +178,19 @@ As rotas de cadastro/edição e movimentação usam a capacidade já definida pe
 
 Resultados de somas/subtrações são normalizados em duas casas antes de persistir/responder, evitando resíduos binários como `0.30000000000000004`. Estouro de saldo final reverte a operação. Se o negócio exigir mais precisão, será necessária evolução formal do schema e dos contratos; não truncar dados silenciosamente.
 
-A gravação de movimentação é inserção estrita: colisão de UUID ou número comercial gera conflito e reverte saldo/evento/auditoria na transação existente. Não há mais `ON CONFLICT DO NOTHING` nesse histórico. Isso não implementa idempotência por requisição: cliques/reenvios com novos números ainda precisam de contrato próprio. Não tentar reparar colisão descartando histórico.
+A gravação de movimentação é inserção estrita: colisão de UUID ou número comercial gera conflito e reverte saldo/evento/auditoria na transação existente. Não há mais `ON CONFLICT DO NOTHING` nesse histórico. O contrato de repetição da rota de movimentação é descrito abaixo; colisão de número comercial continua sendo erro de integridade. Não tentar reparar colisão descartando histórico.
 
 Fornecedor/localização opcionais respeitam os limites SQL (120/80 caracteres), sem rótulos de homologação ou localização presumida no cadastro/leitura. Dados históricos já gravados não são reescritos. Motivo/documento da movimentação recebem validação de texto/limites; leitura do histórico preserva `operatorId`, antes omitido no mapeamento.
 
 Conflitos SQL encapsulados pelo Drizzle são classificados por código permitido em até três níveis de causa; detalhes continuam privados. Colisão de unicidade responde 409 usando o mesmo middleware validado na suíte PostgreSQL.
+
+
+## Movimentação de estoque: chave de repetição
+
+`POST /api/inventory/movements` exige `idempotency-key` UUID fora da demonstração local sem banco. A identidade autenticada e a chave determinam o UUID interno do movimento, sem tabela/migração adicional. A consulta de repetição, alteração de saldo, contador, inserção do movimento e auditoria usam a mesma transação/lock global existente.
+
+Primeira confirmação responde 201. Repetição da mesma chave com dados normalizados iguais (item, OP opcional, tipo, quantidade, motivo e documento) responde 200 com `replayed:true` e o evento original, sem novo saldo/contador/auditoria. O item na resposta é o saldo atual, podendo refletir operações posteriores; a movimentação continua sendo a original. Dados diferentes com a mesma chave respondem 409. Entrada inválida continua respondendo 400. Falha/rollback não consome a chave e permite retry compatível.
+
+O cliente deve gerar uma chave por intenção e conservá-la ao reenviar após erro de rede. `api.createStockMovement(payload, chave)` aceita explicitamente a chave; omiti-la gera uma nova a cada chamada e não protege retries feitos como novas intenções. O cliente não faz retry automático. Não há cache privado em localStorage. Sem chave, somente demonstração local preserva o comportamento anterior.
+
+O registro de movimento conserva a chave derivada enquanto o histórico existir; não há expiração automática. A proteção vale para essa rota, não para cadastro/edição de item, nem para consumidores que troquem a chave no reenvio. RBAC é aplicado também no replay. Não usar a remoção do histórico para forçar nova execução.

@@ -114,6 +114,16 @@ export class InventoryRepository {
     return Array.from(fallbackDb.movements.values());
   }
 
+  public async findMovementById(id: string): Promise<StockMovementEntity | null> {
+    await fallbackDb.ready;
+    if ((process.env.DATABASE_URL || process.env.NODE_ENV === 'production') && !fallbackDb.isConnected()) throw new Error('PostgreSQL indisponível.');
+    if (fallbackDb.isConnected()) {
+      const rows = await drizzleDb.select().from(movements).where(eq(movements.id, id)).limit(1);
+      return rows[0] ? this.mapToMovementEntity(rows[0]) : null;
+    }
+    return fallbackDb.movements.get(id) || null;
+  }
+
   public async saveMovement(mov: StockMovementEntity): Promise<StockMovementEntity> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {

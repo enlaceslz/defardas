@@ -1,3 +1,4 @@
+import { isLocalDemoEnvironment } from '../auth/demoEnvironment';
 import { number, text, oneOf, InputError, money } from '../validation/input';
 import { atomic } from '../db/unitOfWork';
 import { Router, Response } from 'express';
@@ -89,16 +90,32 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
   const movementReason = text(reason, 'Motivo', 1000, false);
   const reference = text(referenceDoc, 'Documento de referência', 80, false) || undefined;
 
-  const item = await inventoryRepository.findItemById(itemId);
-  if (!item) {
-    return res.status(404).json({ error: 'Item de estoque não encontrado' });
-  }
-
+  const requestedItemId = text(itemId, 'Item', 36).toLowerCase();
+  const orderId = text(productionOrderId, 'Ordem de produção', 36, false).toLowerCase() || undefined;
+  oneOf(type, ['entrada_compra', 'saida_corte', 'remessa_parceiro', 'retorno_parceiro', 'perda_tecnica', 'ajuste_inventario'], 'Tipo de movimentação');
   const qty = decimal(quantity, 'Quantidade', type === 'ajuste_inventario' ? -99999999.99 : 0);
-  if (typeof qty !== 'number') throw new InputError('Quantidade inválida.');
-  if (!Number.isFinite(qty) || (type === 'ajuste_inventario' ? qty === 0 : qty <= 0)) {
-    return res.status(400).json({ error: 'Quantidade deve ser um número positivo' });
+  if (qty === 0) throw new InputError('Quantidade não pode ser zero.');
+  if (type === 'ajuste_inventario') {
+    if (!['admin', 'pcp_producao'].includes(actor.role)) return res.status(403).json({ error: 'Sem permissão para ajuste.' });
+    text(reason, 'Motivo do ajuste', 1000);
   }
+  const key = req.get('idempotency-key');
+  if (!key && !isLocalDemoEnvironment()) throw new InputError('Chave de repetição obrigatória.');
+  if (key && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new InputError('Chave de repetição inválida.');
+  const hash = key ? crypto.createHash('sha256').update(`inventory:${actor.id}:${key.toLowerCase()}`).digest('hex') : undefined;
+  const movementId = hash ? `${hash.slice(0,8)}-${hash.slice(8,12)}-${hash.slice(12,16)}-${hash.slice(16,20)}-${hash.slice(20,32)}` : crypto.randomUUID();
+  const existing = await inventoryRepository.findMovementById(movementId);
+  if (existing) {
+    if (existing.itemId !== requestedItemId || existing.type !== type || existing.quantity !== qty ||
+        existing.productionOrderId !== orderId || existing.reason !== (movementReason || 'Movimentação operacional') || existing.referenceDoc !== reference) {
+      return res.status(409).json({ error: 'Chave de repetição já usada para outra movimentação.' });
+    }
+    const item = await inventoryRepository.findItemById(existing.itemId);
+    if (!item) throw new Error('Item da movimentação indisponível.');
+    return res.json({ success: true, replayed: true, movement: existing, item });
+  }
+  const item = await inventoryRepository.findItemById(requestedItemId);
+  if (!item) return res.status(404).json({ error: 'Item de estoque não encontrado' });
 
   const oldPhysical = item.physicalStock;
   const oldAllocated = item.allocatedStock;
@@ -157,10 +174,10 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
 
   const movementNumber = await sequenceService.nextMovementNumber();
   const movement: StockMovementEntity = {
-    id: crypto.randomUUID(),
+    id: movementId,
     movementNumber,
     itemId: item.id,
-    productionOrderId,
+    productionOrderId: orderId,
     type,
     quantity: qty,
     unit: item.unit,
