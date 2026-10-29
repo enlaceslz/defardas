@@ -14,6 +14,7 @@ import { auditService } from '../services/auditService';
 import { authRateLimiter, passwordRecoveryRateLimiter } from '../middleware/rateLimiter';
 import { CSRF_COOKIE_NAME, generateCsrfToken } from '../middleware/csrf';
 import { isLocalDemoEnvironment } from '../auth/demoEnvironment';
+import { text } from '../validation/input';
 
 export const authRouter = Router();
 
@@ -43,13 +44,14 @@ authRouter.get('/csrf-token', (req, res) => {
  * Realiza autenticação com credenciais reais protegida por rate limiting
  */
 authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Response) => {
-  const { email, password } = req.body;
+  const { email: rawEmail, password } = req.body || {};
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const userAgent = req.headers['user-agent'] || 'unknown';
 
-  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+  if (typeof rawEmail !== 'string' || typeof password !== 'string' || !rawEmail || !password) {
     return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
   }
+  const email = text(rawEmail, 'E-mail', 150).toLowerCase();
 
   const user = await userRepository.findByEmail(email);
   if (!user) {
@@ -215,10 +217,11 @@ authRouter.get('/dev-credentials', (_req: RequestWithUser, res: Response) => {
  * Gera token seguro para recuperação de senha sem enumerar contas
  */
 authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: RequestWithUser, res: Response) => {
-  const { email } = req.body;
-  if (typeof email !== 'string' || !email) {
+  const { email: rawEmail } = req.body || {};
+  if (typeof rawEmail !== 'string' || !rawEmail) {
     return res.status(400).json({ error: 'Informe o e-mail cadastrado.' });
   }
+  const email = text(rawEmail, 'E-mail', 150).toLowerCase();
 
   // Sem canal de e-mail homologado, não confirmar uma entrega inexistente.
   if (!isLocalDemoEnvironment()) return res.status(503).json({ error: 'Recuperação por e-mail indisponível. Contate o administrador.', code: 'PASSWORD_RECOVERY_UNAVAILABLE' });
@@ -258,7 +261,7 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
  * Redefine a senha utilizando token válido
  */
 authRouter.post('/reset-password', passwordRecoveryRateLimiter, async (req: RequestWithUser, res: Response) => {
-  const { token, newPassword } = req.body;
+  const { token, newPassword } = req.body || {};
   if (typeof token !== 'string' || typeof newPassword !== 'string' || !token || !newPassword) {
     return res.status(400).json({ error: 'Token e nova senha são obrigatórios.' });
   }

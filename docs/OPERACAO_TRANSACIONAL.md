@@ -350,3 +350,10 @@ Validação local: 110 testes, tipagem, build e diff-check aprovados. Novo cená
 O perfil no modo local passa a integrar as coleções da unidade transacional. Falha da auditoria reverte primeira gravação e edição, evitando erro HTTP com configuração já modificada. PostgreSQL mantém a gravação e auditoria na mesma transação, agora com teste explícito de rollback. Corpo ausente recebe 400 por validação de campos obrigatórios. Não muda visibilidade pública, campos ou regras do perfil.
 
 Validação local: 111 testes, tipagem, build e diff-check aprovados; CI desta continuação pendente. Teste PostgreSQL confere perfil, timestamp e contagem da auditoria após falha. Sem migração nova ou alteração em produção. CI anterior aprovada no PR #35: https://github.com/enlaceslz/defardas/actions/runs/40968022232. Bloqueios operacionais anteriores permanecem.
+
+
+### Continuação: entradas de autenticação
+
+Login, recuperação e redefinição tratam corpo ausente como entrada inválida (400), sem erro de desestruturação. Login e recuperação validam e-mail com o validador textual compartilhado e limite de 150 caracteres do cadastro, rejeitando U+0000 e valores vazios após trim antes de consultar usuários. E-mail é normalizado por trim/lowercase, como já ocorria na busca do repositório; não se altera a senha. Respostas de validação não ecoam o valor recebido. Limites de requisições permanecem aplicáveis, inclusive a entradas inválidas.
+
+Validação local: 112 testes, tipagem, build e diff-check aprovados; teste PostgreSQL acrescentado para preservação de sessões, tokens e auditoria nas rejeições. CI desta continuação pendente. CI anterior: PR #36, https://github.com/enlaceslz/defardas/actions/runs/40968720112. Sem migração nova ou alteração em produção; entrega de recuperação por e-mail e demais bloqueios operacionais continuam pendentes.
