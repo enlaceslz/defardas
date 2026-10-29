@@ -71,3 +71,10 @@ Para criar uma conta ativa, carregar também `ERP_USER_NAME`, `ERP_USER_PASSWORD
 Para alterar acesso, usar `update` com `ERP_USER_ROLE` e/ou `ERP_USER_ACTIVE` exatamente `true` ou `false`. Limpar as variáveis de criação (nome e senha) antes da atualização. O comando não altera nome/e-mail/senha nem exclui histórico. Mudança efetiva de perfil ou ativação revoga todas as sessões e tokens de recuperação; reativar não restaura sessões antigas. Repetir o estado já aplicado não revoga novas sessões nem duplica auditoria. O último administrador ativo não pode ser desativado ou perder esse perfil por este procedimento, inclusive em chamadas concorrentes.
 
 Cadastro/alteração, revogações e auditoria confirmam na mesma transação. Falha de auditoria reverte tudo. O retorno não exibe senha/hash/token; a auditoria registra operador, motivo e estados de acesso anterior/novo. Remover as variáveis `ERP_USER_*` do shell ao terminar. A tela administrativa de equipe ainda está pendente; esta entrega fornece o procedimento operacional com proteção transacional. Não executar contra o banco operacional sem a autorização correspondente.
+
+
+## Comunicação: limites operacionais
+
+QR ilustrativo e reconexão simulada só estão disponíveis na demonstração local definida acima. Com banco configurado ou ambiente desconhecido, QR ausente responde 503 e reconexão responde 501, sem alterar canal nem agendar atualização fictícia. QR real já armazenado continua sendo retornado.
+
+`POST /api/communication/send-template` responde 501 fora da demonstração local, antes de criar conversa ou enviar mensagem. O endpoint aceitava números/valores/comprovantes declarados pelo navegador e o texto afirmava liberação de corte sem conferir arte. Reativá-lo exige buscar proposta/OP/baixa no servidor, verificar os dois portões e confirmar o resultado do provedor. Envio manual e webhooks não foram alterados; recibos reais, deduplicação, RBAC de comunicação e atomicidade desse módulo continuam pendentes.
