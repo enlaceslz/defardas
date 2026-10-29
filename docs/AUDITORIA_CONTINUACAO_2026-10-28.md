@@ -112,3 +112,5 @@ Estado, ID externo, prévia elegível e auditoria confirmam na mesma transação
 Validação local: 60 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes locais validam contrato e exigência de banco. Três testes PostgreSQL adicionados exercitam CLI/saída sem conteúdo, idempotência, conflito, rejeição de entrada, rollback por auditoria, prévia mais recente e corrida com transporte em andamento. PostgreSQL/Docker dependem da CI deste commit. Sem migração nova, mensagem externa, deploy ou alteração operacional. `compile_applet` indisponível; build Vite utilizado. Bundle permanece 464,64 kB / 119,48 kB gzip.
 
 Recibos e consulta real ao provedor, reenvio autorizado, worker/outbox, RBAC de leitura, S3/e-mail, provisão e homologação continuam pendentes. Evidência de timeout sozinha não autoriza classificar falha.
+
+Ajuste final do mesmo escopo: erro de rede/timeout e HTTP 5xx mantêm pending para reconciliação, com auditoria WHATSAPP_SEND_UNCONFIRMED; HTTP 4xx mantém failed. Testes de transporte atualizados para distinguir resultado incerto de rejeição.

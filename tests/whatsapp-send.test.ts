@@ -66,10 +66,10 @@ test('erro do transporte não vaza segredo no registro nem na auditoria', async 
   await fixture(async (context) => {
     globalThis.fetch = async () => { throw new Error('private-credential-and-internal-url'); };
     const message = await new WhatsAppService().sendMessage({ conversationId: 'conversation', body: 'texto' });
-    assert.equal(message.status, 'failed');
+    assert.equal(message.status, 'pending');
     assert.match(message.errorMessage!, /Envio não confirmado/);
     assert.equal(JSON.stringify([context.messages, context.audits]).includes('private-credential'), false);
-    assert.equal(context.audits.at(-1).action, 'WHATSAPP_MESSAGE_FAILED');
+    assert.equal(context.audits.at(-1).action, 'WHATSAPP_SEND_UNCONFIRMED');
     assert.doesNotMatch(context.audits.at(-1).notes, /Mensagem enviada/);
   });
 });
@@ -87,5 +87,7 @@ test('texto normalizado é o mesmo no provedor e no histórico; rejeição HTTP 
     const rejected = await service.sendMessage({ conversationId: 'conversation', body: 'segundo' });
     assert.equal(rejected.status, 'failed');
     assert.equal(JSON.stringify(rejected).includes('private-provider-error'), false);
+    globalThis.fetch = async () => new Response('{}', { status: 503 });
+    assert.equal((await service.sendMessage({ conversationId: 'conversation', body: 'incerto' })).status, 'pending');
   });
 });

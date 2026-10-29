@@ -110,9 +110,12 @@ export class WhatsAppService {
             text: { body },
           }),
         });
-        if (!response.ok) throw new Error(`Provedor WhatsApp retornou HTTP ${response.status}.`);
+        if (!response.ok) {
+          newMsg.status = response.status >= 400 && response.status < 500 ? 'failed' : 'pending';
+          newMsg.errorMessage = 'Envio não confirmado pelo provedor. Confira o histórico antes de tentar novamente.';
+        }
       } catch (err: any) {
-        newMsg.status = 'failed';
+        newMsg.status = 'pending';
         newMsg.errorMessage = 'Envio não confirmado pelo provedor. Confira o histórico antes de tentar novamente.';
       }
     } else if (channel.provider === 'wa_akg') {
@@ -129,9 +132,12 @@ export class WhatsAppService {
             text: body,
           }),
         });
-        if (!response.ok) throw new Error(`Provedor WhatsApp retornou HTTP ${response.status}.`);
+        if (!response.ok) {
+          newMsg.status = response.status >= 400 && response.status < 500 ? 'failed' : 'pending';
+          newMsg.errorMessage = 'Envio não confirmado pelo provedor. Confira o histórico antes de tentar novamente.';
+        }
       } catch (err: any) {
-        newMsg.status = 'failed';
+        newMsg.status = 'pending';
         newMsg.errorMessage = 'Envio não confirmado pelo provedor. Confira o histórico antes de tentar novamente.';
       }
     } else {
@@ -153,7 +159,8 @@ export class WhatsAppService {
       await communicationRepository.saveConversation(conv);
       await auditService.log({ actorId: options.actorId, actorName: options.senderName || 'DE FARDAS',
         actorRole: options.actorRole || 'atendimento', entityName: 'communication.messages', entityId: newMsg.id,
-        action: newMsg.status === 'failed' ? 'WHATSAPP_MESSAGE_FAILED' : 'SEND_WHATSAPP_MESSAGE',
+        action: newMsg.status === 'sent' ? 'SEND_WHATSAPP_MESSAGE' :
+          newMsg.status === 'failed' ? 'WHATSAPP_MESSAGE_FAILED' : 'WHATSAPP_SEND_UNCONFIRMED',
         notes: `Tentativa de envio. Provedor: ${channel.provider}. Estado: ${newMsg.status}.` });
       return newMsg;
     });
