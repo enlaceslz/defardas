@@ -43,7 +43,7 @@ const item = (model: string, quantity: number, material = 10) => ({ modelName: m
   materialUnitCost: material, outsourcedSewingUnitCost: 5, customizationUnitCost: 1, freightUnitCost: 1,
   technicalLossPercentage: 0, markupPercentage: 50 });
 async function request(path: string, method = 'GET', body?: any) {
-  const response = await fetch(base + path, { method, headers: { ...headers, ...(path === '/api/inventory/movements' && method === 'POST' ? { 'idempotency-key': crypto.randomUUID() } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(base + path, { method, headers: { ...headers, ...(['/api/inventory/movements', '/api/finance/transactions'].includes(path) && method === 'POST' ? { 'idempotency-key': crypto.randomUUID() } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: response.status, data: await response.json() };
 }
 async function createQuote() {
@@ -708,4 +708,48 @@ test('PostgreSQL: baixa de saldo não anuncia sinal nem libera corte', async () 
   const repeated = await request(`/api/finance/transactions/${balance.id}/confirm-payment`, 'POST', input);
   assert.equal(repeated.data.alreadyConfirmed, true);
   assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='CONFIRM_PAYMENT' AND entity_id=$1", [balance.transactionNumber])).rows[0].count, '1');
+});
+
+async function keyedFinanceRequest(body: any, key?: string) {
+  const response = await fetch(base + '/api/finance/transactions', { method: 'POST',
+    headers: { ...headers, ...(key ? { 'idempotency-key': key } : {}) }, body: JSON.stringify(body) });
+  return { status: response.status, data: await response.json() };
+}
+test('PostgreSQL: cadastro financeiro concorrente gera um título/contador/auditoria e mantém estado pago no replay', async () => {
+  const payload = { type: 'pagar', subType: 'despesa_geral', description: 'Keyed manual finance', category: 'Test', amount: 9.35, dueDate: '2027-01-01', paymentMethod: 'pix' };
+  const key = crypto.randomUUID(); const before = BigInt((await pool.query("SELECT value FROM core.number_counters WHERE kind='finance'")).rows[0].value);
+  assert.equal((await keyedFinanceRequest(payload)).status, 400);
+  assert.equal((await keyedFinanceRequest(payload, 'invalid')).status, 400);
+  const responses = await Promise.all(Array.from({ length: 8 }, () => keyedFinanceRequest(payload, key)));
+  assert.equal(responses.filter((response) => response.status === 201).length, 1);
+  assert.equal(responses.filter((response) => response.status === 200).length, 7);
+  assert.equal(new Set(responses.map((response) => response.data.id)).size, 1);
+  const saved = responses[0].data;
+  assert.equal(BigInt((await pool.query("SELECT value FROM core.number_counters WHERE kind='finance'")).rows[0].value), before + 1n);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='CREATE_TRANSACTION' AND entity_id=$1", [saved.transactionNumber])).rows[0].count, '1');
+  const receipts = (await pool.query("SELECT * FROM core.event_log WHERE event_type='FINANCE_MANUAL_CREATED' AND payload->>'entityId'=$1", [saved.id])).rows;
+  assert.equal(receipts.length, 1); assert.equal(receipts[0].status, 'completed');
+  assert.deepEqual(Object.keys(receipts[0].payload).sort(), ['entityId', 'fingerprint']);
+  assert.equal((await keyedFinanceRequest({ ...payload, amount: 8 }, key)).status, 409);
+  await request(`/api/finance/transactions/${saved.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'KEYED', receiptEvidenceUrl: 'https://example.invalid/keyed' });
+  assert.equal((await keyedFinanceRequest(payload, key)).data.status, 'pago');
+});
+
+test('PostgreSQL: rollback de criação libera chave e exclusão conserva registro para não recriar título', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const payload = { type: 'pagar', subType: 'despesa_geral', description: 'Deleted keyed title', amount: 3, dueDate: '2027-01-01', paymentMethod: 'pix' };
+  const key = crypto.randomUUID(); const before = (await pool.query("SELECT value FROM core.number_counters WHERE kind='finance'")).rows[0].value;
+  const beforeReceipts = (await pool.query("SELECT count(*) FROM core.event_log WHERE event_type='FINANCE_MANUAL_CREATED'")).rows[0].count;
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected keyed finance failure'); };
+    assert.equal((await keyedFinanceRequest(payload, key)).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query("SELECT value FROM core.number_counters WHERE kind='finance'")).rows[0].value, before);
+  assert.equal((await pool.query("SELECT count(*) FROM core.event_log WHERE event_type='FINANCE_MANUAL_CREATED'")).rows[0].count, beforeReceipts);
+  const saved = await keyedFinanceRequest(payload, key); assert.equal(saved.status, 201);
+  assert.equal((await request(`/api/finance/transactions/${saved.data.id}`, 'DELETE')).status, 200);
+  assert.equal((await keyedFinanceRequest(payload, key)).status, 410);
+  assert.equal((await pool.query('SELECT count(*) FROM financeiro.transactions WHERE id=$1', [saved.data.id])).rows[0].count, '0');
+  assert.equal((await pool.query("SELECT count(*) FROM core.event_log WHERE event_type='FINANCE_MANUAL_CREATED' AND payload->>'entityId'=$1", [saved.data.id])).rows[0].count, '1');
 });

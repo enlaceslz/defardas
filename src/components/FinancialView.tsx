@@ -1,5 +1,5 @@
 import { useSubmission } from '../api/useSubmission';
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Wallet, 
   ArrowUpRight, 
@@ -18,7 +18,7 @@ import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
 
 interface FinancialViewProps {
   transactions: FinancialTransaction[];
-  onSaveTransaction: (trx: FinancialTransaction) => Promise<boolean>;
+  onSaveTransaction: (trx: FinancialTransaction, key?: string) => Promise<boolean>;
   onDeleteTransaction: (trxId: string) => void;
   onToggleStatus: (trxId: string) => void;
   onConfirmPaymentWithVoucher?: (trxId: string, voucherNumber: string, notes: string, evidenceUrl: string) => Promise<boolean>;
@@ -73,6 +73,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
 
   const projectedBalance = totalReceivablesPending - totalPayablesPending;
 
+  const attempt = useRef<{ payload: string; key: string } | null>(null);
   const { submit, isSaving } = useSubmission();
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +88,11 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
       status: 'pendente',
       paymentMethod,
     };
-    if (!(await submit(() => onSaveTransaction(newTrx)))) return;
+    const payload = JSON.stringify({ ...newTrx, id: undefined });
+    if (attempt.current?.payload !== payload) attempt.current = { payload, key: crypto.randomUUID() };
+    const key = attempt.current.key;
+    if (!(await submit(() => onSaveTransaction(newTrx, key)))) return;
+    attempt.current = null;
     setIsModalOpen(false);
     setDescription('');
   };
@@ -111,7 +116,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
         </div>
 
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={() => { attempt.current = null; setIsModalOpen(true); }}
           className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 shadow-sm transition-colors cursor-pointer self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />

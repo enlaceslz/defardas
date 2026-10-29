@@ -181,3 +181,16 @@ Correções: valor manual estrito conforme numeric(12,2), metadados textuais com
 Validação local: 72 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes HTTP cobrem valor/metadados, URL, rollback de auditoria e replay de confirmação. Dois testes PostgreSQL adicionados verificam contador preservado em valor inválido, persistência/autoria e baixa de saldo antes da entrada sem falsa confirmação de sinal/corte; dependem da CI deste commit. Após ajuste final da validação de URL, a suíte afetada e tipagem passaram novamente. Bundle permanece 464,70 kB / 119,49 kB gzip. compile_applet indisponível; build Vite utilizado.
 
 Sem migração, operação em banco real, mensagem externa ou deploy. Arquivo privado/evidência autoritativa S3, idempotência de criação manual de título, estornos com política homologada, RBAC de leitura e homologação/integrações seguem pendentes.
+
+
+## Continuação de 29/10/2026: cadastro financeiro sem duplicação por reenvio
+
+Base: PR #15, commit 2920139b; CI 40813460125 aprovada.
+
+Cadastro manual agora exige chave UUID operacional, combinada com identidade autenticada e fingerprint de dados normalizados. Repetição compatível retorna título atual sem novo contador/evento; conflito retorna 409. Rollback preserva chave disponível. Registro concluído em core.event_log (FINANCE_MANUAL_CREATED/completed, somente fingerprint/entityId) sobrevive à exclusão do título, impedindo recriação por replay antigo (410). Não há migração ou schema novo. Retenção deve preservar esses registros, que não são tarefas de outbox.
+
+Tela/API conservam chave para o mesmo rascunho em falha e bloqueiam duplo envio. Nova intenção, alterações ou recarga/remontagem usam outra chave; não há promessa entre chaves diferentes nem localStorage/retry automático. Baixa/conversão e regras de exclusão permanecem no fluxo existente.
+
+Validação local: 75 testes, tipagem, build Vite e diff-check aprovados. Dois testes HTTP novos cobrem oito requisições concorrentes, conflito, preservação de título pago, rollback e exclusão com replay bloqueado. Teste de componente cobre chave preservada na falha e submissão simultânea. Dois testes PostgreSQL adicionados cobrem contador/título/auditoria únicos, registro persistido mínimo, rollback e registro sobrevivendo à exclusão; dependem da CI. Verificação de backup/restauração ampliada para comparar os IDs/payloads desses registros de chave. Bundle JS 464,94 kB / 119,59 kB gzip. compile_applet indisponível; build Vite utilizado.
+
+Sem operação em banco real, migração, mensagem externa ou deploy. A CI deve validar também as mudanças do workflow. Retenção operacional, S3/evidência real, estornos homologados, RBAC de leitura e demais integrações/homologação continuam pendentes.

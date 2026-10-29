@@ -160,7 +160,7 @@ export default function App() {
   const handleDeleteClient = async (id: string) => {
     if (confirm('Excluir cliente sem histórico?')) await mutate(() => api.deleteClient(databaseId(state.clients, id)));
   };
-  const handleSaveTransaction = async (title: FinancialTransaction) => mutate(() => api.createTransaction(title));
+  const handleSaveTransaction = async (title: FinancialTransaction, key?: string) => mutate(() => api.createTransaction(title, key));
   const handleDeleteTransaction = async (id: string) => {
     if (confirm('Excluir título pendente sem vínculo com produção?')) await mutate(() => api.deleteTransaction(databaseId(state.finance, id)));
   };

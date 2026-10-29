@@ -30,6 +30,7 @@ export class DatabaseManager {
   public quotes: Map<string, QuoteEntity> = new Map();
   public orders: Map<string, ProductionOrderEntity> = new Map();
   public finance: Map<string, FinancialTransactionEntity> = new Map();
+  public financeRequests = new Map<string, { fingerprint: string; entityId: string }>();
   public inventory: Map<string, InventoryItemEntity> = new Map();
   public movements: Map<string, StockMovementEntity> = new Map();
   public channels: Map<string, any> = new Map();
