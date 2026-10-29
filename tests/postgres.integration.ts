@@ -1376,3 +1376,21 @@ test('PostgreSQL: movimento valida vínculo de OP antes de gravar ou numerar', a
   const moved = await request('/api/inventory/movements', 'POST', { itemId: id.toUpperCase(), productionOrderId: converted.data.orders[0].id.toUpperCase(), type: 'entrada_compra', quantity: 1 });
   assert.equal(moved.status, 201); assert.equal(moved.data.movement.productionOrderId, converted.data.orders[0].id);
 });
+
+
+test('PostgreSQL: baixa de pedido sem vínculo não marca título pago nem libera OP', async () => {
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  const title = converted.data.financeTransactions.find((row: any) => row.subType === 'entrada_pedido');
+  const orderBefore = (await pool.query('SELECT * FROM producao.production_orders WHERE quote_id=$1 ORDER BY id', [quote.id])).rows;
+  for (const column of ['quote_id', 'production_order_id']) {
+    await pool.query(`UPDATE financeiro.transactions SET ${column}=NULL WHERE id=$1`, [title.id]);
+    const before = (await pool.query('SELECT * FROM financeiro.transactions WHERE id=$1', [title.id])).rows;
+    const logs = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows;
+    assert.equal((await request(`/api/finance/transactions/${title.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' })).status, 409);
+    assert.deepEqual((await pool.query('SELECT * FROM financeiro.transactions WHERE id=$1', [title.id])).rows, before);
+    assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE quote_id=$1 ORDER BY id', [quote.id])).rows, orderBefore);
+    assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, logs);
+    await pool.query('UPDATE financeiro.transactions SET quote_id=$1,production_order_id=$2 WHERE id=$3', [quote.id, title.productionOrderId, title.id]);
+  }
+  assert.equal((await request(`/api/finance/transactions/${title.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' })).status, 200);
+});
