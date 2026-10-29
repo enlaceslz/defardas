@@ -78,3 +78,12 @@ Cadastro/alteração, revogações e auditoria confirmam na mesma transação. F
 QR ilustrativo e reconexão simulada só estão disponíveis na demonstração local definida acima. Com banco configurado ou ambiente desconhecido, QR ausente responde 503 e reconexão responde 501, sem alterar canal nem agendar atualização fictícia. QR real já armazenado continua sendo retornado.
 
 `POST /api/communication/send-template` responde 501 fora da demonstração local, antes de criar conversa ou enviar mensagem. O endpoint aceitava números/valores/comprovantes declarados pelo navegador e o texto afirmava liberação de corte sem conferir arte. Reativá-lo exige buscar proposta/OP/baixa no servidor, verificar os dois portões e confirmar o resultado do provedor. Envio manual e webhooks não foram alterados; recibos reais, deduplicação, RBAC de comunicação e atomicidade desse módulo continuam pendentes.
+
+
+## Atendimento WhatsApp: confirmação na interface
+
+A listagem de canais retorna somente campos de apresentação, sem `config` ou QR de pareamento. O QR é consultado pelo endpoint próprio; falha não gera imagem alternativa nem chama serviço externo de QR. A política de perfis para acessar comunicação e pareamento ainda requer homologação.
+
+O compositor mantém rascunhos por conversa, bloqueia submissões simultâneas e só limpa o texto após resposta 201 com mensagem identificada e sem estado `failed`. Falha ou resultado incerto exige conferir o histórico antes de repetir: não há promessa de entrega única no provedor. O histórico distingue pendente, enviada ao provedor, entregue, lida e falha. Recibos autoritativos do provedor ainda estão pendentes.
+
+Atalhos comerciais agora apenas preparam rascunho para revisão e envio manual. Não presumem chave PIX nem confirmam corte por resposta no WhatsApp. A baixa e a aprovação de arte continuam sendo registradas nos fluxos do ERP. Não confundir o texto do atendimento com comprovação de pagamento ou aprovação fabril.

@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   MessageSquare, 
   Send, 
   Search, 
   QrCode, 
-  CheckCheck, 
   Clock, 
   Building2, 
   Phone, 
@@ -17,6 +16,7 @@ import {
   Scissors,
   DollarSign
 } from 'lucide-react';
+import { useSubmission } from '../api/useSubmission';
 import { api } from '../api/client';
 
 interface Channel {
@@ -56,11 +56,24 @@ interface Message {
 }
 
 export const WhatsAppOmnichannelView: React.FC = () => {
+  const { submit, isSaving } = useSubmission();
+  const [sendError, setSendError] = useState('');
+  const [qrError, setQrError] = useState('');
+  const [isQrLoading, setIsQrLoading] = useState(false);
+  const qrRequest = useRef(0);
+  const activeId = useRef<string | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  activeId.current = activeConversationId;
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputMessage, setInputMessage] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const inputMessage = activeConversationId ? drafts[activeConversationId] || '' : '';
+  const setInputMessage = (value: React.SetStateAction<string>) => {
+    if (!activeConversationId) return;
+    setDrafts((previous) => ({ ...previous, [activeConversationId]: typeof value === 'function'
+      ? value(previous[activeConversationId] || '') : value }));
+  };
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'unread' | 'clients'>('all');
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -75,12 +88,12 @@ export const WhatsAppOmnichannelView: React.FC = () => {
         api.getConversations(),
       ]);
 
-      if (channelsRes.data) {
+      if (channelsRes.status === 200 && Array.isArray(channelsRes.data)) {
         setChannels(channelsRes.data);
       }
-      if (convsRes.data) {
+      if (convsRes.status === 200 && Array.isArray(convsRes.data)) {
         setConversations(convsRes.data);
-        if (!activeConversationId && convsRes.data.length > 0) {
+        if (!activeId.current && convsRes.data.length > 0) {
           setActiveConversationId(convsRes.data[0].id);
         }
       }
@@ -95,69 +108,65 @@ export const WhatsAppOmnichannelView: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Carregar mensagens da conversa ativa
+  // Uma resposta atrasada nunca substitui o histórico de outra conversa.
   useEffect(() => {
+    let cancelled = false;
+    setMessages([]);
+    setSendError('');
     if (!activeConversationId) return;
-
-    const fetchMessages = async () => {
-      setIsLoadingMessages(true);
-      try {
-        const res = await api.getConversationMessages(activeConversationId);
-        if (res.data) {
-          setMessages(res.data);
-        }
-      } catch (err) {
-        console.warn('Erro ao carregar mensagens:', err);
-      } finally {
-        setIsLoadingMessages(false);
-      }
-    };
-
-    fetchMessages();
+    setIsLoadingMessages(true);
+    void api.getConversationMessages(activeConversationId).then((res) => {
+      if (cancelled) return;
+      if (res.status === 200 && Array.isArray(res.data)) setMessages(res.data);
+      else setSendError(res.error || 'Não foi possível carregar o histórico.');
+      setIsLoadingMessages(false);
+    });
+    return () => { cancelled = true; };
   }, [activeConversationId]);
 
-  // Enviar mensagem
+  const sendText = async (body: string, clearDraft = false) => {
+    const conversationId = activeConversationId;
+    if (!conversationId || !body.trim()) return;
+    await submit(async () => {
+      setSendError('');
+      const res = await api.sendConversationMessage(conversationId, body.trim());
+      if (activeId.current !== conversationId) return false;
+      if (res.status !== 201 || !res.data?.id || res.data.status === 'failed') {
+        setSendError(res.error || 'Envio não confirmado. Confira o histórico antes de tentar novamente.');
+        if (res.data?.id) setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
+        return false;
+      }
+      setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
+      if (clearDraft) setInputMessage((current) => current.trim() === body.trim() ? '' : current);
+      setConversations((prev) => prev.map((c) => c.id === conversationId
+        ? { ...c, lastMessageText: body, lastMessageAt: res.data.createdAt } : c));
+      return true;
+    });
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim() || !activeConversationId) return;
-
-    const textToSend = inputMessage.trim();
-    setInputMessage('');
-
-    try {
-      const res = await api.sendConversationMessage(activeConversationId, textToSend);
-      if (res.data) {
-        setMessages((prev) => [...prev, res.data]);
-        // Atualizar lista de conversas
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === activeConversationId
-              ? { ...c, lastMessageText: textToSend, lastMessageAt: new Date().toISOString() }
-              : c
-          )
-        );
-      }
-    } catch (err) {
-      console.warn('Erro ao enviar mensagem:', err);
-    }
+    await sendText(inputMessage, true);
   };
 
-  // Disparo rápido de template de aprovação de arte
-  const handleSendArtTemplate = async () => {
-    if (!activeConversation) return;
-    const body = `🎨 *Aprovação de Layout / Arte — DE FARDAS*\n\nOlá, ${activeConversation.customerName}! O layout personalizado dos seus uniformes está pronto para conferência.\n\nPor favor, responda com *APROVADO* para liberarmos a ordem na mesa de corte, ou envie as alterações necessárias.`;
-    await api.sendConversationMessage(activeConversation.id, body);
-    const res = await api.getConversationMessages(activeConversation.id);
-    if (res.data) setMessages(res.data);
+  // Preparar texto para revisão; aprovação e pagamento seguem os portões do ERP.
+  const handleSendArtTemplate = () => {
+    if (activeConversation) setInputMessage(`Olá, ${activeConversation.customerName}! Podemos conferir o layout dos seus uniformes? Responda com a aprovação ou com as alterações necessárias. A liberação de produção depende da validação da arte e do sinal no ERP.`);
+  };
+  const handleSendDownpaymentReminder = () => {
+    if (activeConversation) setInputMessage(`Olá, ${activeConversation.customerName}! Podemos conferir o sinal previsto na sua proposta? Solicite à nossa equipe os dados de pagamento e encaminhe o comprovante para validação.`);
   };
 
-  // Disparo rápido de cobrança/lembrete de sinal 50%
-  const handleSendDownpaymentReminder = async () => {
-    if (!activeConversation) return;
-    const body = `💳 *Lembrete de Sinal 50% (Liberação Fabril) — DE FARDAS*\n\nOlá, ${activeConversation.customerName}! Para iniciarmos o corte e a produção do seu pedido, é necessária a confirmação do sinal de 50%.\n\nNossa chave PIX oficial é o CNPJ da empresa. Assim que realizar, favor nos enviar o comprovante por aqui!`;
-    await api.sendConversationMessage(activeConversation.id, body);
-    const res = await api.getConversationMessages(activeConversation.id);
-    if (res.data) setMessages(res.data);
+  const loadQr = async (channel: Channel) => {
+    const request = ++qrRequest.current;
+    setQrChannel({ ...channel, qrCode: undefined });
+    setQrError(''); setIsQrLoading(true); setIsQrModalOpen(true);
+    const res = await api.getChannelQr(channel.id);
+    if (request !== qrRequest.current) return;
+    if (res.status === 200 && typeof res.data?.qrCode === 'string' && res.data.qrCode) {
+      setQrChannel({ ...channel, qrCode: res.data.qrCode });
+    } else setQrError(res.error || 'QR Code indisponível no provedor.');
+    setIsQrLoading(false);
   };
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId);
@@ -182,7 +191,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">Central WhatsApp Omnichannel</h2>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Multiprovedor Ativo
+              Canais WhatsApp
             </span>
           </div>
           <p className="text-sm text-slate-500 mt-1">
@@ -213,10 +222,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
               {ch.provider === 'wa_akg' && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setQrChannel(ch);
-                    setIsQrModalOpen(true);
-                  }}
+                  onClick={() => void loadQr(ch)}
                   className="ml-1 text-blue-600 hover:text-blue-800 p-0.5"
                   title="Ver QR Code de Conexão"
                 >
@@ -374,20 +380,22 @@ export const WhatsAppOmnichannelView: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleSendArtTemplate}
+                  disabled={isSaving}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors"
-                  title="Enviar solicitação de aprovação formal de arte"
+                  title="Preparar solicitação de aprovação para revisão"
                 >
                   <Scissors className="w-3.5 h-3.5" />
-                  Cobrar Aprovação Arte
+                  Preparar pedido de aprovação
                 </button>
                 <button
                   type="button"
                   onClick={handleSendDownpaymentReminder}
+                  disabled={isSaving}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
-                  title="Enviar dados e lembrete de sinal de 50%"
+                  title="Preparar lembrete para revisão"
                 >
                   <DollarSign className="w-3.5 h-3.5" />
-                  Lembrar Sinal 50%
+                  Preparar lembrete de sinal
                 </button>
               </div>
             </div>
@@ -431,11 +439,12 @@ export const WhatsAppOmnichannelView: React.FC = () => {
                             {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                           {isOutbound && (
-                            <CheckCheck
-                              className={`w-3.5 h-3.5 ${
-                                m.status === 'read' ? 'text-sky-200' : 'text-blue-300'
-                              }`}
-                            />
+                            <span aria-label={`Status: ${m.status}`}>
+                              {m.status === 'failed' ? 'Falha no envio' :
+                                m.status === 'pending' ? 'Pendente' :
+                                m.status === 'sent' ? 'Enviada ao provedor' :
+                                m.status === 'delivered' ? 'Entregue' : 'Lida'}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -445,6 +454,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
               )}
             </div>
 
+            {sendError && <p role="alert" className="px-4 py-2 text-xs text-rose-700">{sendError}</p>}
             {/* Formulário de Envio */}
             <form onSubmit={handleSendMessage} className="p-3.5 bg-white border-t border-slate-200 flex gap-2">
               <input
@@ -456,11 +466,11 @@ export const WhatsAppOmnichannelView: React.FC = () => {
               />
               <button
                 type="submit"
-                disabled={!inputMessage.trim()}
+                disabled={isSaving || !inputMessage.trim()}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-colors shadow-xs"
               >
                 <Send className="w-3.5 h-3.5" />
-                Enviar
+                {isSaving ? 'Enviando...' : 'Enviar'}
               </button>
             </form>
           </div>
@@ -483,7 +493,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setIsQrModalOpen(false)}
+                onClick={() => { qrRequest.current++; setIsQrModalOpen(false); }}
                 className="text-slate-400 hover:text-slate-600 text-sm font-bold"
               >
                 ✕
@@ -491,44 +501,39 @@ export const WhatsAppOmnichannelView: React.FC = () => {
             </div>
 
             <div className="py-6 flex flex-col items-center text-center">
-              <div className="p-3 bg-white border border-slate-200 rounded-xl shadow-xs mb-4">
-                <img
-                  src={
-                    qrChannel.qrCode ||
-                    `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=defardas_whatsapp_${qrChannel.id}`
-                  }
-                  alt="QR Code WhatsApp"
-                  className="w-48 h-48 rounded-lg"
-                />
-              </div>
-
-              <p className="text-xs font-semibold text-slate-800">
-                1. Abra o WhatsApp no celular da DE FARDAS
-              </p>
-              <p className="text-2xs text-slate-500 mt-0.5">
-                Toque em Aparelhos Conectados &gt; Conectar um aparelho e aponte para a tela.
-              </p>
-
-              <div className="mt-4 flex items-center gap-2 text-2xs text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>Container isolado com persistência segura de sessão Baileys.</span>
-              </div>
+              {isQrLoading ? <p role="status">Consultando QR Code no provedor...</p> :
+                qrChannel.qrCode ? <>
+                  <img src={qrChannel.qrCode} alt="QR Code WhatsApp" className="w-48 h-48 rounded-lg" />
+                  <p className="text-xs text-slate-600 mt-4">No WhatsApp, abra Aparelhos Conectados e escaneie o código fornecido pelo canal.</p>
+                </> : <p role="alert" className="text-xs text-rose-700">{qrError || 'QR Code indisponível no provedor.'}</p>}
+              {qrChannel.qrCode && qrError && <p role="alert" className="text-xs text-rose-700">{qrError}</p>}
             </div>
 
             <div className="flex gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
                 onClick={async () => {
-                  await api.reconnectChannel(qrChannel.id);
-                  loadData();
+                  const channel = qrChannel;
+                  const request = ++qrRequest.current;
+                  setIsQrLoading(true); setQrError('');
+                  const res = await api.reconnectChannel(channel.id);
+                  if (request !== qrRequest.current) return;
+                  setIsQrLoading(false);
+                  if (res.status < 200 || res.status >= 300) {
+                    setQrError(res.error || 'Reconexão não confirmada.');
+                    return;
+                  }
+                  await loadQr(channel);
+                  void loadData();
                 }}
+                disabled={isQrLoading}
                 className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition-colors"
               >
                 Reconectar Canal
               </button>
               <button
                 type="button"
-                onClick={() => setIsQrModalOpen(false)}
+                onClick={() => { qrRequest.current++; setIsQrModalOpen(false); }}
                 className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition-colors"
               >
                 Fechar

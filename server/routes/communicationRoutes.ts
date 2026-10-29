@@ -11,6 +11,13 @@ import { whatsAppService } from '../services/whatsappService';
 
 export const communicationRouter = Router();
 
+// Configuração do provedor permanece no servidor; QR é consultado em rota própria.
+const channelSummary = (channel: Awaited<ReturnType<typeof communicationRepository.findAllChannels>>[number]) => ({
+  id: channel.id, provider: channel.provider, channelName: channel.channelName,
+  phoneNumber: channel.phoneNumber, status: channel.status, isActive: channel.isActive,
+  createdAt: channel.createdAt, updatedAt: channel.updatedAt,
+});
+
 // ==============================================================================
 // 1. Webhooks Públicos (Isentos de autenticação de sessão)
 // ==============================================================================
@@ -96,7 +103,7 @@ communicationRouter.use(requireAuth);
 // Listar canais configurados
 communicationRouter.get('/channels', async (_req: RequestWithUser, res: Response) => {
   const channelsList = await communicationRepository.findAllChannels();
-  res.json(channelsList);
+  res.json(channelsList.map(channelSummary));
 });
 
 // Obter QR code atualizado para o canal WA-AKG
@@ -139,7 +146,7 @@ communicationRouter.post('/channels/:id/reconnect', async (req: RequestWithUser,
     await communicationRepository.saveChannel(channel);
   }, 1500);
 
-  res.json({ success: true, message: 'Tentativa de conexão iniciada.', channel });
+  res.json({ success: true, message: 'Tentativa de conexão iniciada.', channel: channelSummary(channel) });
 });
 
 // Listar conversas
