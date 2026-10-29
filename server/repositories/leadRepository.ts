@@ -67,6 +67,7 @@ export class LeadRepository {
           origin: lead.origin || 'portal_publico',
           status: lead.status as any,
           convertedQuoteId: lead.convertedQuoteId,
+          assignedSellerId: lead.assignedSellerId || null,
           isDemo: lead.isDemo ?? false,
         };
 
@@ -79,6 +80,7 @@ export class LeadRepository {
               status: newRecord.status,
               notes: newRecord.notes,
               convertedQuoteId: newRecord.convertedQuoteId,
+              assignedSellerId: newRecord.assignedSellerId,
             },
           });
       } catch (err) {
@@ -104,6 +106,7 @@ export class LeadRepository {
       origin: row.origin,
       status: row.status as any,
       convertedQuoteId: row.convertedQuoteId || undefined,
+      assignedSellerId: row.assignedSellerId || undefined,
       isDemo: row.isDemo,
       createdAt: row.createdAt.toISOString(),
     };
