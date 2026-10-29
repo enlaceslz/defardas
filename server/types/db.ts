@@ -132,7 +132,7 @@ export interface QuoteEntity {
   authorizedByName?: string;
   authorizationDate?: string;
   authorizationNotes?: string;
-  entryPercentage: 50.00; // Invariante: 50% fixado no PRD
+  entryPercentage: number; // Novas propostas exigem 50%; leitura preserva divergência histórica para validação.
   entryAmount: number;
   balanceAmount: number;
   paymentTerms: string;

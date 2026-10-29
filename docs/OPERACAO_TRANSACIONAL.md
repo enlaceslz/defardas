@@ -286,3 +286,11 @@ Criação da proposta valida o cabeçalho antes de reservar número. Prazo deve 
 A conversão refaz a validação usando o instante da conversão, antes de numerar/gravar OPs ou títulos. Proposta histórica com prazo inválido recebe 400 sem efeitos parciais; não é corrigida automaticamente. Conversão já concluída continua devolvendo as ordens existentes pelo fluxo idempotente, sem recalcular suas datas.
 
 O cálculo permanece dias corridos de 24h e usa o comportamento UTC existente. Não impõe máximo comercial de prazo, calendário de dias úteis, feriados, nova política de validade ou reabertura. O limite é técnico de representação, e datas históricas não são alteradas. A data de criação/prazo contratual definitivo e calendário fabril ainda dependem de homologação de negócio.
+
+### Coerência financeira antes da conversão
+
+Antes de numerar/gravar OPs e títulos, a conversão exige total, sinal e saldo positivos, em centavos e dentro da capacidade numeric(12,2); total deve coincidir com a soma dos totais dos itens. Percentual armazenado deve ser 50, sinal deve coincidir com metade arredondada pelo cálculo existente e saldo deve ser o restante. Divergência retorna 409/QUOTE_FINANCIAL_CONFLICT, sem alterar proposta, OP, título ou contador.
+
+A leitura conserva o percentual efetivamente armazenado; não o substitui silenciosamente por 50. O tipo da entidade permite representar histórico divergente, mas a criação continua exigindo 50 e a conversão bloqueia divergência. Não há saneamento automático de proposta histórica nem fluxo novo de revisão/estorno.
+
+Uma proposta zerada ou de um centavo não permite gerar os dois títulos positivos exigidos pela constraint existente e é bloqueada na conversão. Isso não cria preço mínimo comercial ou altera a aceitação de rascunhos. Totais ímpares em centavos mantêm o arredondamento anterior: três centavos geram dois de sinal e um de saldo. Não muda markup, comissão, percentual ou política de cobrança. Conversão já concluída continua no replay existente, sem recalcular títulos ou reconciliar histórico.

@@ -1124,3 +1124,43 @@ test('PostgreSQL: prazos e ano zero são rejeitados sem reservar número; conver
   assert.match(converted.data.orders[0].targetDeliveryDate, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal((await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST')).data.alreadyConverted, true);
 });
+
+test('PostgreSQL: conversão bloqueia parcelas zero sem OP/título e conserva divisão positiva em centavos', async () => {
+  for (const amount of [0, 0.01, 0.02, 0.03]) {
+    const created = await request('/api/quotes', 'POST', { clientId, validUntil: '2027-01-01', productionLeadDays: 10, commercialStatus: 'aprovado',
+      items: [{ ...item('Split', 1), materialUnitCost: amount, outsourcedSewingUnitCost: 0, customizationUnitCost: 0,
+        freightUnitCost: 0, technicalLossPercentage: 0, markupPercentage: 0 }] });
+    assert.equal(created.status, 201); const id = created.data.id;
+    const counters = (await pool.query("SELECT kind,value FROM core.number_counters WHERE kind IN ('order','finance') ORDER BY kind")).rows;
+    const converted = await request(`/api/quotes/${id}/convert-to-order`, 'POST');
+    if (amount < 0.02) {
+      assert.equal(converted.status, 409); assert.equal(converted.data.code, 'QUOTE_FINANCIAL_CONFLICT');
+      assert.equal((await pool.query('SELECT count(*) FROM producao.production_orders WHERE quote_id=$1', [id])).rows[0].count, '0');
+      assert.equal((await pool.query('SELECT count(*) FROM financeiro.transactions WHERE quote_id=$1', [id])).rows[0].count, '0');
+      assert.deepEqual((await pool.query("SELECT kind,value FROM core.number_counters WHERE kind IN ('order','finance') ORDER BY kind")).rows, counters);
+      assert.equal((await request(`/api/quotes/${id}`)).data.commercialStatus, 'aprovado');
+    } else {
+      assert.equal(converted.status, 201);
+      const values = (await pool.query('SELECT amount FROM financeiro.transactions WHERE quote_id=$1 ORDER BY sub_type', [id])).rows;
+      assert.equal(values.length, 2); assert.ok(values.every((row) => Number(row.amount) > 0));
+      assert.equal(Math.round(values.reduce((sum, row) => sum + Number(row.amount), 0) * 100), Math.round(amount * 100));
+      assert.equal((await request(`/api/quotes/${id}/convert-to-order`, 'POST')).data.alreadyConverted, true);
+    }
+  }
+});
+
+test('PostgreSQL: leitura conserva percentual histórico divergente e conversão recusa sem reservar número', async () => {
+  const quote = await createQuote();
+  const counters = (await pool.query("SELECT kind,value FROM core.number_counters WHERE kind IN ('order','finance') ORDER BY kind")).rows;
+  await pool.query('UPDATE crm.quotes SET entry_percentage=45 WHERE id=$1', [quote.id]);
+  assert.equal((await request(`/api/quotes/${quote.id}`)).data.entryPercentage, 45);
+  assert.equal((await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST')).status, 409);
+  await pool.query('UPDATE crm.quotes SET entry_percentage=50,entry_amount=entry_amount+1,balance_amount=balance_amount-1 WHERE id=$1', [quote.id]);
+  assert.equal((await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST')).status, 409);
+  await pool.query('UPDATE crm.quotes SET entry_amount=$2,balance_amount=$3 WHERE id=$1', [quote.id, quote.entryAmount, quote.balanceAmount]);
+  await pool.query('UPDATE crm.quote_items SET total_item_price=total_item_price+1 WHERE quote_id=$1', [quote.id]);
+  assert.equal((await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST')).status, 409);
+  assert.equal((await pool.query('SELECT count(*) FROM producao.production_orders WHERE quote_id=$1', [quote.id])).rows[0].count, '0');
+  assert.equal((await pool.query('SELECT count(*) FROM financeiro.transactions WHERE quote_id=$1', [quote.id])).rows[0].count, '0');
+  assert.deepEqual((await pool.query("SELECT kind,value FROM core.number_counters WHERE kind IN ('order','finance') ORDER BY kind")).rows, counters);
+});
