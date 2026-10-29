@@ -108,3 +108,12 @@ A criação de propostas valida a lista de personalizações antes de reservar n
 A mudança impede novos registros que quebravam a impressão ao acessar type.replace ou renderizar objetos. Personalizações válidas são persistidas na proposta e copiadas para a OP. O detalhamento não substitui customizationUnitCost no motor de preços nem define nova regra de custeio. Dados históricos não são saneados automaticamente; armazenamento privado e aprovação de evidências continuam pendentes.
 
 Validação local: 108 testes, tipagem e build aprovados. Novo teste PostgreSQL cobre preservação de contador, proposta e auditoria na rejeição, além da recarga da personalização na proposta e na OP. CI desta continuação ainda pendente. Sem migração nova ou alteração em produção.
+
+
+### Continuação: limite bcrypt também na autenticação
+
+A comparação de senhas recusa entradas maiores que 72 bytes em UTF-8 antes de chamar bcrypt, alinhando login ao limite já aplicado na criação e redefinição. Antes, uma senha de exatamente 72 bytes podia autenticar mesmo acrescida de um sufixo ignorado pela biblioteca. A senha exata permanece válida, inclusive quando contém caracteres multibyte. Login com entrada excedente retorna a resposta genérica de credenciais inválidas (401), registra falha e não cria sessão/cookie. Não há truncamento ou normalização da senha.
+
+Não são aplicados retroativamente os critérios de força na comparação, nem alterados hashes ou sessões existentes. Contas históricas criadas por ferramentas externas com senhas acima do limite precisam de redefinição pelo procedimento administrativo existente; não presumir que o excedente fazia parte do segredo verificado por bcrypt.
+
+Validação local: 110 testes, tipagem, build e diff-check aprovados. Novo cenário PostgreSQL verifica rejeição sem sessão, evento de falha, preservação do hash e sucesso com a credencial exata. CI desta continuação pendente. PR #34 teve CI completa aprovada em https://github.com/enlaceslz/defardas/actions/runs/40967384070. Sem migração nova, alteração de credenciais reais ou liberação dos bloqueios de produção.

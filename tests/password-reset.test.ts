@@ -70,3 +70,30 @@ test('login iniciado com senha antiga não cria sessão depois de redefinição'
     assert.equal(result.status, 401); assert.equal(result.headers.get('set-cookie'), null);
   } finally { resume(); PasswordService.comparePassword = original; }
 });
+
+
+test('comparação bcrypt aceita 72 bytes exatos e rejeita sufixos truncados, inclusive Unicode', async () => {
+  for (const password of ['A1' + crypto.randomBytes(35).toString('hex'), 'A1' + 'á'.repeat(35)]) {
+    assert.equal(Buffer.byteLength(password, 'utf8'), 72);
+    const hash = await PasswordService.hashPassword(password);
+    assert.equal(await PasswordService.comparePassword(password, hash), true);
+    for (const suffix of ['x', 'ç', '🧵']) assert.equal(await PasswordService.comparePassword(password + suffix, hash), false);
+    assert.equal(await PasswordService.comparePassword('wrong-password-1', hash), false);
+  }
+});
+
+test('login recusa senha com sufixo além de 72 bytes sem criar sessão ou cookie', async () => {
+  const password = 'A1' + crypto.randomBytes(35).toString('hex');
+  const user = await userRepository.createUser({ fullName: 'Boundary Test', email: `${crypto.randomUUID()}@example.invalid`, password, role: 'vendedor' });
+  const original = sessionStore.createSession; let calls = 0;
+  try {
+    sessionStore.createSession = async (...args) => { calls++; return original.apply(sessionStore, args); };
+    const login = (candidate: string) => fetch(base + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: user.email, password: candidate }) });
+    const rejected = await login(password + 'suffix');
+    assert.equal(rejected.status, 401); assert.equal((await rejected.json()).token, undefined);
+    assert.equal(rejected.headers.get('set-cookie'), null); assert.equal(calls, 0);
+    const accepted = await login(password); assert.equal(accepted.status, 200); assert.equal(calls, 1);
+    const data = await accepted.json(); assert.ok(await sessionStore.getSession(data.token));
+    await sessionStore.destroySession(data.token);
+  } finally { sessionStore.createSession = original; }
+});

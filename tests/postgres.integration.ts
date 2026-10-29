@@ -1293,3 +1293,18 @@ test('PostgreSQL: personalizações inválidas não consomem contador; personali
   const converted = await request(`/api/quotes/${created.data.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
   assert.deepEqual((await request(`/api/orders/${converted.data.orders[0].id}`)).data.customizations, customizations);
 });
+
+
+test('PostgreSQL: login além de 72 bytes falha sem sessão e credencial exata continua válida', async () => {
+  const id = crypto.randomUUID(); const email = `${id}@example.invalid`;
+  const password = 'A1' + 'á'.repeat(35); const hash = await PasswordService.hashPassword(password);
+  await pool.query(`INSERT INTO core.users(id,full_name,email,password_hash,role,is_active) VALUES($1,'Boundary Test',$2,$3,'vendedor',true)`, [id, email, hash]);
+  const rejected = await request('/api/auth/login', 'POST', { email, password: password + 'suffix' });
+  assert.equal(rejected.status, 401); assert.equal(rejected.data.token, undefined);
+  assert.equal((await pool.query('SELECT count(*) FROM core.sessions WHERE user_id=$1', [id])).rows[0].count, '0');
+  const failures = await pool.query("SELECT action FROM core.audit_logs WHERE entity_id=$1 AND action='AUTH_LOGIN_FAILURE'", [id]);
+  assert.equal(failures.rowCount, 1);
+  const accepted = await request('/api/auth/login', 'POST', { email, password }); assert.equal(accepted.status, 200);
+  assert.equal((await sessionStore.getSession(accepted.data.token))?.user.id, id);
+  assert.equal((await pool.query('SELECT password_hash FROM core.users WHERE id=$1', [id])).rows[0].password_hash, hash);
+});

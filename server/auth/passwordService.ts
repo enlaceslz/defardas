@@ -22,7 +22,8 @@ export class PasswordService {
    * Compara senha informada com hash armazenado
    */
   public static async comparePassword(plainText: string, hash: string): Promise<boolean> {
-    if (!plainText || !hash) return false;
+    // bcrypt ignora bytes após o 72º; login deve respeitar o limite da criação.
+    if (typeof plainText !== 'string' || !plainText || !hash || Buffer.byteLength(plainText, 'utf8') > 72) return false;
     try {
       return await bcrypt.compare(plainText, hash);
     } catch (err) {
