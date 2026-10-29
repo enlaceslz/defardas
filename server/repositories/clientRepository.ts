@@ -3,12 +3,26 @@
  * Gerencia persistência de clientes garantindo conformidade com PostgreSQL e Drizzle.
  */
 import { eq, desc } from 'drizzle-orm';
-import { db as drizzleDb } from '../db/index';
+import { query, db as drizzleDb } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
 import { clients, Client, NewClient } from '../db/schema/clients';
 import { ClientEntity } from '../types/db';
 
 export class ClientRepository {
+  public async hasHistory(clientId: string): Promise<boolean> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) {
+      const result = await query(`SELECT EXISTS(SELECT 1 FROM crm.quotes WHERE client_id=$1)
+        OR EXISTS(SELECT 1 FROM producao.production_orders WHERE client_id=$1)
+        OR EXISTS(SELECT 1 FROM communication.conversations WHERE client_id=$1) AS found`, [clientId]);
+      return result.rows[0].found;
+    }
+    if (process.env.DATABASE_URL || process.env.NODE_ENV === 'production') throw new Error('PostgreSQL indisponível.');
+    return [...fallbackDb.quotes.values()].some((row) => row.clientId === clientId) ||
+      [...fallbackDb.orders.values()].some((row) => row.clientId === clientId) ||
+      [...fallbackDb.conversations.values()].some((row) => row.clientId === clientId);
+  }
+
   public async findAll(): Promise<ClientEntity[]> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {

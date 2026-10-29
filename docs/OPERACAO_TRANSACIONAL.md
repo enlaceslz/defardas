@@ -216,3 +216,12 @@ O registro de chave não tem FK nem exclusão em cascata para o título: se um t
 A tela conserva a chave ao reenviar os mesmos dados após falha e bloqueia submissão simultânea. Alterar dados, abrir novo formulário ou remontar/recarregar a tela gera outra intenção/chave. Conferir histórico se uma confirmação anterior for desconhecida. api.createTransaction(payload,chave) aceita chave explícita; omissão gera nova a cada chamada. Não há retry automático ou localStorage privado. Chaves diferentes não são deduplicadas.
 
 A proteção é do cadastro manual, sem mudar conversão de propostas ou baixa. Formulário e snapshot de chave permanecem apenas na memória do componente. A política de retenção definitiva dos registros de chave precisa acompanhar a operação; não limpar indiscriminadamente core.event_log.
+
+
+## Exclusão de cadastros com vínculos
+
+A API de exclusão de clientes retorna 409 quando houver proposta, OP ou conversa vinculada. Conversa impede remoção mesmo sem proposta/produção, evitando perda silenciosa de client_id por SET NULL. Proposta bloqueada ou vinculada a OP, título financeiro ou lead convertido também retorna 409, preservando quote_id/converted_quote_id.
+
+As verificações usam EXISTS no PostgreSQL, dentro da mesma transação/lock das exclusões. Cliente não carrega mais coleções completas de propostas e OPs para verificar histórico. Registros sem esses vínculos continuam no fluxo de exclusão já existente, com auditoria na mesma transação; falha de auditoria reverte remoção e dependências em cascata.
+
+Não há remoção/desvinculação/anonimização automática nem alteração de FKs nesta entrega. SQL administrativo direto pode contornar a API e exige procedimento próprio. Definição de retenção/anonimização e eventual arquivamento permanecem pendentes; esta proteção preserva relações existentes, sem implementar política geral de eliminação de dados. O segmento do cliente é validado em até 60 caracteres, conforme schema; corpo ausente recebe validação de entrada em vez de falha interna.
