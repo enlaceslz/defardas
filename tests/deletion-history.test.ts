@@ -251,3 +251,15 @@ test('duas etapas concorrentes da mesma revisão têm um vencedor e rollback con
   assert.deepEqual(db.orders.get(id), before);
   assert.equal((await advanceStage(id, { targetStage: 'expedicao', expectedRevision: 2 })).data.order.revision, 3);
 });
+
+
+test('revisão antiga recebe conflito antes dos gates; revisão atual continua bloqueada pelo portão', async () => {
+  const id = crypto.randomUUID();
+  db.orders.set(id, { id, revision: 2, orderNumber: `CAS-${id.slice(0,8)}`, stage: 'aguardando_liberacao', artApproved: false, entryPaymentConfirmed: false } as any);
+  const before = structuredClone(db.orders.get(id));
+  const stale = await advanceStage(id, { targetStage: 'corte', expectedRevision: 1 });
+  assert.equal(stale.status, 409); assert.equal(stale.data.code, 'ORDER_REVISION_CONFLICT');
+  const current = await advanceStage(id, { targetStage: 'corte', expectedRevision: 2 });
+  assert.equal(current.status, 422); assert.equal(current.data.gateStatus.artApproved, false);
+  assert.deepEqual(db.orders.get(id), before);
+});

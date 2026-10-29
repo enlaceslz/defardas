@@ -42,6 +42,10 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
   const expectedRevision = number(req.body.expectedRevision, 'Revisão esperada da OP', 1, true);
   const oldStage = order.stage;
 
+  if (targetStage !== oldStage && expectedRevision !== (order.revision ?? 1)) {
+    return res.status(409).json({ error: 'A OP foi alterada desde a leitura. Atualize os dados antes de mudar a etapa.', code: 'ORDER_REVISION_CONFLICT' });
+  }
+
   // PORTÃO RÍGIDO (GATE A.3.2): Transição de 'aguardando_liberacao' para 'corte' ou qualquer etapa fabril
   if (targetStage !== 'aguardando_liberacao') {
     const isArtApproved = !!order.artApproved;
@@ -77,10 +81,6 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
   // Mantém os portões acima, inclusive para OP histórica em estado inconsistente.
   if (oldStage === targetStage) {
     return res.json({ success: true, alreadyAtStage: true, message: `OP já está na etapa ${targetStage}.`, order });
-  }
-
-  if (expectedRevision !== (order.revision ?? 1)) {
-    return res.status(409).json({ error: 'A OP foi alterada desde a leitura. Atualize os dados antes de mudar a etapa.', code: 'ORDER_REVISION_CONFLICT' });
   }
 
   order.stage = targetStage;
