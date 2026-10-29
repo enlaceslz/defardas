@@ -8,8 +8,14 @@ export type ErrorContext = 'api' | 'startup' | 'database_connect' | 'user_reposi
 /** Never serialize errors, messages, stacks, causes, requests or arbitrary error codes. */
 export function operationalErrorCode(error: unknown): string {
   try {
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-    return typeof code === 'string' && knownCodes.has(code) ? code : 'UNCLASSIFIED';
+    let current = error;
+    // Drizzle encapsula erros PG. Ler apenas códigos permitidos, sem serializar causas.
+    for (let depth = 0; depth < 3 && current && typeof current === 'object'; depth++) {
+      const code = 'code' in current ? current.code : undefined;
+      if (typeof code === 'string' && knownCodes.has(code)) return code;
+      current = 'cause' in current ? current.cause : undefined;
+    }
+    return 'UNCLASSIFIED';
   } catch { return 'UNCLASSIFIED'; }
 }
 export function logOperationalError(context: ErrorContext, error: unknown): string {

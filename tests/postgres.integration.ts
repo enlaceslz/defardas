@@ -1,4 +1,5 @@
 import 'express-async-errors';
+import { apiErrorHandler } from '../server/middleware/apiErrorHandler';
 import { manageUser } from '../server/auth/userManagementService';
 import assert from 'node:assert/strict';
 import { before, after, test } from 'node:test';
@@ -64,7 +65,7 @@ before(async () => {
   app.use('/api/clients', clientsRouter); app.use('/api/quotes', quotesRouter); app.use('/api/orders', ordersRouter);
   app.use('/api/leads', leadsRouter);
   app.use('/api/finance', financeRouter); app.use('/api/inventory', inventoryRouter);
-  app.use((err: any, _req: any, res: any, _next: any) => { res.status(err.status || 500).json({ error: err.message }); });
+  app.use(apiErrorHandler);
   server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => server.on('listening', resolve));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
   const client = await request('/api/clients', 'POST', { companyName: 'Empresa Teste', tradeName: 'Teste', cnpj: crypto.randomUUID().slice(0, 18),

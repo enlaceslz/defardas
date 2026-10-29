@@ -181,3 +181,5 @@ Resultados de somas/subtrações são normalizados em duas casas antes de persis
 A gravação de movimentação é inserção estrita: colisão de UUID ou número comercial gera conflito e reverte saldo/evento/auditoria na transação existente. Não há mais `ON CONFLICT DO NOTHING` nesse histórico. Isso não implementa idempotência por requisição: cliques/reenvios com novos números ainda precisam de contrato próprio. Não tentar reparar colisão descartando histórico.
 
 Fornecedor/localização opcionais respeitam os limites SQL (120/80 caracteres), sem rótulos de homologação ou localização presumida no cadastro/leitura. Dados históricos já gravados não são reescritos. Motivo/documento da movimentação recebem validação de texto/limites; leitura do histórico preserva `operatorId`, antes omitido no mapeamento.
+
+Conflitos SQL encapsulados pelo Drizzle são classificados por código permitido em até três níveis de causa; detalhes continuam privados. Colisão de unicidade responde 409 usando o mesmo middleware validado na suíte PostgreSQL.
