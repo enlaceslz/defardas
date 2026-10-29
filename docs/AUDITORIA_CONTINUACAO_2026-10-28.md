@@ -260,3 +260,13 @@ Correção: rejeição auditada explícita desfaz a UoW de negócio antes de ini
 Validação local: 85 testes, tipagem, build Vite e diff-check aprovados. Teste da infraestrutura prova rollback antes do callback, rollback da segunda UoW em falha e rejeição comum inalterada. Teste HTTP cobre evento, OP intacta e falha de auditoria. Dois testes PostgreSQL adicionais cobrem quatro bloqueios concorrentes persistidos, falha de auditoria, escrita real revertida antes do log e rollback de log inserido seguido de falha; dependem da CI com pool de uma conexão. Endpoint de injeção existe somente no app de testes. Bundle permanece 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite usado.
 
 Sem banco real, mensagem externa, merge ou deploy. Existe janela de falha entre rollback e auditoria; não há outbox/retry automático nem promessa de registro em queda do processo/banco. Eventos anteriormente perdidos não são reconstruídos. Cada tentativa bloqueada é um evento independente.
+
+## Continuação de 29/10/2026: precisão e capacidade SQL na criação de propostas
+
+Base: PR #22, commit 62a6f81d; CI 40868755168 aprovada.
+
+A revisão confirmou bloqueio da mudança de status de proposta convertida. Achado na criação: custos/percentuais/preço negociado aceitavam valores com precisão maior que as colunas; valores derivados, somatórios e quantidade inteira podiam exceder o schema. Memória aceitava resultados que o PostgreSQL arredondaria ou rejeitaria.
+
+Correção: validação técnica dos campos numeric de custo/preço/percentuais e dos resultados calculados/totais antes de reservar número. Grade total limitada à coluna integer. Corpo ausente/item nulo recebem 400. Motor de markup e arredondamento dos derivados, sinal e alçada existente não mudam; margem negativa representável continua aceita. Sem schema/migração nem política comercial nova.
+
+Validação local: 87 testes, tipagem, build Vite e diff-check aprovados. Dois testes HTTP cobrem precisão/overflow de componentes, percentuais, preço, derivados, somatório e grade; comprovam ausência de reserva de número/mutação e preservação da fórmula decimal/margem negativa. Dois testes PostgreSQL adicionais verificam entradas inválidas sem contador/gravação e recarga de decomposição, percentuais e totais; dependem da CI. Bundle permanece 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite usado. Sem banco real, mensagem externa, merge ou deploy. Valores históricos já arredondados e demais contratos não são reconciliados/homologados por esta entrega.
