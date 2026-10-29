@@ -121,6 +121,14 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
   if (existing.length) return res.json({ success: true, alreadyConverted: true, order: existing[0], orders: existing });
   if (quote.commercialStatus !== 'aprovado' || quote.isLocked) return res.status(409).json({ error: 'A proposta precisa estar aprovada para conversão.' });
   if (!quote.items.length) throw new InputError('Proposta sem itens.');
+  const validMoney = (value: number) => Number.isFinite(value) && value >= 0 && value <= 9999999999.99 && money(value) === value;
+  const total = quote.negotiatedTotalAmount;
+  const itemTotal = money(quote.items.reduce((sum, item) => sum + item.totalItemPrice, 0));
+  if (![total, quote.entryAmount, quote.balanceAmount].every((value) => validMoney(value) && value > 0) ||
+      !quote.items.every((item) => validMoney(item.totalItemPrice)) || quote.entryPercentage !== 50 ||
+      total !== itemTotal || quote.entryAmount !== money(total / 2) || quote.balanceAmount !== money(total - quote.entryAmount)) {
+    return res.status(409).json({ error: 'Valores da proposta incompatíveis com a conversão: confira o total dos itens e duas parcelas positivas de sinal e saldo conforme o percentual de 50%.', code: 'QUOTE_FINANCIAL_CONFLICT' });
+  }
   const now = new Date().toISOString();
   const delivery = productionDeadline(quote.productionLeadDays, new Date(now)).deliveryDate;
   const orders: ProductionOrderEntity[] = [];

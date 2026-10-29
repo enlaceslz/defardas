@@ -220,7 +220,7 @@ export class QuoteRepository {
       authorizedByName: row.authorizedByName || undefined,
       authorizationDate: row.authorizationDate ? row.authorizationDate.toISOString() : undefined,
       authorizationNotes: row.authorizationNotes || undefined,
-      entryPercentage: 50.00 as const,
+      entryPercentage: parseFloat(row.entryPercentage),
       entryAmount: parseFloat(row.entryAmount),
       balanceAmount: parseFloat(row.balanceAmount),
       paymentTerms: row.paymentTerms,

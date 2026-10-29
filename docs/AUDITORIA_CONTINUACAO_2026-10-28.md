@@ -310,3 +310,13 @@ Achados: prazo aceitava inteiro maior que a coluna SQL ou que a capacidade do c�
 Correções: cabeçalho validado antes da numeração; prazo validado contra integer e data AAAA-MM-DD (0001–9999) na criação e conversão. Ano zero é rejeitado no validador comum. Data vazia informada não recebe fallback silencioso para hoje. Mantido cálculo de dias corridos/UTC e idempotência de conversão existente; sem novo prazo comercial, calendário útil ou reparo de dados históricos.
 
 Validação local: 97 testes, tipagem, build e diff-check aprovados. Dois testes da validação cobrem bissexto, virada de ano, limite de formato e entradas inválidas; teste HTTP cobre cabeçalho sem reserva de número e conversão histórica sem OP/título. Novo teste PostgreSQL verifica contador/dados preservados, recusa legada, retry após correção apenas da fixture e replay de conversão. CI PostgreSQL/Docker ainda deve validar este commit. Sem migração, banco real, mensagem externa, merge ou deploy.
+
+## Continuação de 29/10/2026: conversão sem parcelas zero ou divergência histórica
+
+Base: PR #27, commit 49d5f3cb; CI 40947222300 aprovada.
+
+Achados: proposta zero/de um centavo gerava parcela zero, aceita na memória e recusada por transactions_positive_amount no PostgreSQL. Conversão usava parcelas sem conferir total dos itens, metade/restante ou percentual; o mapeamento da leitura ainda trocava percentual armazenado por 50, ocultando inconsistência histórica.
+
+Correções: guard 409/QUOTE_FINANCIAL_CONFLICT antes de numerar/gravar OPs/títulos confere representação, positividade, soma dos itens, percentual 50 e parcelas conforme arredondamento existente. Leitura preserva percentual real; tipo da entidade representa histórico sem relaxar validação de criação/conversão. Sem preço mínimo comercial, mudança de markup/cobrança, reparo automático ou alteração do replay já convertido.
+
+Validação local: 99 testes, tipagem, build e diff-check aprovados. Dois testes HTTP verificam zero/um centavo bloqueados, dois/três centavos convertidos com soma correta e repetição, além de divergências sem reserva de número. Dois testes PostgreSQL adicionados verificam contador/dados preservados, parcelas positivas e percentual 45 lido como 45 e bloqueado; dependem da CI. Sem migração, banco real, mensagem externa, merge ou deploy.

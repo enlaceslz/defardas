@@ -76,3 +76,41 @@ test('prazo/data inválidos são rejeitados antes do número e conversão histó
   assert.equal(response.status, 400); assert.deepEqual(db.orders, orders); assert.deepEqual(db.finance, titles);
   assert.deepEqual(db.quotes.get(id), quote);
 });
+
+const convert = (id: string) => fetch(`${base}/quotes/${id}/convert-to-order`, { method: 'POST' });
+test('conversão não cria títulos zero e mantém arredondamento existente nas parcelas positivas', async () => {
+  for (const amount of [0, 0.01, 0.02, 0.03]) {
+    const saved = await create({ ...input([{ ...item(), materialUnitCost: amount, outsourcedSewingUnitCost: 0, customizationUnitCost: 0,
+      freightUnitCost: 0, technicalLossPercentage: 0, markupPercentage: 0, sizes: { p: 1 }, totalQuantity: 1 }]), commercialStatus: 'aprovado' });
+    assert.equal(saved.status, 201); const orders = structuredClone(db.orders); const titles = structuredClone(db.finance);
+    const response = await convert(saved.data.id); const result = await response.json();
+    if (amount < 0.02) {
+      assert.equal(response.status, 409); assert.equal(result.code, 'QUOTE_FINANCIAL_CONFLICT');
+      assert.deepEqual(db.orders, orders); assert.deepEqual(db.finance, titles);
+      assert.equal(db.quotes.get(saved.data.id)!.commercialStatus, 'aprovado');
+    } else {
+      assert.equal(response.status, 201); assert.equal(result.financeTransactions.length, 2);
+      assert.ok(result.financeTransactions.every((title: any) => title.amount > 0));
+      assert.equal(Math.round(result.financeTransactions.reduce((sum: number, title: any) => sum + title.amount, 0) * 100), Math.round(amount * 100));
+      assert.equal((await convert(saved.data.id)).status, 200);
+    }
+  }
+});
+
+test('conversão recusa divergência histórica de percentual/parcelas/itens antes de reservar número', async () => {
+  const saved = await create({ ...input(), commercialStatus: 'aprovado' }); assert.equal(saved.status, 201);
+  const id = saved.data.id; const originalQuote = structuredClone(db.quotes.get(id)!);
+  const orderNumber = sequenceService.nextOrderNumber; const financeNumber = sequenceService.nextFinanceNumber; let calls = 0;
+  try {
+    sequenceService.nextOrderNumber = sequenceService.nextFinanceNumber = async () => { calls++; throw new Error('Invalid conversion must not allocate'); };
+    for (const update of [{ entryPercentage: 45 }, { entryAmount: originalQuote.entryAmount + 1 }, { balanceAmount: 0 },
+      { negotiatedTotalAmount: originalQuote.negotiatedTotalAmount + 1 },
+      { items: originalQuote.items.map((item) => ({ ...item, totalItemPrice: item.totalItemPrice + 1 })) }]) {
+      db.quotes.set(id, { ...structuredClone(originalQuote), ...update });
+      const before = structuredClone(db.quotes.get(id));
+      const response = await convert(id); assert.equal(response.status, 409);
+      assert.deepEqual(db.quotes.get(id), before);
+    }
+  } finally { sequenceService.nextOrderNumber = orderNumber; sequenceService.nextFinanceNumber = financeNumber; }
+  assert.equal(calls, 0);
+});

@@ -74,3 +74,9 @@ Isso não limpa histórico que possa conter URLs privadas nem configura logs do 
 Após o PR #26, foram corrigidos prazo que excedia integer/Date e aceitação de ano zero. Criação valida o cabeçalho antes da numeração; conversão confere prazo novamente antes de criar OP/título. Erros recebem 400 sem efeitos parciais, inclusive em fixture histórica inválida. Datas mantêm o formato AAAA-MM-DD (0001–9999), dias corridos de 24h e comportamento UTC anterior; isso não homologa calendário ou prazo comercial.
 
 Validação local passa a 97 testes, com bissexto, viradas e limites de representação; teste PostgreSQL adicional confere preservação de contador/estado e repetição de conversão. Conferir CI do novo PR. Última CI de base: 40945106280, PR #26. Nenhum dado real foi corrigido/migrado; bloqueios operacionais anteriores permanecem.
+
+## Continuação: coerência das parcelas na conversão
+
+Após o PR #27, a conversão passou a conferir total dos itens, percentual armazenado e duas parcelas positivas/coerentes antes de gravar. Propostas zero/de um centavo não geram título zero; divergências históricas recebem conflito sem correção automática. A leitura agora conserva percentual real, enquanto novas propostas continuam exigindo 50. Arredondamento de centavos e markup não mudam, e não foi definido mínimo comercial.
+
+Validação local passa a 99 testes; dois testes PostgreSQL adicionais verificam persistência, contadores e divergência histórica. Conferir CI do novo PR; última CI de base aprovada: 40947222300, PR #27. Bloqueios de produção documentados permanecem e nenhum dado real foi alterado.

@@ -29,3 +29,5 @@ Continuação de configuração PostgreSQL: 92 testes locais, tipagem e build ap
 Continuação de privacidade: 94 testes locais, tipagem e build aprovados. Bloqueios de acesso e rate limit usam modelo de rota do servidor, evitando URL/query/valores privados e contadores separados por variação de caixa. Persistência do evento é coberta por teste PostgreSQL adicional na CI do novo PR. Histórico, proxy e rate limit entre processos seguem fora dessa correção.
 
 Continuação de prazos: 97 testes locais, tipagem e build aprovados. Cabeçalho é validado antes do número; prazo e data representável são conferidos também na conversão. Ano zero é recusado. Nenhuma regra de prazo comercial/calendário útil foi criada; ver operação transacional e CI do PR correspondente para evidências e limites.
+
+Continuação financeira: 99 testes locais, tipagem e build aprovados. Conversão exige duas parcelas positivas e coerentes com percentual/total dos itens antes de gravar; leitura não disfarça percentual histórico. Não altera preço comercial ou arredondamento existente. Evidência PostgreSQL/Docker deve ser conferida na CI do PR correspondente.
