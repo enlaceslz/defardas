@@ -105,7 +105,8 @@ test('produção falha ao iniciar sem DATABASE_URL', () => {
     env: { ...process.env, NODE_ENV: 'production', DATABASE_URL: '' }, encoding: 'utf8', timeout: 15000,
   });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /DATABASE_URL obrigatória/);
+  assert.match(result.stderr, /DATABASE_URL_MISSING/);
+  assert.match(result.stderr, /"context":"startup"/);
 });
 
 test('produção não confirma escrita em memória quando PostgreSQL falha', async () => {

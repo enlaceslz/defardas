@@ -161,3 +161,12 @@ Atualização privada mantém RBAC comercial e só aceita os quatro estados exis
 Atribuição é persistida em `assigned_seller_id` e devolvida na leitura. Estado/responsável e auditoria `LEAD_UPDATED` participam da mesma transação. Repetir estado/atribuição idênticos não grava novo evento. A captura `LEAD_CAPTURED` passa a referenciar UUID interno do lead, como as alterações; eventos antigos com número comercial permanecem históricos. Falha de auditoria reverte gravação e, no PostgreSQL, contador de captura.
 
 Não há migração nova nesta correção. Proteção distribuída contra abuso da captura pública, política de leitura, conversão comercial completa e interface de gestão dos leads ainda exigem entrega/homologação.
+
+
+## Diagnóstico operacional sem conteúdo privado
+
+Falhas tratadas pelo middleware da API registram JSON com `event`, `context`, `incidentId` e `code`. O código pertence a uma lista fechada de SQL/rede/configuração; outros valores viram `UNCLASSIFIED`. Não são serializados mensagem arbitrária da exceção, stack, cause, consulta, parâmetros, corpo, query string, cookies ou headers. O middleware devolve `X-Diagnostic-Id` gerado no servidor para correlacionar a falha com o log, preservando mensagens HTTP genéricas e validações InputError controladas pela aplicação.
+
+O mesmo diagnóstico é usado no catch de inicialização, conexão com banco, erros do repositório de usuários, comparação de senha, limpeza de sessões e falhas inesperadas dos CLIs `admin:create`, `db:migrate` e `user:reset-password`. Falta de DATABASE_URL em produção gera código `DATABASE_URL_MISSING` e mantém início abortado. Erros conhecidos de entrada dos CLIs continuam exibindo apenas mensagens controladas, sem valores fornecidos pelo operador.
+
+Esses logs não substituem a trilha de auditoria transacional nem implementam monitoramento/retention. Ao investigar, usar o identificador, contexto e código; não reativar serialização completa de exceções em ambiente com dados reais. Revisar também logs do proxy, PostgreSQL, provedor e plataforma de hospedagem, que não são configurados por esta mudança. Nenhum histórico de log foi apagado ou analisado retroativamente.

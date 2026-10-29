@@ -1,3 +1,4 @@
+import { logOperationalError } from '../observability/errors';
 /**
  * DE FARDAS ERP — User Repository & Persistence
  * Persistência e gerenciamento de usuários no PostgreSQL (schema core.users)
@@ -135,7 +136,7 @@ class UserRepository {
         }
       } catch (err) {
         if (process.env.NODE_ENV === 'production') throw err;
-        console.warn('[AUTH] Falha ao consultar PostgreSQL para usuário, recorrendo ao repositório local:', err);
+        logOperationalError('user_repository', err);
       }
     }
 
@@ -176,7 +177,7 @@ class UserRepository {
         }
       } catch (err) {
         if (process.env.NODE_ENV === 'production') throw err;
-        console.warn('[AUTH] Falha ao consultar PostgreSQL para usuário por ID:', err);
+        logOperationalError('user_repository', err);
       }
     }
 
@@ -205,7 +206,7 @@ class UserRepository {
         }));
       } catch (err) {
         if (process.env.NODE_ENV === 'production') throw err;
-        console.warn('[AUTH] Falha ao listar usuários do PostgreSQL:', err);
+        logOperationalError('user_repository', err);
       }
     }
 
@@ -246,7 +247,7 @@ class UserRepository {
         );
       } catch (err) {
         if (process.env.NODE_ENV === 'production') throw err;
-        console.error('[AUTH] Falha ao persistir usuário no PostgreSQL:', err);
+        logOperationalError('user_repository', err);
       }
     }
 

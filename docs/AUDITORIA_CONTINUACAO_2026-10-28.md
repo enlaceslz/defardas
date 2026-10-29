@@ -127,3 +127,16 @@ Correções: validação de campos/categoria e quantidade inteira positiva dentr
 Validação local: 63 testes, tipagem, build Vite e diff-check aprovados. Três novos testes HTTP cobrem normalização, quantidade sem fallback, limites/tipos, campos privados ignorados, estados inválidos, conversão fictícia, atribuição e rollback/idempotência. Dois testes PostgreSQL adicionados cobrem contador/captura em falha de auditoria e atribuição/remoção recarregada com rollback e trilha de eventos; execução depende da CI deste commit. Bundle permanece 464,64 kB / 119,48 kB gzip. `compile_applet` indisponível; build Vite utilizado.
 
 Nenhuma migração nova, operação em banco real, deploy ou mensagem externa. Pendências: controles de abuso distribuídos no portal, leitura por perfil, conversão lead→proposta e interface/homologação do CRM; demais frentes S3/e-mail/WhatsApp permanecem abertas. Esta revisão não constitui liberação de produção.
+
+
+## Continuação de 29/10/2026: privacidade dos diagnósticos operacionais
+
+Base: PR #11, commit `c4f6f141`; CI 40810298577 aprovada.
+
+Achados: middleware global imprimia objeto de erro completo, incluindo corpo de JSON inválido/SQL/cause; catch de inicialização expunha erros encadeados; falhas de conexão/usuário/senha/sessões e alguns CLIs também podiam serializar exceções ou suas mensagens arbitrárias. Dados não necessariamente apareciam na resposta HTTP, mas podiam persistir nos logs.
+
+Correção: logger operacional com campos fixos, UUID gerado no servidor e código de lista fechada; sem serialização de erros/requests. Middleware global extraído e preserva classificação HTTP existente, com X-Diagnostic-Id para correlação. Se a resposta já começou, fecha conexão sem repassar exceção bruta ao handler padrão. Aplicado aos caminhos de startup, banco/autenticação e três CLIs identificados. Validações controladas continuam legíveis; falta de banco em produção segue bloqueando inicialização com código fixo. Sem mudanças comerciais ou banco/schema.
+
+Validação local: 66 testes, tipagem, build Vite e diff-check aprovados. Três novos testes verificam projeção de erro/código desconhecido, requisições HTTP reais com JSON inválido/limite/SQL/headers/query/credenciais e CLIs com URL inválida contendo segredo fictício; nenhum valor sensível da fixture apareceu nas saídas. Teste de startup atualizado para código fixo, preservando exit 1. PostgreSQL, backup e Docker deste commit dependem da CI. `compile_applet` indisponível; build Vite utilizado. Bundle permanece 464,64 kB / 119,48 kB gzip.
+
+Escopo: caminhos de erro tratados pela aplicação nesta entrega. Não é avaliação integral de todos os logs, dependências ou infraestrutura; logs de proxy/PostgreSQL/provedor e política de retenção permanecem operacionais. Não houve inspeção/remoção de logs reais, migração, mensagem externa, deploy ou alteração de conta operacional. RBAC de leitura, S3/e-mail, integrações e homologação continuam pendentes.

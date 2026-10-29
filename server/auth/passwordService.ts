@@ -1,3 +1,5 @@
+import { InputError } from '../validation/input';
+import { logOperationalError } from '../observability/errors';
 /**
  * DE FARDAS ERP — Password Service
  * Criptografia robusta de senhas utilizando bcrypt com salt rounds de alta segurança.
@@ -12,7 +14,7 @@ export class PasswordService {
    */
   public static async hashPassword(password: string): Promise<string> {
     const strength = this.validatePasswordStrength(password);
-    if (!strength.valid) throw new Error(strength.reason);
+    if (!strength.valid) throw new InputError(strength.reason);
     return bcrypt.hash(password, SALT_ROUNDS);
   }
 
@@ -24,7 +26,7 @@ export class PasswordService {
     try {
       return await bcrypt.compare(plainText, hash);
     } catch (err) {
-      console.error('[AUTH] Erro ao comparar hashes de senha:', err);
+      logOperationalError('password_compare', err);
       return false;
     }
   }
