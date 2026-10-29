@@ -113,7 +113,19 @@ export default function App() {
   const handleDeleteOrder = async (id: string) => {
     if (confirm(`Excluir OP ${id}?`)) await mutate(() => api.deleteOrder(databaseId(state.orders, id)));
   };
-  const handleUpdateOrderStage = async (id: string, stage: OperationalStage) => { await mutate(() => api.advanceOrderStage(databaseId(state.orders, id), stage)); };
+  const handleUpdateOrderStage = async (id: string, stage: OperationalStage) => {
+    const order = state.orders.find((item) => item.id === id);
+    if (!order || !Number.isSafeInteger(order.revision) || order.revision! < 1) {
+      await refreshServerState();
+      alert('Dados da OP foram atualizados. Confira a etapa e tente novamente.');
+      return;
+    }
+    await mutate(async () => {
+      const response = await api.advanceOrderStage(databaseId(state.orders, id), stage, order.revision!);
+      if (response.code === 'ORDER_REVISION_CONFLICT') await refreshServerState();
+      return response;
+    });
+  };
   const handleConfirmEntryPayment = () => {
     setCurrentTab('finance');
     alert('Localize o título de sinal da proposta e confirme a liquidação com a autenticação bancária e o comprovante real.');

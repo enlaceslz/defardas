@@ -42,6 +42,13 @@ export class OrderRepository {
     return Array.from(fallbackDb.orders.values());
   }
 
+  // Usar dentro de unitOfWork: o lock da linha dura até commit/rollback.
+  public async findByIdForUpdate(id: string): Promise<ProductionOrderEntity | null> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) await query('SELECT id FROM producao.production_orders WHERE id=$1 FOR UPDATE', [id]);
+    return this.findById(id);
+  }
+
   public async findById(id: string): Promise<ProductionOrderEntity | null> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
@@ -89,7 +96,11 @@ export class OrderRepository {
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
       throw new Error('PostgreSQL indisponível.');
     }
-    if (!fallbackDb.isConnected()) fallbackDb.orders.set(order.id, order);
+    if (!fallbackDb.isConnected()) {
+      const existing = fallbackDb.orders.get(order.id);
+      order.revision = existing ? (existing.revision ?? 1) + 1 : 1;
+      fallbackDb.orders.set(order.id, order);
+    }
 
     if (fallbackDb.isConnected()) {
       try {
@@ -131,7 +142,7 @@ export class OrderRepository {
           isDemo: order.isDemo ?? false,
         };
 
-        await drizzleDb
+        const [saved] = await drizzleDb
           .insert(productionOrders)
           .values(newRecord)
           .onConflictDoUpdate({
@@ -160,7 +171,9 @@ export class OrderRepository {
               assignedTeam: newRecord.assignedTeam,
               updatedAt: new Date(),
             },
-          });
+          }).returning({ revision: productionOrders.revision, updatedAt: productionOrders.updatedAt });
+        order.revision = saved.revision;
+        order.updatedAt = saved.updatedAt.toISOString();
       } catch (err) {
         throw err;
         console.error(`❌ [OrderRepository] Falha ao persistir OP ${order.id} via Drizzle:`, err);
@@ -199,6 +212,7 @@ export class OrderRepository {
   private mapToEntity(row: ProductionOrder): ProductionOrderEntity {
     return {
       id: row.id,
+      revision: row.revision,
       orderNumber: row.orderNumber,
       quoteId: row.quoteId || undefined,
       quoteItemId: row.quoteItemId || undefined,

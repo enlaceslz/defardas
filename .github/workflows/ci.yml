@@ -55,6 +55,11 @@ jobs:
           test "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_test -Atc "$task_counts_sql")" = "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_restore_test -Atc "$task_counts_sql")"
           task_receipts_sql="SELECT md5(COALESCE(string_agg(id::text || payload::text, '' ORDER BY id),'')) FROM core.event_log WHERE event_type='FINANCE_MANUAL_CREATED'"
           test "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_test -Atc "$task_receipts_sql")" = "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_restore_test -Atc "$task_receipts_sql")"
+          task_revisions_sql="SELECT md5(COALESCE(string_agg(id::text || ':' || revision::text, '' ORDER BY id),'')) FROM producao.production_orders"
+          test "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_test -Atc "$task_revisions_sql")" = "$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_restore_test -Atc "$task_revisions_sql")"
+          task_revision_before="$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_restore_test -Atc 'SELECT revision FROM producao.production_orders ORDER BY id LIMIT 1')"
+          task_revision_after="$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d defardas_restore_test -Atc 'WITH changed AS (UPDATE producao.production_orders SET technical_notes=technical_notes WHERE id=(SELECT id FROM producao.production_orders ORDER BY id LIMIT 1) RETURNING revision) SELECT revision FROM changed')"
+          test "$task_revision_after" -eq "$((task_revision_before + 1))"
           { gunzip -c "$task_backup_file"; echo '-- changed bytes'; } | gzip > "$task_backup_dir/tampered.sql.gz"
           cp "$task_backup_file.sha256" "$task_backup_dir/tampered.sql.gz.sha256"
           if POSTGRES_DB=defardas_restore_test bash scripts/restore.sh "$task_backup_dir/tampered.sql.gz" --force; then

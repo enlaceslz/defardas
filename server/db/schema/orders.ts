@@ -8,6 +8,7 @@ export const producaoSchema = pgSchema('producao');
 
 export const productionOrders = producaoSchema.table('production_orders', {
   id: uuid('id').primaryKey().defaultRandom(),
+  revision: integer('revision').notNull().default(1),
   orderNumber: varchar('order_number', { length: 30 }).unique().notNull(), // Ex: OP-2026-0101
   quoteId: uuid('quote_id').references(() => quotes.id, { onDelete: 'restrict' }),
   quoteItemId: uuid('quote_item_id').references(() => quoteItems.id, { onDelete: 'restrict' }),

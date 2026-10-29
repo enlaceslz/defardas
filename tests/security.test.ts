@@ -66,7 +66,7 @@ test('financeiro não cria, altera ou converte propostas nem aprova arte', async
 });
 test('gate fabril rejeita corte antes de sinal confirmado', async () => {
   const response = await fetch(base + '/api/orders/op1111111-1111-1111-1111-111111111111/advance-stage', {
-    method: 'POST', headers: await authHeaders('pcp_producao'), body: JSON.stringify({ targetStage: 'corte' }),
+    method: 'POST', headers: await authHeaders('pcp_producao'), body: JSON.stringify({ targetStage: 'corte', expectedRevision: 1 }),
   });
   assert.equal(response.status, 422);
 });

@@ -259,6 +259,7 @@ export class DatabaseManager {
 
     // 5. Ordem de produção modelo (OP-2026-0101) com Portão A.3.2 em aguardando liberação
     const op1: ProductionOrderEntity = {
+      revision: 1,
       id: 'op1111111-1111-1111-1111-111111111111',
       orderNumber: 'OP-2026-0101',
       quoteId: q1.id,

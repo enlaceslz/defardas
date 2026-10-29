@@ -196,10 +196,10 @@ class ApiClient {
     return this.request<any[]>('/orders', { method: 'GET' });
   }
 
-  public async advanceOrderStage(orderId: string, targetStage: string) {
+  public async advanceOrderStage(orderId: string, targetStage: string, expectedRevision: number) {
     return this.request<any>(`/orders/${orderId}/advance-stage`, {
       method: 'POST',
-      body: JSON.stringify({ targetStage }),
+      body: JSON.stringify({ targetStage, expectedRevision }),
     });
   }
 

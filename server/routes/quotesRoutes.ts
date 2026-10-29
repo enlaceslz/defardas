@@ -148,7 +148,7 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
   const delivery = productionDeadline(quote.productionLeadDays, new Date(now)).deliveryDate;
   const orders: ProductionOrderEntity[] = [];
   for (const item of quote.items) {
-    const order: ProductionOrderEntity = { id: crypto.randomUUID(), orderNumber: await sequenceService.nextOrderNumber(),
+    const order: ProductionOrderEntity = { revision: 1, id: crypto.randomUUID(), orderNumber: await sequenceService.nextOrderNumber(),
       quoteId: quote.id, quoteItemId: item.id, quoteVersion: quote.version,
       idempotencyKey: `convert_${quote.id}_v${quote.version}_${item.id}`, clientId: quote.clientId, clientName: quote.clientName,
       itemTitle: item.modelName, category: item.category, fabricName: item.fabricName, fabricColor: item.fabricColor,
