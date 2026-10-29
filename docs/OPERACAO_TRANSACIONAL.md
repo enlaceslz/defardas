@@ -128,3 +128,23 @@ Antes da rede, uma transação grava mensagem `pending` e auditoria `WHATSAPP_SE
 A interface mantém a chave para repetir o mesmo rascunho na sessão do componente e não limpa texto em resultado pendente/falha. Recarregar a página perde essa chave em memória; conferir histórico antes de criar nova tentativa. Não há retry automático, worker/outbox ou entrega única garantida pelo provedor. `pending` pode significar que a rede não foi iniciada ou que o resultado não foi persistido; precisa de reconciliação operacional, ainda sem ferramenta automática. Não apagar pendentes para forçar envio.
 
 O ID interno deixa de ser copiado como identificador externo fictício. Captura do ID real e recibos ainda estão pendentes; `sent` registra aceitação HTTP do transporte, não entrega ao destinatário. Mensagens anteriores mantêm seus dados históricos. Nenhuma migração nova é necessária nesta etapa.
+
+
+## Reconciliação administrativa de envios pendentes
+
+`npm run whatsapp:reconcile` é um procedimento privilegiado pelo host, com `DATABASE_URL`, sem rota pública e sem chamada ao provedor. Antes de usá-lo, interromper novos envios e conferir o resultado no provedor por meio operacional autorizado. Timeout ou ausência de recibo não provam falha: se o resultado continuar desconhecido, manter `pending`.
+
+Localizar o ID interno do registro pendente por consulta controlada:
+
+```sql
+SELECT id, conversation_id, created_at, external_id
+FROM communication.messages
+WHERE direction='outbound' AND status='pending'
+ORDER BY created_at LIMIT 100;
+```
+
+Carregar no ambiente `ERP_WA_MESSAGE_ID` (UUID interno), `ERP_WA_STATUS` (`sent` ou `failed`), `ERP_WA_OPERATOR`, `ERP_WA_REASON` e `ERP_WA_EVIDENCE` (referência do chamado/registro da verificação). Para `sent`, `ERP_WA_EXTERNAL_ID` é obrigatório e deve conter o ID real de aceitação obtido do provedor; não representa recibo de entrega/leitura. Para `failed`, deixar a variável de ID externo ausente e usar somente confirmação inequívoca da falha pelo provedor. O comando registra a declaração do operador; não consulta nem autentica a evidência externamente.
+
+A identidade informada é declaratória e deve ser rastreada pelo controle de acesso ao host. Não colocar corpo de mensagem, telefone ou credenciais nas variáveis de motivo/evidência. Remover `ERP_WA_*` do shell ao terminar. O CLI não imprime conteúdo da mensagem nem erros internos de banco. Não executá-lo contra dados reais sem evidência operacional.
+
+Alteração de estado/ID e auditoria `WHATSAPP_RECONCILED` confirmam na mesma transação. Falha reverte tudo; não há retransmissão. Só mensagens de saída pendentes podem mudar. Repetir estado/ID já aplicado não duplica auditoria. Estado final divergente é rejeitado. Aceitação pode atualizar a prévia somente se não houver mensagem mais recente; não lidas são preservadas. Resposta tardia do envio original respeita o estado já reconciliado. Recibos automáticos, consulta real ao provedor, ferramenta de reenvio autorizado e worker/outbox continuam pendentes.

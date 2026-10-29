@@ -140,6 +140,9 @@ export class WhatsAppService {
     }
 
     return unitOfWork(async () => {
+      const current = await communicationRepository.findMessageById(newMsg.id);
+      if (!current) throw new Error('Intenção de envio indisponível.');
+      if (current.status !== 'pending') return current;
       await communicationRepository.saveMessage(newMsg);
       // Recarregar dentro da transação preserva atualizações de entrada ocorridas durante o envio.
       const conv = await communicationRepository.findConversationById(options.conversationId);

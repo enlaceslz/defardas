@@ -16,7 +16,8 @@
     "test:integration": "NODE_ENV=production node --import tsx --test tests/postgres.integration.ts",
     "admin:create": "node --import tsx scripts/create-admin.ts",
     "user:reset-password": "node --import tsx scripts/reset-user-password.ts",
-    "user:manage": "node --import tsx scripts/manage-user.ts"
+    "user:manage": "node --import tsx scripts/manage-user.ts",
+    "whatsapp:reconcile": "node --import tsx scripts/reconcile-whatsapp.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

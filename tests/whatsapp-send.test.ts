@@ -6,12 +6,13 @@ import { auditService } from '../server/services/auditService';
 import { InputError } from '../server/validation/input';
 
 async function fixture(run: (context: any) => Promise<void>) {
-  const originals = { findConversationById: repository.findConversationById, findChannelById: repository.findChannelById,
+  const originals = { findMessageById: repository.findMessageById, findConversationById: repository.findConversationById, findChannelById: repository.findChannelById,
     saveMessage: repository.saveMessage, saveConversation: repository.saveConversation, log: auditService.log, fetch: globalThis.fetch };
   const previousKey = process.env.WA_AKG_API_KEY;
   process.env.WA_AKG_API_KEY = 'test-only-runtime-key';
   const context = { requests: [] as any[], messages: [] as any[], conversations: [] as any[], audits: [] as any[],
     channel: { id: 'channel', provider: 'wa_akg', isActive: true, status: 'connected' } as any };
+  repository.findMessageById = async (id) => [...context.messages].reverse().find((message: any) => message.id === id) || null;
   repository.findConversationById = async () => ({ id: 'conversation', channelId: 'channel', customerPhone: '000', customerName: 'Teste' } as any);
   repository.findChannelById = async () => context.channel;
   repository.saveMessage = async (message) => { context.messages.push(message); return message; };
@@ -20,6 +21,7 @@ async function fixture(run: (context: any) => Promise<void>) {
   globalThis.fetch = async (url, options) => { context.requests.push({ url, options }); return new Response('{}', { status: 200 }); };
   try { await run(context); }
   finally {
+    repository.findMessageById = originals.findMessageById;
     repository.findConversationById = originals.findConversationById;
     repository.findChannelById = originals.findChannelById;
     repository.saveMessage = originals.saveMessage;
