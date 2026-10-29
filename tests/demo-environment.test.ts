@@ -17,7 +17,7 @@ import { isLocalDemoEnvironment } from '../server/auth/demoEnvironment';
 
 await db.ready;
 const app = express();
-app.use(express.json());
+app.use(express.json({ verify: (req: any, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
 // Fixture authenticated at the router boundary; no database is contacted.
 app.use((req: any, _res, next) => {
   req.user = { id: crypto.randomUUID(), fullName: 'Admin Test', email: 'admin@example.invalid', role: 'admin' };
@@ -167,4 +167,54 @@ test('rota de envio oculta falha interna e preserva status de validação', asyn
       assert.equal((await request()).status, error.status);
     }
   } finally { whatsAppService.sendMessage = original; }
+});
+
+
+test('webhooks operacionais exigem canal explícito e conferem provedor/telefone Meta', async () => {
+  const variables = ['WA_AKG_CHANNEL_ID', 'META_WA_CHANNEL_ID', 'META_WA_PHONE_NUMBER_ID', 'WA_AKG_WEBHOOK_SECRET', 'META_WA_APP_SECRET'];
+  const previous = Object.fromEntries(variables.map((key) => [key, process.env[key]]));
+  const originalFind = communicationRepository.findChannelById;
+  const originalHandle = whatsAppService.handleInboundMessage;
+  const received: any[] = [];
+  let provider = 'wa_akg';
+  communicationRepository.findChannelById = async (id) => ({ id, provider, isActive: true } as any);
+  whatsAppService.handleInboundMessage = async (input) => { received.push(input); return { id: 'saved' } as any; };
+  process.env.WA_AKG_WEBHOOK_SECRET = crypto.randomBytes(32).toString('hex');
+  process.env.META_WA_APP_SECRET = crypto.randomBytes(32).toString('hex');
+  const requestWa = (payload: any) => fetch(base + '/communication/webhooks/wa-akg', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-webhook-secret': process.env.WA_AKG_WEBHOOK_SECRET! }, body: JSON.stringify(payload) });
+  try {
+    await inEnvironment('production', 'postgresql://invalid.example.invalid/never_connected', async () => {
+      delete process.env.WA_AKG_CHANNEL_ID;
+      const payload = { from: '000', text: 'Mensagem', id: 'external-test' };
+      assert.equal((await requestWa(payload)).status, 503);
+      assert.equal(received.length, 0);
+      process.env.WA_AKG_CHANNEL_ID = crypto.randomUUID();
+      assert.equal((await requestWa({ from: '000', text: 'Mensagem' })).status, 400);
+      assert.equal((await requestWa(payload)).status, 200);
+      assert.equal(received[0].channelId, process.env.WA_AKG_CHANNEL_ID);
+      provider = 'meta_cloud';
+      assert.equal((await requestWa(payload)).status, 503);
+      process.env.META_WA_CHANNEL_ID = crypto.randomUUID();
+      process.env.META_WA_PHONE_NUMBER_ID = 'phone-id-test';
+      const requestMeta = async (phone: string) => {
+        const body = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ changes: [{ value: {
+          metadata: { phone_number_id: phone }, messages: [{ id: 'meta-external', from: '000', text: { body: 'Meta' } }],
+        } }] }] });
+        const signature = crypto.createHmac('sha256', process.env.META_WA_APP_SECRET!).update(body).digest('hex');
+        return fetch(base + '/communication/webhooks/meta', { method: 'POST', body,
+          headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': `sha256=${signature}` } });
+      };
+      assert.equal((await requestMeta('another-phone')).status, 400);
+      assert.equal(received.length, 1);
+      assert.equal((await requestMeta('phone-id-test')).status, 200);
+      assert.equal(received[1].channelId, process.env.META_WA_CHANNEL_ID);
+    });
+  } finally {
+    communicationRepository.findChannelById = originalFind;
+    whatsAppService.handleInboundMessage = originalHandle;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
 });

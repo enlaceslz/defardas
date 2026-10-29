@@ -2,7 +2,7 @@
  * DE FARDAS ERP — Communication Repository (Drizzle ORM + Resilient Memory Store)
  * Gerencia persistência de canais WhatsApp (Meta Cloud API & WA-AKG), conversas e mensagens.
  */
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import { db as drizzleDb } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
 import { 
@@ -133,22 +133,23 @@ export class CommunicationRepository {
     return fallbackDb.conversations.get(id) || null;
   }
 
-  public async findConversationByRemoteJid(remoteJid: string): Promise<ConversationEntity | null> {
+  public async findConversationByRemoteJid(remoteJid: string, channelId?: string): Promise<ConversationEntity | null> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
       throw new Error('PostgreSQL indisponível.');
     }
     if (fallbackDb.isConnected()) {
       try {
-        const rows = await drizzleDb.select().from(conversations).where(eq(conversations.remoteJid, remoteJid)).limit(1);
+        const rows = await drizzleDb.select().from(conversations).where(and(eq(conversations.remoteJid, remoteJid), channelId ? eq(conversations.channelId, channelId) : undefined)).limit(1);
         if (rows.length > 0) return this.mapToConversationEntity(rows[0]);
       } catch (err) {
         throw err;
         console.warn(`⚠️ [CommunicationRepository] Falha ao buscar remoteJid ${remoteJid}.`, err);
       }
     }
+    if (fallbackDb.isConnected()) return null;
     for (const c of fallbackDb.conversations.values()) {
-      if (c.remoteJid === remoteJid) return c;
+      if (c.remoteJid === remoteJid && (!channelId || c.channelId === channelId)) return c;
     }
     return null;
   }
@@ -221,6 +222,22 @@ export class CommunicationRepository {
       }
     }
     return Array.from(fallbackDb.messages.values()).filter((m: any) => m.conversationId === conversationId);
+  }
+
+  public async findInboundByExternalId(channelId: string, externalId: string): Promise<MessageEntity | null> {
+    await fallbackDb.ready;
+    if ((process.env.DATABASE_URL || process.env.NODE_ENV === 'production') && !fallbackDb.isConnected()) throw new Error('PostgreSQL indisponível.');
+    if (fallbackDb.isConnected()) {
+      const rows = await drizzleDb.select({ message: messages }).from(messages)
+        .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+        .where(and(eq(conversations.channelId, channelId), eq(messages.externalId, externalId), eq(messages.direction, 'inbound'))).limit(1);
+      return rows[0] ? this.mapToMessageEntity(rows[0].message) : null;
+    }
+    for (const message of fallbackDb.messages.values()) {
+      if (message.direction === 'inbound' && message.externalId === externalId &&
+          fallbackDb.conversations.get(message.conversationId)?.channelId === channelId) return message;
+    }
+    return null;
   }
 
   public async saveMessage(msg: MessageEntity): Promise<MessageEntity> {

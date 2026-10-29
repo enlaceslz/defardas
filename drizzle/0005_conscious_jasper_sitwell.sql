@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "uq_conversations_channel_remote" ON "communication"."conversations" USING btree ("channel_id","remote_jid");--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_messages_conversation_direction_external" ON "communication"."messages" USING btree ("conversation_id","direction","external_id");

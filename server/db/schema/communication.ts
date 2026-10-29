@@ -1,4 +1,4 @@
-import { pgSchema, uuid, varchar, text, integer, boolean, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
+import { pgSchema, uuid, varchar, text, integer, boolean, timestamp, jsonb, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { clients } from './clients';
 import { leads } from './leads';
 import { users } from './users';
@@ -40,6 +40,7 @@ export const conversations = communicationSchema.table('conversations', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_conversations_remote_jid').on(table.remoteJid),
+  uniqueIndex('uq_conversations_channel_remote').on(table.channelId, table.remoteJid),
   index('idx_conversations_status').on(table.status),
 ]);
 
@@ -63,6 +64,7 @@ export const messages = communicationSchema.table('messages', {
 }, (table) => [
   index('idx_messages_conversation').on(table.conversationId),
   index('idx_messages_external_id').on(table.externalId),
+  uniqueIndex('uq_messages_conversation_direction_external').on(table.conversationId, table.direction, table.externalId),
 ]);
 
 export type WhatsAppChannel = typeof channels.$inferSelect;

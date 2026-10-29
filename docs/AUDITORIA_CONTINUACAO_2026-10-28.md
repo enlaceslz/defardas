@@ -73,3 +73,16 @@ O serviço aceitava corpo arbitrário e mídia/tipo de mensagem, mas os dois tra
 Erros de rede eram copiados para `errorMessage` e console e erros de persistência chegavam à resposta HTTP. Agora detalhes internos não são retornados nessa rota e falhas de transporte usam texto genérico; auditoria informa tentativa/estado em vez de afirmar envio quando houve falha. O identificador externo sintético e a falta de recibos reais ainda são limitações conhecidas.
 
 Validação local: 48 testes, tipagem, build Vite e diff-check passaram. Cinco novos testes cobrem contratos inválidos, mídia, canal/credenciais, erro sensível, HTTP rejeitado, normalização e status HTTP seguros. Transportes substituídos por fixtures; nenhuma mensagem externa. `compile_applet` indisponível. CI deste commit ainda precisa validar PostgreSQL/Docker; nenhuma migração ou implantação realizada. Bundle JS permanece 464,42 kB / 119,39 kB gzip.
+
+
+## Continuação: recepção transacional e isolamento por canal
+
+Base: PR #7, commit `256e038`. CI principal 40806863361 aprovada.
+
+Achados: webhooks usavam IDs demonstrativos incompatíveis com UUIDs persistentes; consulta por telefone ignorava canal; identificação externa não era obrigatória nem deduplicada; conversa/mensagem/auditoria eram gravadas separadamente. Reentregas podiam duplicar histórico e não lidas, e falha deixava dados parciais.
+
+Correções: mapeamento explícito por `META_WA_CHANNEL_ID`/`WA_AKG_CHANNEL_ID`, verificação de provedor/ativação e telefone Meta, ID externo obrigatório e transação com o lock global existente. Duplicidade é consultada por canal/ID antes das escritas; conversa é segregada por canal/telefone. Migração `0005_conscious_jasper_sitwell` adiciona dois índices únicos sem apagar ou corrigir histórico automaticamente; verificação de duplicidades documentada no runbook.
+
+Validação local: 53 testes, tipagem, build Vite e diff-check passaram. Quatro novos testes de serviço cobrem oito reentregas simultâneas, separação entre canais, rollback em auditoria/mensagem, reentrega e ID ausente. Teste HTTP com assinatura Meta/segredo WA-AKG cobre mapeamento explícito, provedor incompatível e telefone Meta divergente. Dois testes PostgreSQL foram adicionados para deduplicação concorrente, constraints SQL e rollback integral inclusive de contador existente; sua execução depende da CI deste commit. Bundle permanece 464,42 kB / 119,39 kB gzip. `compile_applet` indisponível; build Vite utilizado.
+
+Nenhuma migração no banco operacional, mensagem externa, implantação ou reconciliação de dados reais foi executada. O lock global prioriza integridade e requer medição. Mídias, recibos reais, transação/outbox de saída, provisão de canais, RBAC de leitura, S3/e-mail e homologação de infraestrutura continuam pendentes. Uma auditoria integral do produto ainda não foi concluída.

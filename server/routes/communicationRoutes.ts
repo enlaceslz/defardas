@@ -19,6 +19,20 @@ const channelSummary = (channel: Awaited<ReturnType<typeof communicationReposito
   createdAt: channel.createdAt, updatedAt: channel.updatedAt,
 });
 
+// IDs demonstrativos não são UUIDs operacionais. Cada webhook possui um canal explícito.
+async function inboundChannel(provider: 'meta_cloud' | 'wa_akg'): Promise<string> {
+  const configured = provider === 'meta_cloud' ? process.env.META_WA_CHANNEL_ID : process.env.WA_AKG_CHANNEL_ID;
+  const id = configured || (isLocalDemoEnvironment() ? (provider === 'meta_cloud' ? 'ch-meta-official' : 'ch-wa-akg-qr') : undefined);
+  if (!id) throw new CommunicationError('Canal de recepção não configurado.', 503);
+  const channel = await communicationRepository.findChannelById(id);
+  if (!channel?.isActive || channel.provider !== provider) throw new CommunicationError('Canal de recepção indisponível.', 503);
+  return id;
+}
+function webhookFailure(res: Response, error: unknown) {
+  if (error instanceof InputError || error instanceof CommunicationError) return res.status(error.status).json({ error: error.message });
+  return res.status(500).json({ error: 'Falha no processamento do webhook.' });
+}
+
 // ==============================================================================
 // 1. Webhooks Públicos (Isentos de autenticação de sessão)
 // ==============================================================================
@@ -42,7 +56,7 @@ communicationRouter.get('/webhooks/meta', (req: Request, res: Response) => {
 // Recebimento de mensagens da Meta WhatsApp Cloud API
 communicationRouter.post('/webhooks/meta', verifyMetaWebhook, async (req: Request, res: Response) => {
   try {
-    const body = req.body;
+    const body = req.body || {};
     if (body.object === 'whatsapp_business_account') {
       const entries = body.entry || [];
       for (const entry of entries) {
@@ -50,13 +64,18 @@ communicationRouter.post('/webhooks/meta', verifyMetaWebhook, async (req: Reques
         for (const change of changes) {
           const value = change.value;
           if (value?.messages) {
+            if (!isLocalDemoEnvironment() && (!process.env.META_WA_PHONE_NUMBER_ID ||
+                value.metadata?.phone_number_id !== process.env.META_WA_PHONE_NUMBER_ID)) {
+              throw new InputError('Identificador do telefone não corresponde ao canal configurado.');
+            }
+            const channelId = await inboundChannel('meta_cloud');
             for (const msg of value.messages) {
               const fromPhone = msg.from;
               const textBody = msg.text?.body || '[Mídia recebida]';
               const contactName = value.contacts?.[0]?.profile?.name || fromPhone;
 
               await whatsAppService.handleInboundMessage({
-                channelId: 'ch-meta-official',
+                channelId,
                 fromPhone,
                 fromName: contactName,
                 body: textBody,
@@ -69,18 +88,18 @@ communicationRouter.post('/webhooks/meta', verifyMetaWebhook, async (req: Reques
     }
     res.sendStatus(200);
   } catch (err: any) {
-    console.error('❌ [WhatsApp Webhook] Erro ao processar webhook Meta:', err);
-    res.sendStatus(500);
+    webhookFailure(res, err);
   }
 });
 
 // Recebimento de mensagens do container isolado WA-AKG
 communicationRouter.post('/webhooks/wa-akg', verifyWaAkgWebhook, async (req: Request, res: Response) => {
   try {
-    const { from, senderName, text, id, mediaUrl, mediaType } = req.body;
-    if (from && text) {
+    const { from, senderName, text, id, mediaUrl, mediaType } = req.body || {};
+    if (!from || !text || !id) throw new InputError('Telefone, texto e identificador externo são obrigatórios.');
+    {
       await whatsAppService.handleInboundMessage({
-        channelId: 'ch-wa-akg-qr',
+        channelId: await inboundChannel('wa_akg'),
         fromPhone: from,
         fromName: senderName || from,
         body: text,
@@ -91,8 +110,7 @@ communicationRouter.post('/webhooks/wa-akg', verifyWaAkgWebhook, async (req: Req
     }
     res.json({ success: true });
   } catch (err: any) {
-    console.error('❌ [WhatsApp Webhook] Erro ao processar webhook WA-AKG:', err);
-    res.status(500).json({ error: 'Falha no processamento' });
+    webhookFailure(res, err);
   }
 });
 
