@@ -318,3 +318,10 @@ Para destino diferente da etapa atual, o conflito de revisão é verificado ante
 ### Revisão na edição da ficha
 
 PUT /api/orders/:id também exige expectedRevision inteiro positivo da leitura. O repositório mantém lock de linha; revisão antiga retorna 409/ORDER_REVISION_CONFLICT antes de modificar campos. A interface envia a revisão do formulário, recarrega dados no conflito e conserva o formulário sem reenviar. Fechar e reabrir permite revisar a ficha atual. Não substituir o token por revisão recém-consultada para aplicar silenciosamente campos antigos. Clientes próprios precisam enviar o novo campo; usa a migração 0006 existente.
+
+
+### Continuação: caractere nulo nos campos textuais
+
+O validador compartilhado `text` recusa U+0000 com HTTP 400 antes da persistência, tanto em campos obrigatórios quanto opcionais. PostgreSQL não aceita esse caractere em text/varchar. O conteúdo não é truncado nem saneado silenciosamente; acentos, emoji, quebras de linha e tabulações continuam aceitos nos limites existentes. A regra alcança os campos que passam por esse validador; não constitui validação de todos os payloads JSON nem migração de histórico.
+
+Validação local: 106 testes, tipagem e build aprovados. Novo cenário PostgreSQL verifica rejeição de criação/edição sem alterar cadastro ou auditoria e persistência de Unicode válido; execução pela CI ainda pendente. Sem migração nova; bloqueios de produção anteriores permanecem.
