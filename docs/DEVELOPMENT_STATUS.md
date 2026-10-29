@@ -23,3 +23,5 @@ As correções estão em PRs incrementais. A revisão parte do PR #23 (`4701bea2
 Na base do PR #23, 87 testes locais passaram; CI validou tipagem, build, PostgreSQL, backup/restauração e imagem. A revisão atual passou 88 testes locais, tipagem e build; acrescenta teste de endpoint WA-AKG obrigatório, validação do Compose e healthcheck interno em porta customizada. Auditoria npm: quatro alertas moderados em ferramentas de desenvolvimento e zero com --omit=dev. Seu resultado deve ser conferido na CI do novo PR, sem substituir o registro histórico da base.
 
 Próximos passos e bloqueios: [nova auditoria de produção](AUDITORIA_PRODUCAO_2026-10-29.md). Procedimentos: [guia Docker](DOCKER_DEPLOY.md) e [operação transacional](OPERACAO_TRANSACIONAL.md). Histórico detalhado: [continuação da auditoria](AUDITORIA_CONTINUACAO_2026-10-28.md).
+
+Continuação de configuração PostgreSQL: 92 testes locais, tipagem e build aprovados; modos SSL/pool e conflitos de URL são validados antes da conexão, preservando CA e verificação de certificado. Ver auditoria/guia para compatibilidade e evidência de CI do PR correspondente. Handshake no ambiente contratado permanece pendente.

@@ -56,3 +56,9 @@ P0 identifica condição para operação com dados reais; P1 pode depender do es
 Ver [status consolidado](DEVELOPMENT_STATUS.md), [operação transacional](OPERACAO_TRANSACIONAL.md) e [histórico de correções](AUDITORIA_CONTINUACAO_2026-10-28.md).
 
 A primeira execução desta revisão revelou fixtures PostgreSQL que dependiam do endpoint WA-AKG removido. Foram corrigidas para usar endpoint explícito com fetch interceptado; a espera do transporte agora propaga rejeição anterior à rede. Adicionado teste PostgreSQL de endpoint ausente sem nova intenção/requisição. Nenhum provedor externo é chamado nesses testes.
+
+## Continuação: configuração TLS do banco
+
+Após o PR #24, a revisão identificou modo SSL desconhecido caindo em disable e opções SSL da URL sobrescrevendo a política do pool/CA no driver instalado. Parser de configuração agora recusa conflitos, preserva CA, não permite enfraquecer verify-full e valida tamanho do pool sem parseInt permissivo. Configuração inválida termina com diagnóstico seguro antes de conectar. URL com parâmetros SSL incompatíveis exige ajuste de ambiente; ver o guia Docker.
+
+Validação local passa a 92 testes, com inspeção das opções efetivas do driver e teste de processo sem vazamento. Esta entrega não comprova handshake TLS com o banco contratado; PROD-03 e os demais bloqueios continuam vigentes. Última CI de base aprovada: PR #24, execuções 40900379159/40900369819; conferir a CI do novo PR para o commit final.
