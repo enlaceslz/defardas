@@ -127,7 +127,7 @@ export class OrderRepository {
           outsourcedPartner: order.outsourcedPartner,
           partnerCostPerPiece: order.partnerCostPerPiece ? order.partnerCostPerPiece.toString() : '0.00',
           technicalNotes: order.technicalNotes,
-          assignedTeam: order.assignedTeam || 'Mesa de Corte & Facção Terceirizada',
+          assignedTeam: order.assignedTeam ?? '',
           isDemo: order.isDemo ?? false,
         };
 
@@ -231,7 +231,7 @@ export class OrderRepository {
       outsourcedPartner: row.outsourcedPartner || undefined,
       partnerCostPerPiece: row.partnerCostPerPiece ? parseFloat(row.partnerCostPerPiece) : 0,
       technicalNotes: row.technicalNotes || undefined,
-      assignedTeam: row.assignedTeam || 'Mesa de Corte & Facção Terceirizada',
+      assignedTeam: row.assignedTeam ?? '',
       isDemo: row.isDemo,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

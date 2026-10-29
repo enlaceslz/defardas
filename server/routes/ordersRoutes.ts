@@ -1,4 +1,4 @@
-import { number, text, date, oneOf } from '../validation/input';
+import { number, text, date, oneOf, money, InputError } from '../validation/input';
 import { atomic } from '../db/unitOfWork';
 import { Router, Response } from 'express';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
@@ -166,13 +166,18 @@ ordersRouter.delete('/:id', requirePermission('orders:delete'), atomic(async (re
 ordersRouter.put('/:id', requirePermission('orders:create'), atomic(async (req: RequestWithUser, res: Response) => {
   const order = await orderRepository.findById(req.params.id);
   if (!order) return res.status(404).json({ error: 'OP não encontrada.' });
-  const body = req.body;
+  const body = req.body || {};
   order.priority = oneOf(body.priority, ['normal', 'alta', 'urgente'], 'Prioridade');
   order.targetDeliveryDate = date(body.targetDeliveryDate, 'Entrega');
   order.technicalNotes = text(body.technicalNotes, 'Notas técnicas', 10000, false);
   order.assignedTeam = text(body.assignedTeam, 'Equipe', 100, false);
   order.outsourcedPartner = text(body.outsourcedPartner, 'Facção', 100, false);
-  order.partnerCostPerPiece = number(body.partnerCostPerPiece ?? 0, 'Custo da facção');
+  const partnerCost = number(body.partnerCostPerPiece ?? 0, 'Custo da facção');
+  // Contrato da coluna numeric(10,2): rejeitar arredondamento e overflow antes de salvar.
+  if (partnerCost > 99999999.99 || money(partnerCost) !== partnerCost) {
+    throw new InputError('Custo da facção deve caber em 8 inteiros e 2 decimais.');
+  }
+  order.partnerCostPerPiece = partnerCost;
   order.updatedAt = new Date().toISOString();
   await orderRepository.save(order);
   await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role,

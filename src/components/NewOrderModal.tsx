@@ -39,7 +39,7 @@ export const NewOrderModal: React.FC<Props> = ({ existingOrder: order, onClose, 
         </div>
         <label className="block space-y-1 text-sm">Equipe<input className={field} maxLength={100} value={team} onChange={(e) => setTeam(e.target.value)} /></label>
         <label className="block space-y-1 text-sm">Facção<input className={field} maxLength={100} value={partner} onChange={(e) => setPartner(e.target.value)} /></label>
-        <label className="block space-y-1 text-sm">Custo da facção por peça<input type="number" min="0" step="0.01" className={field} value={partnerCost} onChange={(e) => setPartnerCost(Number(e.target.value))} /></label>
+        <label className="block space-y-1 text-sm">Custo da facção por peça<input type="number" min="0" max="99999999.99" step="0.01" className={field} value={partnerCost} onChange={(e) => setPartnerCost(Number(e.target.value))} /></label>
         <label className="block space-y-1 text-sm">Orientações técnicas<textarea className={field} rows={3} maxLength={10000} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
         <div className="flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-lg border px-4 py-2">Cancelar</button>
           <button disabled={isSaving} type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50">{isSaving ? 'Salvando...' : 'Salvar alterações'}</button></div>

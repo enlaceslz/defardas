@@ -232,3 +232,9 @@ Não há remoção/desvinculação/anonimização automática nem alteração de
 OP só pode seguir o fluxo existente de exclusão quando estiver aguardando liberação, sem proposta/item vinculado, aprovação de arte, registros de confirmação/comprovante ou referências de financeiro, movimentos de estoque, custódias de facções e converted_order_id em propostas. Essas referências retornam 409 antes do DELETE, impedindo SET NULL e referências órfãs. Consulta EXISTS usa a mesma transação/lock; falha de auditoria reverte exclusão livre.
 
 Custódias são verificadas no PostgreSQL; não há módulo de custódia em memória. Sem mudança de schema/FKs ou limpeza de relações históricas. A proteção aplica-se à API, não a SQL administrativo direto. Não define cancelamento, estorno, arquivamento ou retenção.
+
+### Edição da ficha da OP: custo e equipe
+
+PUT /api/orders/:id valida custo da facção no intervalo não negativo da coluna numeric(10,2), até 99.999.999,99 e com no máximo dois decimais. Rejeita 1.005 em vez de deixar o PostgreSQL arredondar; não define preço mínimo comercial. Campo ausente continua zero, como no contrato anterior. Corpo ausente resulta em 400. O formulário informa o mesmo teto.
+
+Equipe vazia é persistida e recarregada vazia, inclusive em OP criada pela conversão. O repositório não atribui mais a equipe fictícia padrão quando o usuário não informou uma. NULL histórico é lido como vazio; nomes anteriormente gravados não são alterados automaticamente, e o default SQL não muda nesta entrega. Edição mantém autorização existente, portões separados e rollback em falha de auditoria.

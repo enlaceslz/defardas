@@ -218,3 +218,13 @@ Achado: OP avulsa aguardando liberação, sem entrada confirmada, podia ser excl
 Correção: guard de exclusão inclui aprovação/evidências e quoteItemId, além de EXISTS para os quatro vínculos no PostgreSQL dentro da transação/lock existentes. Memória cobre financeiro/movimentos/proposta; custódia não possui repositório em memória. Mantidos permissão, auditoria e rollback da exclusão livre. Sem migração ou política nova de cancelamento/estorno/retencão.
 
 Validação: 78 testes locais, tipagem, build Vite e diff-check aprovados. Teste HTTP cobre metadados, vínculos, exclusão livre e rollback. Teste PostgreSQL adicional verifica cada relação independentemente, conservação das referências e rollback; execução depende da CI. Bundle 464,94 kB / 119,59 kB gzip. compile_applet indisponível; build Vite utilizado. Sem banco real, mensagem externa ou deploy. SQL direto e referências históricas já quebradas permanecem fora desta correção.
+
+## Continuação de 29/10/2026: custo e equipe consistentes na edição de OP
+
+Base: PR #18, commit 7e4916c8; CI 40864560399 aprovada.
+
+Achados: custo de facção aceitava valor arbitrariamente grande e mais de duas casas decimais; PostgreSQL numeric(10,2) poderia arredondar silenciosamente ou falhar por overflow, divergindo da memória. O repositório substituía equipe vazia por um nome padrão, inclusive em conversão que explicitamente usa vazio.
+
+Correções: PUT rejeita entradas fora do contrato numeric(10,2), trata corpo ausente como validação e preserva centavos. Formulário explicita teto. Repositório conserva equipe vazia e lê NULL como vazio, sem atribuição inventada. Nenhuma alteração de schema, política comercial ou limpeza de nomes históricos. Aprovação de arte e transições operacionais não foram modificadas.
+
+Validação local: 79 testes, tipagem, build Vite e diff-check aprovados. Teste HTTP cobre negativo, casas excedentes, overflow, string, corpo ausente, zero, centavos, teto e rollback. Teste PostgreSQL adicional verifica recarga da equipe na conversão/edição, valores persistidos e ausência de mutações/auditoria após falha; depende da CI. Bundle 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite utilizado. Sem banco real, mensagem externa, merge ou deploy.
