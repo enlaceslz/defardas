@@ -207,3 +207,14 @@ Correções: consultas de existência para bloquear clientes com proposta/OP/con
 Validação local: 77 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes HTTP cobrem vínculos de atendimento/lead/financeiro, limites e rollback de exclusão. Dois testes PostgreSQL adicionados verificam vínculos preservados, exclusão livre e rollback inclusive dos itens da proposta; dependem da CI deste commit. Bundle permanece 464,94 kB / 119,59 kB gzip. compile_applet indisponível; build Vite utilizado.
 
 Sem operação em banco real, migração, mensagem externa ou deploy. SQL administrativo direto não é coberto pelos guards da API. Retenção/anonimização/arquivamento, correção de relações históricas já quebradas, RBAC de leitura e integrações/homologação seguem pendentes.
+
+
+## Continuação de 29/10/2026: preservar histórico ao excluir OP
+
+Base: PR #17, commit 7f1c8d40; CI 40815086395 aprovada.
+
+Achado: OP avulsa aguardando liberação, sem entrada confirmada, podia ser excluída mesmo com aprovação de arte, comprovante, título financeiro, movimento de estoque, custódia em facção ou referência converted_order_id. FKs SET NULL perderiam o vínculo e converted_order_id poderia ficar órfão.
+
+Correção: guard de exclusão inclui aprovação/evidências e quoteItemId, além de EXISTS para os quatro vínculos no PostgreSQL dentro da transação/lock existentes. Memória cobre financeiro/movimentos/proposta; custódia não possui repositório em memória. Mantidos permissão, auditoria e rollback da exclusão livre. Sem migração ou política nova de cancelamento/estorno/retencão.
+
+Validação: 78 testes locais, tipagem, build Vite e diff-check aprovados. Teste HTTP cobre metadados, vínculos, exclusão livre e rollback. Teste PostgreSQL adicional verifica cada relação independentemente, conservação das referências e rollback; execução depende da CI. Bundle 464,94 kB / 119,59 kB gzip. compile_applet indisponível; build Vite utilizado. Sem banco real, mensagem externa ou deploy. SQL direto e referências históricas já quebradas permanecem fora desta correção.

@@ -142,7 +142,10 @@ ordersRouter.delete('/:id', requirePermission('orders:delete'), atomic(async (re
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
 
-  if (order.quoteId || order.stage !== 'aguardando_liberacao' || order.entryPaymentConfirmed) {
+  if (order.quoteId || order.quoteItemId || order.stage !== 'aguardando_liberacao' || order.entryPaymentConfirmed ||
+      order.artApproved || order.artApprovedBy || order.artApprovalDate || order.entryReceiptUrl ||
+      order.entryReceiptReference || order.entryVerifiedById || order.entryVerificationDate ||
+      await orderRepository.hasHistory(order.id)) {
     return res.status(409).json({ error: 'OP vinculada à proposta ou com histórico não pode ser excluída isoladamente.' });
   }
   await orderRepository.delete(req.params.id);
