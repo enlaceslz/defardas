@@ -17,7 +17,7 @@ export function oneOf<T extends string>(value: unknown, allowed: readonly T[], n
 }
 export function date(value: unknown, name: string): string {
   const result = text(value, name, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || !Number.isFinite(Date.parse(result)) || new Date(result).toISOString().slice(0, 10) !== result) throw new InputError(`${name} inválida.`);
+  if (!/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(result) || !Number.isFinite(Date.parse(result)) || new Date(result).toISOString().slice(0, 10) !== result) throw new InputError(`${name} inválida.`);
   return result;
 }
 export const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;

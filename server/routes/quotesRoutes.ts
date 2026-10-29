@@ -10,6 +10,7 @@ import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { PricingEngine } from '../services/pricingEngine';
 import { QuoteEntity, QuoteItemEntity, ProductionOrderEntity, FinancialTransactionEntity } from '../types/db';
+import { productionDeadline } from '../validation/productionDeadline';
 import { InputError, text, number, date, oneOf, money, sizes } from '../validation/input';
 
 // Limites técnicos das colunas numeric existentes, sem alçada comercial nova.
@@ -76,20 +77,26 @@ quotesRouter.post('/', requirePermission('quotes:create'), atomic(async (req: Re
   const discounted = items.some((item) => item.negotiatedUnitPrice < item.suggestedUnitPrice);
   if (discounted && actor.role !== 'admin') return res.status(403).json({ error: 'Preço abaixo do sugerido exige autorização de administrador.', code: 'DISCOUNT_REQUIRES_ADMIN_APPROVAL' });
   const now = new Date().toISOString();
+  // Validar todos os campos do cabeçalho antes de reservar a numeração.
+  const header = {
+    commercialStatus: oneOf(payload.commercialStatus ?? payload.status ?? 'enviado', ['rascunho', 'enviado', 'em_negociacao', 'aprovado'], 'Status'),
+    date: date(payload.date ?? now.slice(0, 10), 'Data'), validUntil: date(payload.validUntil, 'Validade'),
+    productionLeadDays: productionDeadline(payload.productionLeadDays, new Date(now)).days,
+    acceptanceChannel: oneOf(payload.acceptanceChannel || 'whatsapp', ['whatsapp', 'email', 'presencial'], 'Canal'),
+    notes: text(payload.notes, 'Observações', 10000, false),
+  };
   const entryAmount = money(negotiatedTotalAmount / 2);
   const quote: QuoteEntity = { id: quoteId, quoteNumber: await sequenceService.nextQuoteNumber(), version: 1,
     clientId: client.id, clientName: client.companyName, clientCnpj: client.cnpj, sellerId: actor.id, sellerName: actor.fullName,
-    commercialStatus: oneOf(payload.commercialStatus ?? payload.status ?? 'enviado', ['rascunho', 'enviado', 'em_negociacao', 'aprovado'], 'Status'),
-    date: date(payload.date || now.slice(0, 10), 'Data'), validUntil: date(payload.validUntil, 'Validade'),
+    ...header,
     totalBaseCost, suggestedTotalAmount, negotiatedTotalAmount, markupPercentage: items[0].markupPercentage,
     discountAmount: money(Math.max(0, suggestedTotalAmount - negotiatedTotalAmount)),
     estimatedMarginPercentage,
     belowSuggestedAuthorized: discounted, authorizedById: discounted ? actor.id : undefined,
     authorizedByName: discounted ? actor.fullName : undefined, authorizationDate: discounted ? now : undefined,
     entryPercentage: 50, entryAmount, balanceAmount: money(negotiatedTotalAmount - entryAmount),
-    paymentTerms: '50% Sinal (Liberação de Corte) + 50% na Entrega', productionLeadDays: number(payload.productionLeadDays, 'Prazo de produção', 1, true),
-    artApproved: false, acceptanceChannel: oneOf(payload.acceptanceChannel || 'whatsapp', ['whatsapp', 'email', 'presencial'], 'Canal'),
-    notes: text(payload.notes, 'Observações', 10000, false), isLocked: false, isDemo: false, createdAt: now, updatedAt: now, items };
+    paymentTerms: '50% Sinal (Liberação de Corte) + 50% na Entrega',
+    artApproved: false, isLocked: false, isDemo: false, createdAt: now, updatedAt: now, items };
   await quoteRepository.save(quote);
   await auditService.log({ actorId: actor.id, actorName: actor.fullName, actorRole: actor.role, entityName: 'crm.quotes',
     entityId: quote.id, action: 'CREATE_QUOTE', newData: quote });
@@ -115,7 +122,7 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
   if (quote.commercialStatus !== 'aprovado' || quote.isLocked) return res.status(409).json({ error: 'A proposta precisa estar aprovada para conversão.' });
   if (!quote.items.length) throw new InputError('Proposta sem itens.');
   const now = new Date().toISOString();
-  const delivery = new Date(Date.now() + quote.productionLeadDays * 86400000).toISOString().slice(0, 10);
+  const delivery = productionDeadline(quote.productionLeadDays, new Date(now)).deliveryDate;
   const orders: ProductionOrderEntity[] = [];
   for (const item of quote.items) {
     const order: ProductionOrderEntity = { id: crypto.randomUUID(), orderNumber: await sequenceService.nextOrderNumber(),

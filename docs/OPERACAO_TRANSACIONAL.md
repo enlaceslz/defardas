@@ -278,3 +278,11 @@ Bloqueios requireAuth/requireRole registram somente método conhecido e template
 Rate limit usa template da rota e IP, não o caminho enviado pelo cliente. Variações de caixa aceitas pelo Express, query ou valores de parâmetros não abrem novos contadores para o mesmo template. Limites, janela, status 429 e Retry-After permanecem iguais. Registrar o limitador na rota; se usado antes de resolver rota, o marcador fixo compartilha contador entre requisições da instância. Uma mesma instância reutilizada em mounts com template idêntico também compartilha contador; usar instâncias distintas quando forem proteções distintas.
 
 A proteção é desses middlewares. Não apaga logs históricos, não anonimiza eventos de negócio e não configura logs do proxy/provedor. Restringir acesso à auditoria e definir retenção/revisão de dados históricos antes da liberação. Rate limit continua em memória por processo; implantação com múltiplas instâncias ainda precisa de solução/topologia homologada.
+
+### Prazos de produção e formato de data
+
+Criação da proposta valida o cabeçalho antes de reservar número. Prazo deve ser inteiro positivo representável em integer e produzir data válida no formato AAAA-MM-DD suportado pela API (anos 0001 a 9999). O ano 0000 é recusado pelo validador de datas, pois PostgreSQL não o aceita nesse formato. Data explicitamente vazia não é substituída por hoje.
+
+A conversão refaz a validação usando o instante da conversão, antes de numerar/gravar OPs ou títulos. Proposta histórica com prazo inválido recebe 400 sem efeitos parciais; não é corrigida automaticamente. Conversão já concluída continua devolvendo as ordens existentes pelo fluxo idempotente, sem recalcular suas datas.
+
+O cálculo permanece dias corridos de 24h e usa o comportamento UTC existente. Não impõe máximo comercial de prazo, calendário de dias úteis, feriados, nova política de validade ou reabertura. O limite é técnico de representação, e datas históricas não são alteradas. A data de criação/prazo contratual definitivo e calendário fabril ainda dependem de homologação de negócio.

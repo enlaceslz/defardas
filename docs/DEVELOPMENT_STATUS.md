@@ -27,3 +27,5 @@ Próximos passos e bloqueios: [nova auditoria de produção](AUDITORIA_PRODUCAO_
 Continuação de configuração PostgreSQL: 92 testes locais, tipagem e build aprovados; modos SSL/pool e conflitos de URL são validados antes da conexão, preservando CA e verificação de certificado. Ver auditoria/guia para compatibilidade e evidência de CI do PR correspondente. Handshake no ambiente contratado permanece pendente.
 
 Continuação de privacidade: 94 testes locais, tipagem e build aprovados. Bloqueios de acesso e rate limit usam modelo de rota do servidor, evitando URL/query/valores privados e contadores separados por variação de caixa. Persistência do evento é coberta por teste PostgreSQL adicional na CI do novo PR. Histórico, proxy e rate limit entre processos seguem fora dessa correção.
+
+Continuação de prazos: 97 testes locais, tipagem e build aprovados. Cabeçalho é validado antes do número; prazo e data representável são conferidos também na conversão. Ano zero é recusado. Nenhuma regra de prazo comercial/calendário útil foi criada; ver operação transacional e CI do PR correspondente para evidências e limites.
