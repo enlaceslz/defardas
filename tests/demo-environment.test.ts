@@ -1,3 +1,5 @@
+import { InputError } from '../server/validation/input';
+import { CommunicationError } from '../server/services/whatsappService';
 import 'express-async-errors';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
@@ -148,4 +150,21 @@ test('listagem de canais não expõe configuração interna ou QR de pareamento'
     assert.equal('qrCode' in channels[0], false);
     assert.equal(JSON.stringify(channels).includes('private-'), false);
   } finally { communicationRepository.findAllChannels = original; }
+});
+
+test('rota de envio oculta falha interna e preserva status de validação', async () => {
+  const original = whatsAppService.sendMessage;
+  const request = () => fetch(base + '/communication/conversations/conversation/messages', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: 'texto' }),
+  });
+  try {
+    whatsAppService.sendMessage = async () => { throw new Error('private-database-credential'); };
+    const response = await request();
+    assert.equal(response.status, 500);
+    assert.equal((await response.text()).includes('private-database-credential'), false);
+    for (const error of [new InputError('Texto inválido.'), new CommunicationError('Canal indisponível.', 503), new CommunicationError('Conversa ausente.', 404)]) {
+      whatsAppService.sendMessage = async () => { throw error; };
+      assert.equal((await request()).status, error.status);
+    }
+  } finally { whatsAppService.sendMessage = original; }
 });

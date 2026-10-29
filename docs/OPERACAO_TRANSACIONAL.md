@@ -87,3 +87,12 @@ A listagem de canais retorna somente campos de apresentação, sem `config` ou Q
 O compositor mantém rascunhos por conversa, bloqueia submissões simultâneas e só limpa o texto após resposta 201 com mensagem identificada e sem estado `failed`. Falha ou resultado incerto exige conferir o histórico antes de repetir: não há promessa de entrega única no provedor. O histórico distingue pendente, enviada ao provedor, entregue, lida e falha. Recibos autoritativos do provedor ainda estão pendentes.
 
 Atalhos comerciais agora apenas preparam rascunho para revisão e envio manual. Não presumem chave PIX nem confirmam corte por resposta no WhatsApp. A baixa e a aprovação de arte continuam sendo registradas nos fluxos do ERP. Não confundir o texto do atendimento com comprovação de pagamento ou aprovação fabril.
+
+
+## Envio de texto: limites e erros
+
+O fluxo manual suporta somente texto não vazio de até 4.000 caracteres (limite técnico conservador da aplicação). Espaços nas extremidades são removidos antes de transmitir e registrar. `mediaUrl`, `mediaMimeType` ou `messageType` diferente de `text` são rejeitados com 400: o serviço não deve registrar anexo que não enviou.
+
+Canal precisa estar ativo e com estado `connected`; Meta exige token e identificador de telefone e WA-AKG exige chave de API não vazia. Falhas de configuração/conexão conhecida retornam 503 antes de transmitir ou criar mensagem. Conversa ausente retorna 404. Exceções internas não são devolvidas ao navegador. Erros de transporte ficam registrados com texto genérico, sem detalhes de URL/credencial, e não geram auditoria afirmando envio concluído.
+
+Timeout ou perda de resposta continuam podendo representar resultado incerto no provedor: conferir histórico antes de repetir. O estado `failed` indica ausência de confirmação neste fluxo, não comprovação de que o destinatário não recebeu. Recepção e envio ainda exigem transações/deduplicação e recibos autoritativos antes da homologação operacional completa.

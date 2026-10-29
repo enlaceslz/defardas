@@ -7,7 +7,8 @@ import { verifyMetaWebhook, verifyWaAkgWebhook } from '../middleware/webhookAuth
 import { Router, Request, Response } from 'express';
 import { RequestWithUser, requireAuth } from '../auth/rbac';
 import { communicationRepository } from '../repositories/communicationRepository';
-import { whatsAppService } from '../services/whatsappService';
+import { InputError } from '../validation/input';
+import { CommunicationError, whatsAppService } from '../services/whatsappService';
 
 export const communicationRouter = Router();
 
@@ -164,7 +165,7 @@ communicationRouter.get('/conversations/:id/messages', async (req: RequestWithUs
 // Enviar mensagem em uma conversa
 communicationRouter.post('/conversations/:id/messages', async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const { body, mediaUrl, messageType } = req.body;
+  const { body, mediaUrl, mediaMimeType, messageType } = req.body || {};
 
   if (!body) {
     return res.status(400).json({ error: 'O corpo da mensagem é obrigatório.' });
@@ -176,11 +177,15 @@ communicationRouter.post('/conversations/:id/messages', async (req: RequestWithU
       body,
       senderName: actor.fullName,
       mediaUrl,
+      mediaMimeType,
       messageType,
     });
     res.status(201).json(sentMsg);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Falha ao enviar mensagem.' });
+    if (err instanceof InputError || err instanceof CommunicationError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    res.status(500).json({ error: 'Não foi possível confirmar o envio. Confira o histórico antes de tentar novamente.' });
   }
 });
 

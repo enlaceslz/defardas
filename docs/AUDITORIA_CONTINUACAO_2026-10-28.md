@@ -62,3 +62,14 @@ Achados corrigidos nesta continuação:
 Validação: testes HTTP de projeção de canal e testes JSDOM de falha/sucesso, duplo envio, QR/reconexão, atalhos e troca de conversa. Sem envio real, deploy ou alteração de banco operacional. JSDOM não substitui homologação visual. Recibos/deduplicação/transações WhatsApp continuam pendentes.
 
 Resultado local final desta continuação: 43 testes, tipagem, build e diff-check aprovados; bundle JS 464,42 kB / 119,39 kB gzip. PostgreSQL/Docker deste commit serão validados pela CI. `compile_applet` indisponível; utilizado build Vite.
+
+
+## Continuação: contrato do envio manual
+
+Base: PR #6, commit `3e12af1`. CI principal 40806391787 aprovada, incluindo PostgreSQL, backup/restauração e Docker.
+
+O serviço aceitava corpo arbitrário e mídia/tipo de mensagem, mas os dois transportes enviavam exclusivamente texto. Agora valida e normaliza texto (até 4.000 caracteres), rejeita mídia/tipos sem suporte antes de I/O e exige canal ativo/conectado e credenciais configuradas. Conversa ausente retorna 404; canal indisponível/configuração ausente retorna 503. Não foram adicionados novos serviços ou regras comerciais.
+
+Erros de rede eram copiados para `errorMessage` e console e erros de persistência chegavam à resposta HTTP. Agora detalhes internos não são retornados nessa rota e falhas de transporte usam texto genérico; auditoria informa tentativa/estado em vez de afirmar envio quando houve falha. O identificador externo sintético e a falta de recibos reais ainda são limitações conhecidas.
+
+Validação local: 48 testes, tipagem, build Vite e diff-check passaram. Cinco novos testes cobrem contratos inválidos, mídia, canal/credenciais, erro sensível, HTTP rejeitado, normalização e status HTTP seguros. Transportes substituídos por fixtures; nenhuma mensagem externa. `compile_applet` indisponível. CI deste commit ainda precisa validar PostgreSQL/Docker; nenhuma migração ou implantação realizada. Bundle JS permanece 464,42 kB / 119,39 kB gzip.
