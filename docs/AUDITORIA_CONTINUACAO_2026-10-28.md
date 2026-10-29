@@ -248,3 +248,15 @@ Achado: solicitar novamente a etapa atual regravava updatedAt, adicionava ADVANC
 Correção: após validação do destino e dos portões, etapa igual retorna alreadyAtStage=true sem salvar/auditar. Corpo ausente recebe 400. Transição real mantém rollback, autorização e regras de gate. Não inventa sequência de etapas ou reabertura. Sem chave durável de comando: reenvio após outra transição continua sujeito ao contrato anterior e exige controle de concorrência futuro. Não repara datas históricas.
 
 Validação local: 83 testes, tipagem, build Vite e diff-check aprovados. Dois testes HTTP e dois PostgreSQL verificam oito chamadas concorrentes com uma auditoria, entrega histórica preservada, espera sem alteração, entradas inválidas, portões e rollback de transição. PostgreSQL depende da CI. Bundle permanece 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite usado. Sem migração, banco real, mensagem externa, merge ou deploy.
+
+## Continuação de 29/10/2026: auditoria de bloqueio após rollback
+
+Base: PR #21, commit 234b2e45; CI 40867369728 aprovada.
+
+Achado: a rota inseria GATE_BYPASS_ATTEMPT na mesma transação encerrada por resposta 422; atomic revertia o evento no PostgreSQL. Memória mantinha a auditoria fora dos snapshots, mascarando a divergência.
+
+Correção: rejeição auditada explícita desfaz a UoW de negócio antes de iniciar uma UoW independente de auditoria, e só responde 422 depois do commit do evento. Falha de auditoria retorna erro seguro e mantém a OP bloqueada. Rejeições comuns e transições válidas mantêm o fluxo existente. Snapshot do evento é capturado na tentativa original. Não confirma escritas rejeitadas para preservar o log. Sem migração, alteração de portões ou política comercial.
+
+Validação local: 85 testes, tipagem, build Vite e diff-check aprovados. Teste da infraestrutura prova rollback antes do callback, rollback da segunda UoW em falha e rejeição comum inalterada. Teste HTTP cobre evento, OP intacta e falha de auditoria. Dois testes PostgreSQL adicionais cobrem quatro bloqueios concorrentes persistidos, falha de auditoria, escrita real revertida antes do log e rollback de log inserido seguido de falha; dependem da CI com pool de uma conexão. Endpoint de injeção existe somente no app de testes. Bundle permanece 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite usado.
+
+Sem banco real, mensagem externa, merge ou deploy. Existe janela de falha entre rollback e auditoria; não há outbox/retry automático nem promessa de registro em queda do processo/banco. Eventos anteriormente perdidos não são reconstruídos. Cada tentativa bloqueada é um evento independente.

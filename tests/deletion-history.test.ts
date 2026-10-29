@@ -200,3 +200,23 @@ test('repetição de etapa mantém gates e validação; falha de auditoria rever
   assert.deepEqual(db.orders.get(id), before);
   const saved = await advanceStage(id, { targetStage: 'corte' }); assert.equal(saved.status, 200); assert.equal(saved.data.order.stage, 'corte');
 });
+
+
+test('bloqueio de gate é auditado sem alterar OP; falha ao auditar retorna erro e não avança', async () => {
+  const id = crypto.randomUUID(); const orderNumber = `GATE-${id.slice(0,8)}`;
+  const originalOrder = { id, orderNumber, stage: 'aguardando_liberacao', artApproved: false, entryPaymentConfirmed: false } as any;
+  db.orders.set(id, structuredClone(originalOrder));
+  const response = await advanceStage(id, { targetStage: 'corte' }); assert.equal(response.status, 422);
+  assert.equal(response.data.gateStatus.artApproved, false); assert.deepEqual(db.orders.get(id), originalOrder);
+  const logs = await auditService.getRecentLogs(500, 'producao.production_orders', orderNumber);
+  assert.equal(logs.filter((log) => log.action === 'GATE_BYPASS_ATTEMPT').length, 1);
+  assert.deepEqual(logs[0].newData, { attemptedStage: 'corte' });
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected rejected audit failure'); };
+    assert.equal((await advanceStage(id, { targetStage: 'corte' })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual(db.orders.get(id), originalOrder);
+  assert.equal((await advanceStage(id, { targetStage: 'corte' })).status, 422);
+  assert.equal((await auditService.getRecentLogs(500, 'producao.production_orders', orderNumber)).filter((log) => log.action === 'GATE_BYPASS_ATTEMPT').length, 2);
+});

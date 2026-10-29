@@ -1,5 +1,5 @@
 import { number, text, date, oneOf, money, InputError } from '../validation/input';
-import { atomic } from '../db/unitOfWork';
+import { atomic, rejectWithAudit } from '../db/unitOfWork';
 import { Router, Response } from 'express';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { orderRepository } from '../repositories/orderRepository';
@@ -47,8 +47,8 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
     const isPaymentConfirmed = !!order.entryPaymentConfirmed;
 
     if (!isArtApproved || !isPaymentConfirmed) {
-      // Registrar tentativa de bypass de portão na trilha de auditoria
-      await auditService.log({
+      // Capturar os fatos observados; registrar só depois do rollback da operação bloqueada.
+      const attempt = {
         actorId: actor.id,
         actorName: actor.fullName,
         actorRole: actor.role,
@@ -58,9 +58,9 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
         oldData: { stage: oldStage, artApproved: isArtApproved, entryPaymentConfirmed: isPaymentConfirmed },
         newData: { attemptedStage: targetStage },
         notes: `Tentativa bloqueada de liberar OP ${order.orderNumber} para corte sem cumprimento dos gates normativos do PRD v1.6.`,
-      });
+      };
 
-      return res.status(422).json({
+      return rejectWithAudit(422, {
         error: 'Bloqueio do Portão de Liberação Fabril (Gate A.3.2): A Ordem de Produção NÃO pode avançar para o corte enquanto o sinal de 50% não for confirmado e a arte final não for formalmente aprovada pelo cliente.',
         gateStatus: {
           artApproved: isArtApproved,
@@ -68,7 +68,7 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
           artRequirementMessage: isArtApproved ? 'Arte final aprovada.' : 'Pendente: Aprovação formal da arte do cliente.',
           paymentRequirementMessage: isPaymentConfirmed ? 'Sinal de 50% confirmado com comprovante.' : 'Pendente: Confirmação de recebimento do sinal de 50% no financeiro.',
         },
-      });
+      }, () => auditService.log(attempt));
     }
   }
 

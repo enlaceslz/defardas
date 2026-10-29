@@ -250,3 +250,11 @@ A primeira confirmação exige nome válido; corpo ausente retorna 400. Aprovaç
 POST /api/orders/:id/advance-stage valida targetStage e os portões existentes antes de verificar se a OP já está nessa etapa. Mesmo destino retorna 200 com alreadyAtStage=true e a OP atual, sem alterar completionDate, updatedAt ou inserir ADVANCE_STAGE. Isso preserva a data de uma entrega feita em dia anterior. Corpo ausente recebe 400. Uma transição real continua alterando etapa/data e auditando na mesma transação; falha de auditoria reverte a alteração.
 
 A proteção usa a etapa atual, não uma chave durável de comando: se outra transição ocorrer antes de um reenvio antigo, esse pedido ainda será tratado como transição pelo contrato existente. Não há nova ordem obrigatória de etapas, controle de versão ou política de reabertura nesta entrega. Nenhum portão é dispensado, inclusive em registros históricos inconsistentes. Não corrige datas/históricos já alterados por reenvios anteriores.
+
+### Auditoria de tentativas bloqueadas pelo portão
+
+O bloqueio de advance-stage usa rejeição auditada: a primeira UoW faz rollback, libera cliente/lock e então uma segunda UoW registra GATE_BYPASS_ATTEMPT. A resposta 422 só sai após essa auditoria confirmar. Os dados do evento são o snapshot observado na tentativa, não uma releitura posterior da OP. Chamadas bloqueadas distintas geram eventos distintos, inclusive reenvios; não há deduplicação de tentativas.
+
+rejectWithAudit é mecanismo interno de atomic para rejeições 4xx explícitas. Seu callback deve apenas registrar a tentativa, nunca reaplicar a operação rejeitada. Rejeições comuns continuam fazendo rollback sem executar callback. Falha na segunda UoW também reverte sua escrita e passa ao tratamento seguro de erro; a OP não avança. Não é permitido confirmar a transação de negócio só para conservar auditoria.
+
+As duas transações não formam uma confirmação única: queda do processo entre rollback e auditoria pode deixar uma tentativa sem evento e sem resposta confirmada; não há outbox/retry automático nessa entrega. Não garante registrar todas as tentativas em caso de falha do banco/processo e não recupera eventos perdidos no histórico. O segundo commit registra apenas a observação da tentativa bloqueada, sem garantir que os gates continuam iguais nesse instante.
