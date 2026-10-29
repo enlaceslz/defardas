@@ -1323,3 +1323,21 @@ test('PostgreSQL: perfil e auditoria permanecem intactos quando edição falha',
   assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, logs);
   assert.equal((await request('/api/settings/profile', 'PUT')).status, 400);
 });
+
+
+test('PostgreSQL: autenticação inválida não cria sessão nem tokens e não expõe e-mail recebido', async () => {
+  const sessions = (await pool.query('SELECT count(*) FROM core.sessions')).rows;
+  const tokens = (await pool.query('SELECT count(*) FROM core.password_reset_tokens')).rows;
+  const audit = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows;
+  for (const [path, body] of [
+    ['/api/auth/login', undefined], ['/api/auth/login', { email: 'private\u0000@example.invalid', password: 'unused' }],
+    ['/api/auth/recover-password', undefined], ['/api/auth/recover-password', { email: 'private\u0000@example.invalid' }],
+    ['/api/auth/reset-password', undefined],
+  ] as const) {
+    const result = await request(path, 'POST', body); assert.equal(result.status, 400);
+    assert.equal(JSON.stringify(result.data).includes('private'), false);
+  }
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.sessions')).rows, sessions);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.password_reset_tokens')).rows, tokens);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, audit);
+});
