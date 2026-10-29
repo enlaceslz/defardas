@@ -674,3 +674,38 @@ test('PostgreSQL: rollback preserva chave disponível para retry com único even
   assert.equal((await keyedStockRequest(payload, key)).status, 200);
   assert.equal((await pool.query('SELECT physical_stock FROM estoque.items WHERE id=$1', [id])).rows[0].physical_stock, '6.00');
 });
+
+test('PostgreSQL: contrato financeiro não arredonda valor manual e recarrega autoria da baixa', async () => {
+  const { financeRepository } = await import('../server/repositories/financeRepository');
+  const payload = { type: 'pagar', subType: 'despesa_geral', description: 'Manual finance precision', amount: 2.35, dueDate: '2027-01-01', paymentMethod: 'pix' };
+  const before = (await pool.query("SELECT value FROM core.number_counters WHERE kind='finance'")).rows[0].value;
+  assert.equal((await request('/api/finance/transactions', 'POST', { ...payload, amount: 1.005 })).status, 400);
+  assert.equal((await pool.query("SELECT value FROM core.number_counters WHERE kind='finance'")).rows[0].value, before);
+  const saved = await request('/api/finance/transactions', 'POST', payload); assert.equal(saved.status, 201);
+  assert.equal(saved.data.category, ''); assert.equal((await financeRepository.findById(saved.data.id))?.amount, 2.35);
+  assert.equal((await request(`/api/finance/transactions/${saved.data.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://' })).status, 400);
+  const paid = await request(`/api/finance/transactions/${saved.data.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' });
+  assert.equal(paid.status, 200);
+  const reloaded = await financeRepository.findById(saved.data.id);
+  assert.equal(reloaded?.confirmedById, paid.data.transaction.confirmedById);
+  assert.ok(reloaded?.confirmedById); assert.equal(reloaded?.status, 'pago');
+  assert.doesNotMatch(paid.data.message, /Sinal|50%/);
+});
+
+test('PostgreSQL: baixa de saldo não anuncia sinal nem libera corte', async () => {
+  const { financeRepository } = await import('../server/repositories/financeRepository');
+  const quote = await createQuote();
+  assert.equal((await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST')).status, 201);
+  const titles = (await financeRepository.findAll()).filter((title) => title.quoteId === quote.id);
+  const balance = titles.find((title) => title.subType === 'saldo_entrega')!;
+  const input = { receiptVoucherNumber: 'BALANCE-TEST', receiptEvidenceUrl: 'https://example.invalid/balance' };
+  const paid = await request(`/api/finance/transactions/${balance.id}/confirm-payment`, 'POST', input);
+  assert.equal(paid.status, 200); assert.equal(paid.data.linkedOrderUpdated, true);
+  assert.doesNotMatch(paid.data.message, /Sinal|50%|Confirmação de entrada/);
+  assert.match(paid.data.message, /Situação financeira/);
+  const related = (await pool.query('SELECT * FROM producao.production_orders WHERE quote_id=$1', [quote.id])).rows;
+  assert.ok(related.every((order) => !order.entry_payment_confirmed && order.stage === 'aguardando_liberacao'));
+  const repeated = await request(`/api/finance/transactions/${balance.id}/confirm-payment`, 'POST', input);
+  assert.equal(repeated.data.alreadyConfirmed, true);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='CONFIRM_PAYMENT' AND entity_id=$1", [balance.transactionNumber])).rows[0].count, '1');
+});

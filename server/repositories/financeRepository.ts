@@ -139,6 +139,7 @@ export class FinanceRepository {
       referenceId: row.referenceId || undefined,
       receiptEvidenceUrl: row.receiptEvidenceUrl || undefined,
       receiptVoucherNumber: row.receiptVoucherNumber || undefined,
+      confirmedById: row.confirmedById || undefined,
       confirmedByName: row.confirmedByName || undefined,
       confirmationNotes: row.confirmationNotes || undefined,
       isDemo: row.isDemo,

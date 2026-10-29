@@ -24,27 +24,28 @@ financeRouter.get('/transactions', async (_req: RequestWithUser, res: Response) 
 // Criar novo lançamento financeiro
 financeRouter.post('/transactions', requirePermission('finance:create_transaction'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const payload = req.body;
+  const payload = req.body || {};
 
   if (payload.productionOrderId || payload.quoteId || ['entrada_pedido', 'saldo_entrega'].includes(payload.subType)) {
     throw new InputError('Títulos de pedido são gerados exclusivamente pela conversão da proposta.');
   }
-  const amount = money(number(payload.amount, 'Valor', 0.01));
+  const amount = number(payload.amount, 'Valor', 0.01);
+  if (amount > 9999999999.99 || money(amount) !== amount) throw new InputError('Valor deve caber em 10 inteiros e 2 decimais.');
   const trxNumber = await sequenceService.nextFinanceNumber();
   const newTrx: FinancialTransactionEntity = {
     id: crypto.randomUUID(),
     transactionNumber: trxNumber,
-    productionOrderId: payload.productionOrderId,
-    quoteId: payload.quoteId,
+    productionOrderId: undefined,
+    quoteId: undefined,
     type: oneOf(payload.type, ['receber', 'pagar'], 'Tipo'),
     subType: oneOf(payload.subType, ['compra_tecido', 'servico_terceirizado', 'despesa_geral'], 'Categoria do título'),
     description: text(payload.description, 'Descrição', 200),
-    category: payload.category || 'Venda de Uniformes',
+    category: text(payload.category, 'Categoria', 60, false),
     amount,
     dueDate: date(payload.dueDate, 'Vencimento'),
     status: 'pendente',
     paymentMethod: oneOf(payload.paymentMethod, ['pix', 'boleto', 'transferencia', 'cartao'], 'Forma de pagamento'),
-    referenceId: payload.referenceId,
+    referenceId: text(payload.referenceId, 'Referência', 60, false) || undefined,
     isDemo: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -74,13 +75,17 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
     return res.status(404).json({ error: 'Lançamento financeiro não encontrado' });
   }
 
-  const { receiptVoucherNumber, receiptEvidenceUrl, confirmationNotes } = req.body;
+  const { receiptVoucherNumber, receiptEvidenceUrl, confirmationNotes } = req.body || {};
 
   if (trx.status === 'pago') return res.json({ success: true, alreadyConfirmed: true, transaction: trx });
   if (trx.status === 'estornado') return res.status(409).json({ error: 'Título estornado não pode ser liquidado.' });
   const voucher = text(receiptVoucherNumber, 'Autenticação bancária', 80);
   const evidence = text(receiptEvidenceUrl, 'URL privada do comprovante', 2000);
-  if (!evidence.startsWith('https://')) throw new InputError('Informe a URL HTTPS do comprovante real.');
+  let evidenceUrl: URL;
+  try { evidenceUrl = new URL(evidence); } catch { throw new InputError('Informe uma URL HTTPS válida para o comprovante.'); }
+  if (!/^https:\/\//i.test(evidence) || evidenceUrl.protocol !== 'https:' || !evidenceUrl.hostname || evidenceUrl.username || evidenceUrl.password) {
+    throw new InputError('Informe uma URL HTTPS do comprovante sem credenciais embutidas.');
+  }
   let relatedOrders = trx.quoteId ? await orderRepository.findByQuoteId(trx.quoteId) : [];
   if (trx.quoteId && ['entrada_pedido', 'saldo_entrega'].includes(trx.subType)) {
     const quote = await quoteRepository.findById(trx.quoteId);
@@ -110,7 +115,7 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
       await orderRepository.save(order);
     }
   }
-  const linkedOrderUpdated = relatedOrders.length > 0;
+  const linkedOrderUpdated = ['entrada_pedido', 'saldo_entrega'].includes(trx.subType) && relatedOrders.length > 0;
   const updatedOrder = relatedOrders[0] || null;
 
   await auditService.log({
@@ -132,7 +137,7 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
 
   res.json({
     success: true,
-    message: `Lançamento ${trx.transactionNumber} liquidado com sucesso! ${linkedOrderUpdated ? 'Sinal de 50% da Ordem de Produção confirmado.' : ''}`,
+    message: `Lançamento ${trx.transactionNumber} liquidado com sucesso! ${linkedOrderUpdated ? trx.subType === 'entrada_pedido' ? 'Confirmação de entrada registrada nas ordens vinculadas.' : 'Situação financeira atualizada nas ordens vinculadas.' : ''}`,
     transaction: trx,
     linkedOrderUpdated,
     order: updatedOrder,
