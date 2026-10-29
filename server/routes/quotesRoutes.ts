@@ -130,7 +130,7 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
 quotesRouter.delete('/:id', requirePermission('quotes:delete'), atomic(async (req: RequestWithUser, res: Response) => {
   const quote = await quoteRepository.findById(req.params.id);
   if (!quote) return res.status(404).json({ error: 'Proposta não encontrada.' });
-  if (quote.isLocked || (await orderRepository.findByQuoteId(quote.id)).length) return res.status(409).json({ error: 'Proposta vinculada a produção não pode ser excluída.' });
+  if (quote.isLocked || await quoteRepository.hasHistory(quote.id)) return res.status(409).json({ error: 'Proposta com vínculo de produção, financeiro ou lead não pode ser excluída.' });
   await quoteRepository.delete(quote.id);
   await auditService.log({ actorId: req.user!.id, actorName: req.user!.fullName, actorRole: req.user!.role, entityName: 'crm.quotes', entityId: quote.id, action: 'DELETE_QUOTE' });
   res.json({ success: true });

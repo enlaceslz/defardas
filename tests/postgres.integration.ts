@@ -753,3 +753,51 @@ test('PostgreSQL: rollback de criação libera chave e exclusão conserva regist
   assert.equal((await pool.query('SELECT count(*) FROM financeiro.transactions WHERE id=$1', [saved.data.id])).rows[0].count, '0');
   assert.equal((await pool.query("SELECT count(*) FROM core.event_log WHERE event_type='FINANCE_MANUAL_CREATED' AND payload->>'entityId'=$1", [saved.data.id])).rows[0].count, '1');
 });
+
+test('PostgreSQL: cliente com atendimento preserva vínculo e cliente livre mantém rollback da exclusão', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const invalid = await request('/api/clients', 'POST', { companyName: 'Segment test', cnpj: crypto.randomUUID().slice(0,20), contactName: 'Contact', phone: '000', segment: 'x'.repeat(61) });
+  assert.equal(invalid.status, 400);
+  const created = await request('/api/clients', 'POST', { companyName: 'History client', cnpj: crypto.randomUUID().slice(0,20), contactName: 'Contact', phone: '000' });
+  assert.equal(created.status, 201); const id = created.data.id;
+  const channelId = crypto.randomUUID(); const conversationId = crypto.randomUUID();
+  await pool.query(`INSERT INTO communication.channels(id,provider,channel_name,phone_number,status,is_active)
+    VALUES($1,'wa_akg','History channel','000','connected',true)`, [channelId]);
+  await pool.query(`INSERT INTO communication.conversations(id,channel_id,client_id,remote_jid,customer_name,customer_phone)
+    VALUES($1,$2,$3,'history@test','History','000')`, [conversationId, channelId, id]);
+  assert.equal((await request(`/api/clients/${id}`, 'DELETE')).status, 409);
+  assert.equal((await pool.query('SELECT client_id FROM communication.conversations WHERE id=$1', [conversationId])).rows[0].client_id, id);
+  // Fixture removes the test relationship to exercise the pre-existing free-client path.
+  await pool.query('DELETE FROM communication.conversations WHERE id=$1', [conversationId]);
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected client delete failure'); };
+    assert.equal((await request(`/api/clients/${id}`, 'DELETE')).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query('SELECT * FROM crm.clients WHERE id=$1', [id])).rowCount, 1);
+  assert.equal((await request(`/api/clients/${id}`, 'DELETE')).status, 200);
+});
+
+test('PostgreSQL: exclusão de proposta não deixa lead ou financeiro sem vínculo', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const quote = await createQuote(); const leadId = crypto.randomUUID();
+  await pool.query(`INSERT INTO crm.leads(id,lead_number,client_name,company_name,phone,email,category,estimated_quantity,converted_quote_id)
+    VALUES($1,$2,'History lead','History','000','','polos',1,$3)`, [leadId, `HISTORY-${leadId.slice(0,8)}`, quote.id]);
+  assert.equal((await request(`/api/quotes/${quote.id}`, 'DELETE')).status, 409);
+  assert.equal((await pool.query('SELECT converted_quote_id FROM crm.leads WHERE id=$1', [leadId])).rows[0].converted_quote_id, quote.id);
+  await pool.query('DELETE FROM crm.leads WHERE id=$1', [leadId]);
+  const titleId = crypto.randomUUID();
+  await pool.query(`INSERT INTO financeiro.transactions(id,transaction_number,quote_id,type,sub_type,description,category,amount,due_date,payment_method)
+    VALUES($1,$2,$3,'receber','despesa_geral','Historical linkage','Test',1,'2027-01-01','pix')`, [titleId, `HISTORY-${titleId.slice(0,8)}`, quote.id]);
+  assert.equal((await request(`/api/quotes/${quote.id}`, 'DELETE')).status, 409);
+  assert.equal((await pool.query('SELECT quote_id FROM financeiro.transactions WHERE id=$1', [titleId])).rows[0].quote_id, quote.id);
+  await pool.query('DELETE FROM financeiro.transactions WHERE id=$1', [titleId]);
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected quote delete failure'); };
+    assert.equal((await request(`/api/quotes/${quote.id}`, 'DELETE')).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query('SELECT * FROM crm.quotes WHERE id=$1', [quote.id])).rowCount, 1);
+  assert.ok((await pool.query('SELECT * FROM crm.quote_items WHERE quote_id=$1', [quote.id])).rowCount! > 0);
+  assert.equal((await request(`/api/quotes/${quote.id}`, 'DELETE')).status, 200);
+});

@@ -194,3 +194,16 @@ Tela/API conservam chave para o mesmo rascunho em falha e bloqueiam duplo envio.
 Validação local: 75 testes, tipagem, build Vite e diff-check aprovados. Dois testes HTTP novos cobrem oito requisições concorrentes, conflito, preservação de título pago, rollback e exclusão com replay bloqueado. Teste de componente cobre chave preservada na falha e submissão simultânea. Dois testes PostgreSQL adicionados cobrem contador/título/auditoria únicos, registro persistido mínimo, rollback e registro sobrevivendo à exclusão; dependem da CI. Verificação de backup/restauração ampliada para comparar os IDs/payloads desses registros de chave. Bundle JS 464,94 kB / 119,59 kB gzip. compile_applet indisponível; build Vite utilizado.
 
 Sem operação em banco real, migração, mensagem externa ou deploy. A CI deve validar também as mudanças do workflow. Retenção operacional, S3/evidência real, estornos homologados, RBAC de leitura e demais integrações/homologação continuam pendentes.
+
+
+## Continuação de 29/10/2026: exclusão sem perda silenciosa de vínculos
+
+Base: PR #16, commit a7edab82; CI 40814350648/40814364906 aprovadas.
+
+Achados: exclusão de cliente verificava só propostas/OPs, podendo anular vínculo de conversa por FK SET NULL. Proposta sem OP podia ser excluída mesmo com título (SET NULL) ou lead convertido (sem FK), deixando referência órfã. Validação de segmento permitia 80 caracteres para coluna de 60; corpo ausente causava falha interna em vez de validação.
+
+Correções: consultas de existência para bloquear clientes com proposta/OP/conversa e propostas com OP/título/lead, preservando lock/transação e autorização existentes. Substituída leitura integral de coleções no guard de clientes. Exclusão livre continua auditada e reversível em falha. Segmento alinhado ao SQL e corpo ausente tratado como entrada inválida. Sem nova política comercial, migração ou limpeza/reconciliação histórica.
+
+Validação local: 77 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes HTTP cobrem vínculos de atendimento/lead/financeiro, limites e rollback de exclusão. Dois testes PostgreSQL adicionados verificam vínculos preservados, exclusão livre e rollback inclusive dos itens da proposta; dependem da CI deste commit. Bundle permanece 464,94 kB / 119,59 kB gzip. compile_applet indisponível; build Vite utilizado.
+
+Sem operação em banco real, migração, mensagem externa ou deploy. SQL administrativo direto não é coberto pelos guards da API. Retenção/anonimização/arquivamento, correção de relações históricas já quebradas, RBAC de leitura e integrações/homologação seguem pendentes.

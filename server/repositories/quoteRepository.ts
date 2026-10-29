@@ -3,12 +3,26 @@
  * Gerencia persistência de propostas comerciais e decomposição de custos no PostgreSQL.
  */
 import { eq, desc, asc } from 'drizzle-orm';
-import { db as drizzleDb } from '../db/index';
+import { query, db as drizzleDb } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
 import { quotes, quoteItems, Quote, QuoteItem, NewQuote, NewQuoteItem } from '../db/schema/quotes';
 import { QuoteEntity, QuoteItemEntity } from '../types/db';
 
 export class QuoteRepository {
+  public async hasHistory(quoteId: string): Promise<boolean> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) {
+      const result = await query(`SELECT EXISTS(SELECT 1 FROM producao.production_orders WHERE quote_id=$1)
+        OR EXISTS(SELECT 1 FROM financeiro.transactions WHERE quote_id=$1)
+        OR EXISTS(SELECT 1 FROM crm.leads WHERE converted_quote_id=$1) AS found`, [quoteId]);
+      return result.rows[0].found;
+    }
+    if (process.env.DATABASE_URL || process.env.NODE_ENV === 'production') throw new Error('PostgreSQL indisponível.');
+    return [...fallbackDb.orders.values()].some((row) => row.quoteId === quoteId) ||
+      [...fallbackDb.finance.values()].some((row) => row.quoteId === quoteId) ||
+      [...fallbackDb.leads.values()].some((row) => row.convertedQuoteId === quoteId);
+  }
+
   public async findAll(): Promise<QuoteEntity[]> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
