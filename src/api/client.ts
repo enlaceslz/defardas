@@ -219,9 +219,10 @@ class ApiClient {
     return this.request<any[]>('/finance/transactions', { method: 'GET' });
   }
 
-  public async createTransaction(payload: any) {
+  public async createTransaction(payload: any, idempotencyKey: string = crypto.randomUUID()) {
     return this.request<any>('/finance/transactions', {
       method: 'POST',
+      headers: { 'idempotency-key': idempotencyKey },
       body: JSON.stringify(payload),
     });
   }

@@ -1,3 +1,5 @@
+import { financeRequestRepository } from '../repositories/financeRequestRepository';
+import { isLocalDemoEnvironment } from '../auth/demoEnvironment';
 import { quoteRepository } from '../repositories/quoteRepository';
 import { number, text, date, oneOf, money, InputError } from '../validation/input';
 import { atomic } from '../db/unitOfWork';
@@ -31,27 +33,39 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
   }
   const amount = number(payload.amount, 'Valor', 0.01);
   if (amount > 9999999999.99 || money(amount) !== amount) throw new InputError('Valor deve caber em 10 inteiros e 2 decimais.');
-  const trxNumber = await sequenceService.nextFinanceNumber();
-  const newTrx: FinancialTransactionEntity = {
-    id: crypto.randomUUID(),
-    transactionNumber: trxNumber,
-    productionOrderId: undefined,
-    quoteId: undefined,
+  const details = {
     type: oneOf(payload.type, ['receber', 'pagar'], 'Tipo'),
     subType: oneOf(payload.subType, ['compra_tecido', 'servico_terceirizado', 'despesa_geral'], 'Categoria do título'),
     description: text(payload.description, 'Descrição', 200),
     category: text(payload.category, 'Categoria', 60, false),
     amount,
     dueDate: date(payload.dueDate, 'Vencimento'),
-    status: 'pendente',
     paymentMethod: oneOf(payload.paymentMethod, ['pix', 'boleto', 'transferencia', 'cartao'], 'Forma de pagamento'),
     referenceId: text(payload.referenceId, 'Referência', 60, false) || undefined,
+  };
+  const key = req.get('idempotency-key');
+  if (!key && !isLocalDemoEnvironment()) throw new InputError('Chave de repetição obrigatória.');
+  if (key && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new InputError('Chave de repetição inválida.');
+  const hash = crypto.createHash('sha256').update(`finance:${actor.id}:${(key || crypto.randomUUID()).toLowerCase()}`).digest('hex');
+  const requestId = `${hash.slice(0,8)}-${hash.slice(8,12)}-${hash.slice(12,16)}-${hash.slice(16,20)}-${hash.slice(20,32)}`;
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify(details)).digest('hex');
+  const receipt = await financeRequestRepository.find(requestId);
+  if (receipt) {
+    if (receipt.fingerprint !== fingerprint) return res.status(409).json({ error: 'Chave de repetição já usada para outro lançamento.' });
+    const existing = await financeRepository.findById(receipt.entityId);
+    if (!existing) return res.status(410).json({ error: 'Lançamento desta solicitação foi excluído e não foi recriado.' });
+    return res.json(existing);
+  }
+  const trxNumber = await sequenceService.nextFinanceNumber();
+  const newTrx: FinancialTransactionEntity = {
+    ...details, id: crypto.randomUUID(), transactionNumber: trxNumber, status: 'pendente',
     isDemo: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
   await financeRepository.save(newTrx);
+  await financeRequestRepository.save(requestId, { fingerprint, entityId: newTrx.id });
 
   await auditService.log({
     actorId: actor.id,

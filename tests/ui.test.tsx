@@ -207,3 +207,18 @@ test('envio pendente preserva rascunho e reutiliza chave sem nova intenção de 
     assert.equal(component.getAllByLabelText('Status: pending').length, 1);
   });
 });
+
+const { FinancialView } = await import('../src/components/FinancialView');
+test('formulário financeiro conserva chave em falha e bloqueia duplo envio', async () => {
+  const keys: string[] = []; let finish!: (value: boolean) => void;
+  const component = render(<FinancialView transactions={[]} onDeleteTransaction={() => {}} onToggleStatus={() => {}}
+    onSaveTransaction={async (_title, key) => { keys.push(key!); return new Promise((resolve) => { finish = resolve; }); }} />);
+  fireEvent.click(component.getByRole('button', { name: /Novo Lançamento/ }));
+  const form = component.container.querySelector('form')!; assert.ok(form);
+  fireEvent.submit(form); fireEvent.submit(form); assert.equal(keys.length, 1);
+  await act(async () => { finish(false); });
+  await waitFor(() => assert.equal(component.container.querySelector('button[type="submit"]')?.hasAttribute('disabled'), false));
+  fireEvent.submit(form); assert.equal(keys.length, 2); assert.equal(keys[0], keys[1]);
+  await act(async () => { finish(true); });
+  await waitFor(() => assert.equal(component.container.querySelector('form') === null, true));
+});

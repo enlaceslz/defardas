@@ -18,8 +18,8 @@ const server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => 
 const base = `http://127.0.0.1:${(server.address() as any).port}/finance`;
 after(() => { server.closeAllConnections(); server.close(); });
 const title = () => ({ type: 'pagar', subType: 'despesa_geral', description: 'Despesa teste', amount: 2.35, dueDate: '2027-01-01', paymentMethod: 'pix' });
-async function request(path: string, body: any) {
-  const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+async function request(path: string, body: any, key?: string) {
+  const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { 'idempotency-key': key } : {}) }, body: JSON.stringify(body) });
   return { status: response.status, data: await response.json() };
 }
 
@@ -49,4 +49,31 @@ test('comprovante exige URL válida sem credenciais; confirmação preserva auto
   assert.equal(paid.data.transaction.confirmedById, actorId); assert.doesNotMatch(paid.data.message, /Sinal|50%/);
   const repeated = await request(`/transactions/${id}/confirm-payment`, {});
   assert.equal(repeated.status, 200); assert.equal(repeated.data.alreadyConfirmed, true);
+});
+
+test('cadastro concorrente repete título sem duplicar e preserva estado já liquidado', async () => {
+  const key = crypto.randomUUID(); const payload = title();
+  const responses = await Promise.all(Array.from({ length: 8 }, () => request('/transactions', payload, key)));
+  assert.equal(responses.filter((response) => response.status === 201).length, 1);
+  assert.equal(responses.filter((response) => response.status === 200).length, 7);
+  assert.equal(new Set(responses.map((response) => response.data.id)).size, 1);
+  const id = responses[0].data.id;
+  assert.equal((await request('/transactions', { ...payload, amount: 4 }, key)).status, 409);
+  await request(`/transactions/${id}/confirm-payment`, { receiptVoucherNumber: 'KEYED', receiptEvidenceUrl: 'https://example.invalid/keyed' });
+  assert.equal((await request('/transactions', payload, key)).data.status, 'pago');
+});
+
+test('rollback libera chave, exclusão não permite que retry antigo recrie título', async () => {
+  const key = crypto.randomUUID(); const payload = title(); const before = db.financeRequests.size;
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected finance request failure'); };
+    assert.equal((await request('/transactions', payload, key)).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal(db.financeRequests.size, before);
+  const saved = await request('/transactions', payload, key); assert.equal(saved.status, 201);
+  assert.equal((await fetch(base + `/transactions/${saved.data.id}`, { method: 'DELETE' })).status, 200);
+  assert.equal((await request('/transactions', payload, key)).status, 410);
+  assert.equal(await financeRepository.findById(saved.data.id), null);
+  assert.equal(db.financeRequests.size, before + 1);
 });

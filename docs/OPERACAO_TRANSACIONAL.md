@@ -203,3 +203,16 @@ Cadastro manual exige valor numérico positivo, mínimo técnico de um centavo, 
 A URL de evidência da baixa deve ser absoluta HTTPS, sintaticamente válida e sem usuário/senha embutidos. Query de assinatura é permitida. Essa validação não verifica existência, autenticidade, propriedade, conteúdo ou privacidade do arquivo e não realiza download; upload privado S3 e validação de evidência ainda estão pendentes. Não tratar URL válida como prova bancária automática.
 
 Leitura da transação preserva confirmedById além do nome do operador. A mensagem de confirmação distingue entrada de saldo e não presume percentual fixo. Baixar saldo não anuncia sinal confirmado; continua sem liberar corte, que depende também dos portões existentes. Título já pago devolve sua confirmação original, sem substituir evidências ou duplicar auditoria. Erros de validação/auditoria mantêm a reversão transacional existente.
+
+
+## Cadastro financeiro manual: repetição segura e exclusão
+
+POST /api/finance/transactions operacional exige idempotency-key UUID. A chave e o usuário autenticado identificam uma intenção; conteúdo normalizado (tipo, subtipo, descrição, categoria, valor, vencimento, pagamento e referência) gera fingerprint SHA-256. Primeira confirmação retorna 201; replay igual retorna o título atual com 200, sem contador/título/auditoria novos. Conteúdo diferente na mesma chave retorna 409. Título já liquidado não volta a pendente no replay.
+
+A confirmação da solicitação usa core.event_log existente, com event_type FINANCE_MANUAL_CREATED, status completed e payload limitado a fingerprint/entityId. É um registro de comando concluído, não tarefa pendente de outbox. Título, contador, registro de chave e auditoria confirmam na mesma transação. Rollback permite retry da chave.
+
+O registro de chave não tem FK nem exclusão em cascata para o título: se um título manual pendente for excluído pelo procedimento existente, replay retorna 410 e não o recria. Não apagar esses registros por limpeza genérica de eventos concluídos; sua conservação é necessária à proteção contra reenvio. Não há expiração automática nesta entrega. Backup/restauração da CI compara também os IDs/payloads desses registros.
+
+A tela conserva a chave ao reenviar os mesmos dados após falha e bloqueia submissão simultânea. Alterar dados, abrir novo formulário ou remontar/recarregar a tela gera outra intenção/chave. Conferir histórico se uma confirmação anterior for desconhecida. api.createTransaction(payload,chave) aceita chave explícita; omissão gera nova a cada chamada. Não há retry automático ou localStorage privado. Chaves diferentes não são deduplicadas.
+
+A proteção é do cadastro manual, sem mudar conversão de propostas ou baixa. Formulário e snapshot de chave permanecem apenas na memória do componente. A política de retenção definitiva dos registros de chave precisa acompanhar a operação; não limpar indiscriminadamente core.event_log.
