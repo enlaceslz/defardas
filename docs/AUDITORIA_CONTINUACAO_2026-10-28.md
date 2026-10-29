@@ -228,3 +228,13 @@ Achados: custo de facção aceitava valor arbitrariamente grande e mais de duas 
 Correções: PUT rejeita entradas fora do contrato numeric(10,2), trata corpo ausente como validação e preserva centavos. Formulário explicita teto. Repositório conserva equipe vazia e lê NULL como vazio, sem atribuição inventada. Nenhuma alteração de schema, política comercial ou limpeza de nomes históricos. Aprovação de arte e transições operacionais não foram modificadas.
 
 Validação local: 79 testes, tipagem, build Vite e diff-check aprovados. Teste HTTP cobre negativo, casas excedentes, overflow, string, corpo ausente, zero, centavos, teto e rollback. Teste PostgreSQL adicional verifica recarga da equipe na conversão/edição, valores persistidos e ausência de mutações/auditoria após falha; depende da CI. Bundle 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite utilizado. Sem banco real, mensagem externa, merge ou deploy.
+
+## Continuação de 29/10/2026: reenvio seguro da aprovação de arte
+
+Base: PR #19, commit a5257166; CI 40865229363 aprovada.
+
+Achado: repetir approve-art sobrescrevia responsável/data, repetia notas técnicas e adicionava auditoria, inclusive depois de a OP já estar aprovada. Falha de rede seguida de retry alterava a confirmação original.
+
+Correção: se a OP já está aprovada, retorna a confirmação atual com alreadyApproved=true sem salvar/auditar novamente. Os dados novos de um reenvio não substituem os originais; a ação não é um fluxo de revisão/revogação de arte. Primeira confirmação mantém validação de nome, corpo ausente recebe 400, e auditoria/OP confirmam na mesma transação/lock. Sem migração, liberação automática do corte ou alteração financeira.
+
+Validação local: 81 testes, tipagem, build Vite e diff-check aprovados. Dois testes HTTP e dois PostgreSQL adicionados cobrem oito chamadas concorrentes com uma confirmação/auditoria, replay com nome/arquivo diferente ou sem corpo, conservação dos metadados/notas/etapa, validação, rollback e retry. PostgreSQL depende da CI. Bundle permanece 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite usado. Sem banco real, mensagem externa, merge ou deploy. Evidência externa de aceite, S3 privado, revisão/revogação e reparo de metadados históricos seguem pendentes.

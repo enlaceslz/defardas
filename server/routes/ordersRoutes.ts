@@ -104,9 +104,14 @@ ordersRouter.post('/:id/approve-art', requirePermission('orders:approve_art'), a
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
 
-  const { approverName, fileUrl } = req.body;
+  // Aprovação já registrada não pode ser substituída por um retry da mesma ação.
+  if (order.artApproved) {
+    return res.json({ success: true, alreadyApproved: true, message: 'Arte já aprovada anteriormente.', order });
+  }
+  const { approverName, fileUrl } = req.body || {};
+  const approvedBy = text(approverName, 'Nome do cliente que aprovou a arte', 100);
   order.artApproved = true;
-  order.artApprovedBy = text(approverName, 'Nome do cliente que aprovou a arte', 100);
+  order.artApprovedBy = approvedBy;
   order.artApprovalDate = new Date().toISOString();
   order.technicalNotes = `${order.technicalNotes || ''} [Arte aprovada por ${order.artApprovedBy} em ${new Date().toLocaleDateString('pt-BR')}].`;
   order.updatedAt = new Date().toISOString();

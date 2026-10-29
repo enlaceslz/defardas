@@ -238,3 +238,9 @@ Custódias são verificadas no PostgreSQL; não há módulo de custódia em mem�
 PUT /api/orders/:id valida custo da facção no intervalo não negativo da coluna numeric(10,2), até 99.999.999,99 e com no máximo dois decimais. Rejeita 1.005 em vez de deixar o PostgreSQL arredondar; não define preço mínimo comercial. Campo ausente continua zero, como no contrato anterior. Corpo ausente resulta em 400. O formulário informa o mesmo teto.
 
 Equipe vazia é persistida e recarregada vazia, inclusive em OP criada pela conversão. O repositório não atribui mais a equipe fictícia padrão quando o usuário não informou uma. NULL histórico é lido como vazio; nomes anteriormente gravados não são alterados automaticamente, e o default SQL não muda nesta entrega. Edição mantém autorização existente, portões separados e rollback em falha de auditoria.
+
+### Aprovação de arte: reenvio preserva confirmação original
+
+POST /api/orders/:id/approve-art confirma somente quando artApproved ainda é falso. Já aprovado retorna 200, alreadyApproved=true e a OP atual, sem trocar responsável, data, arquivo na auditoria, notas técnicas ou updatedAt, mesmo se o reenvio trouxer outro nome/arquivo ou não trouxer corpo. Não significa que os novos dados foram aceitos; a resposta devolve a confirmação existente. A rota continua exigindo permissão de aprovação.
+
+A primeira confirmação exige nome válido; corpo ausente retorna 400. Aprovação e auditoria usam a mesma transação/lock, de modo que chamadas concorrentes criam uma confirmação e uma auditoria. Falha de auditoria reverte a OP e permite retry. A ação não confirma entrada nem muda etapa. Revisão/substituição de arte e revogação não são implementadas por esta rota; exigem fluxo explícito futuro. Não corrige metadados de aprovações históricas incompletas e não autentica o aceite externo, arquivo ou identidade do cliente. S3 privado e evidência verificável permanecem pendentes.
