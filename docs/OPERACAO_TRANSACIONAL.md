@@ -270,3 +270,11 @@ Validação ocorre antes da reserva do número para essas entradas inválidas. C
 O pool valida DATABASE_SSL_MODE, DATABASE_POOL_MAX e o escape de certificado antes de criar conexões. TLS é definido por DATABASE_SSL_MODE/DATABASE_CA_CERT; query SSL da URL não pode sobrescrever a política. sslmode redundante compatível é retirado da URL antes do pg; demais opções SSL/compatibilidade ou conflitos impedem início. verify-full sempre verifica certificado, e disable é passado explicitamente ao driver para não herdar PGSSLMODE.
 
 Há escape inseguro explícito somente em require, sem CA. Fora dele, TLS solicitado valida certificado também em desenvolvimento. Erros de configuração usam código seguro DATABASE_CONFIG_INVALID. Ver [guia Docker](DOCKER_DEPLOY.md) para compatibilidade e restrições; não equivale a handshake TLS homologado no host contratado e não muda o contrato libpq dos scripts Bash de backup.
+
+### Privacidade da auditoria de acesso e chave do rate limit
+
+Bloqueios requireAuth/requireRole registram somente método conhecido e template de rota definido no servidor. Não copiam originalUrl, query string, parâmetros de caminho, corpo, cookies ou Authorization para esses eventos. Antes da resolução da rota (como router.use(requireAuth)), usam protected-resource; esse marcador perde o detalhe do módulo/caminho para evitar gravar entrada arbitrária. Identidade autenticada, perfil e IP continuam no evento conforme o contrato de auditoria existente.
+
+Rate limit usa template da rota e IP, não o caminho enviado pelo cliente. Variações de caixa aceitas pelo Express, query ou valores de parâmetros não abrem novos contadores para o mesmo template. Limites, janela, status 429 e Retry-After permanecem iguais. Registrar o limitador na rota; se usado antes de resolver rota, o marcador fixo compartilha contador entre requisições da instância. Uma mesma instância reutilizada em mounts com template idêntico também compartilha contador; usar instâncias distintas quando forem proteções distintas.
+
+A proteção é desses middlewares. Não apaga logs históricos, não anonimiza eventos de negócio e não configura logs do proxy/provedor. Restringir acesso à auditoria e definir retenção/revisão de dados históricos antes da liberação. Rate limit continua em memória por processo; implantação com múltiplas instâncias ainda precisa de solução/topologia homologada.

@@ -290,3 +290,13 @@ Achados confirmados no código do driver instalado: modo SSL desconhecido caía 
 Correção: parser isolado valida modos, escape e inteiro positivo; ambiente é autoridade TLS. SSL redundante na URL deve concordar e é removido; overrides SSL/compatibilidade são rejeitados antes do driver. verify-full não admite escape; require valida certificado por padrão também fora de produção. Inseguro só por opção explícita require/sem CA. Código diagnóstico DATABASE_CONFIG_INVALID é permitido sem serializar URL/CA/entradas. Configuração falha antes de conectar e não há fallback de segurança.
 
 Validação local: 92 testes, tipagem, build e diff-check aprovados. Quatro testes novos cobrem driver pg real sem rede, CA preservada, conflitos/valores inválidos, não herdar PGSSLMODE e processo CLI encerrado com diagnóstico privado. CI PostgreSQL/Docker ainda deve validar o novo commit. Sem migração, banco real, mensagem externa, merge ou deploy. Handshake TLS no servidor contratado não foi executado; backup Bash/libpq continua com seu contrato próprio.
+
+## Continuação de 29/10/2026: privacidade de rotas na auditoria e contagem canônica de abuso
+
+Base: PR #25, commit 3dc24bc1; CI 40943845858 aprovada.
+
+Achados: requireAuth/requireRole gravavam originalUrl em entityId/notas, incluindo query e valores do caminho. Rate limit usava req.path como chave, permitindo novos contadores por variação de caixa em rotas Express sem case sensitivity; também copiava caminho recebido para notas.
+
+Correção: contexto usa só template da rota registrada e método conhecido, com marcador fixo quando ainda não há rota resolvida. Eventos 401/403 e rate limit não gravam URL/params/query/headers/body. Limitação usa template+IP; janela/máximo/resposta não mudam. IP e identidade legítimos continuam auditados. Compartilhamento por template/instância e limite em memória estão documentados. Sem limpeza ou supressão de histórico existente.
+
+Validação local: 94 testes, tipagem, build e diff-check aprovados. Dois testes HTTP verificam segredos em caminho/query/body/credenciais sem inclusão nos eventos e bloqueio por variações de caixa/param/query com Retry-After. Teste PostgreSQL adicional confere eventos reais 401/403/429 sem URL privada e contagem por rota registrada; depende da CI. Sem migração, banco real, mensagem externa, merge ou deploy. Logs de proxy, eventos de negócio e retenção histórica não são alterados.

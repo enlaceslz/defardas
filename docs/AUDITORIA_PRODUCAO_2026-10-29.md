@@ -62,3 +62,9 @@ A primeira execução desta revisão revelou fixtures PostgreSQL que dependiam d
 Após o PR #24, a revisão identificou modo SSL desconhecido caindo em disable e opções SSL da URL sobrescrevendo a política do pool/CA no driver instalado. Parser de configuração agora recusa conflitos, preserva CA, não permite enfraquecer verify-full e valida tamanho do pool sem parseInt permissivo. Configuração inválida termina com diagnóstico seguro antes de conectar. URL com parâmetros SSL incompatíveis exige ajuste de ambiente; ver o guia Docker.
 
 Validação local passa a 92 testes, com inspeção das opções efetivas do driver e teste de processo sem vazamento. Esta entrega não comprova handshake TLS com o banco contratado; PROD-03 e os demais bloqueios continuam vigentes. Última CI de base aprovada: PR #24, execuções 40900379159/40900369819; conferir a CI do novo PR para o commit final.
+
+## Continuação: auditoria de acesso e rate limit
+
+Após o PR #25, foram encontrados URLs completos em eventos de bloqueio e contadores separados por caixa do caminho. Os middlewares passam a usar o template definido no servidor, com marcador fixo antes de resolver a rota; query, valores do caminho, corpo e credenciais não compõem esses eventos. Rate limit usa template+IP e mantém seus limites/janelas. Validação local passa a 94 testes; conferir a CI do PR correspondente para persistência PostgreSQL e imagem.
+
+Isso não limpa histórico que possa conter URLs privadas nem configura logs do proxy. Avaliar retenção/acesso a auditoria no ambiente real; rate limit distribuído, RBAC de leitura e demais bloqueios continuam pendentes. A última CI de base aprovada é 40943845858, do PR #25.
