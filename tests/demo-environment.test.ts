@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import express from 'express';
 import crypto from 'node:crypto';
+import { communicationRouter } from '../server/routes/communicationRoutes';
+import { communicationRepository } from '../server/repositories/communicationRepository';
+import { whatsAppService } from '../server/services/whatsappService';
 import { authRouter } from '../server/routes/authRoutes';
 import { migrationRouter } from '../server/routes/migrationRoutes';
 import { userRepository } from '../server/db/userRepository';
@@ -20,6 +23,7 @@ app.use((req: any, _res, next) => {
 });
 app.use('/auth', authRouter);
 app.use('/migration', migrationRouter);
+app.use('/communication', communicationRouter);
 app.use((err: any, _req: any, res: any, _next: any) => res.status(500).json({ error: err.message }));
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>((resolve) => server.on('listening', resolve));
@@ -85,5 +89,47 @@ test('demonstração sem banco preserva credenciais locais; ambiente desconhecid
       assert.equal(isLocalDemoEnvironment(), false);
       assert.equal((await fetch(base + '/auth/dev-credentials')).status, 404);
     });
+  }
+});
+
+
+test('comunicação não simula conexão, QR ou confirmação financeira fora da demonstração local', async () => {
+  const originalFind = communicationRepository.findChannelById;
+  const originalSave = communicationRepository.saveChannel;
+  const originalTemplate = whatsAppService.sendDownpaymentConfirmedTemplate;
+  let writes = 0; let sends = 0;
+  const channel = { id: 'test-channel', status: 'disconnected', phoneNumber: '000' } as any;
+  communicationRepository.findChannelById = async () => ({ ...channel });
+  communicationRepository.saveChannel = async (value) => { writes++; return value; };
+  whatsAppService.sendDownpaymentConfirmedTemplate = async () => { sends++; throw new Error('Unexpected send'); };
+  try {
+    for (const environment of [undefined, 'development', 'test', 'staging', 'production']) {
+      for (const database of ['postgresql://invalid.example.invalid/never_connected', undefined]) {
+        if (!database && [undefined, 'development', 'test'].includes(environment)) continue;
+        await inEnvironment(environment, database, async () => {
+          const qr = await fetch(base + '/communication/channels/test-channel/qr');
+          assert.equal(qr.status, 503);
+          assert.equal('qrCode' in await qr.json(), false);
+          assert.equal((await fetch(base + '/communication/channels/test-channel/reconnect', { method: 'POST' })).status, 501);
+          const template = await fetch(base + '/communication/send-template', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+              templateType: 'downpayment_confirmed', clientPhone: '000', clientName: 'Test', voucherNumber: 'inventado',
+            }) });
+          assert.equal(template.status, 501);
+          assert.notEqual((await template.json()).success, true);
+        });
+      }
+    }
+    assert.equal(writes, 0);
+    assert.equal(sends, 0);
+    await inEnvironment('development', undefined, async () => {
+      const qr = await fetch(base + '/communication/channels/test-channel/qr');
+      assert.equal(qr.status, 200);
+      assert.match((await qr.json()).qrCode, /^data:image/);
+    });
+  } finally {
+    communicationRepository.findChannelById = originalFind;
+    communicationRepository.saveChannel = originalSave;
+    whatsAppService.sendDownpaymentConfirmedTemplate = originalTemplate;
   }
 });

@@ -1,3 +1,4 @@
+import { isLocalDemoEnvironment } from '../auth/demoEnvironment';
 import { verifyMetaWebhook, verifyWaAkgWebhook } from '../middleware/webhookAuth';
 /**
  * DE FARDAS ERP — Communication & WhatsApp Routes
@@ -105,7 +106,7 @@ communicationRouter.get('/channels/:id/qr', async (req: RequestWithUser, res: Re
     return res.status(404).json({ error: 'Canal não encontrado' });
   }
 
-  if (process.env.NODE_ENV === 'production' && !channel.qrCode) {
+  if (!isLocalDemoEnvironment() && !channel.qrCode) {
     return res.status(503).json({ error: 'QR Code indisponível no provedor.' });
   }
   // Prévia demonstrativa apenas em desenvolvimento
@@ -125,7 +126,7 @@ communicationRouter.post('/channels/:id/reconnect', async (req: RequestWithUser,
     return res.status(404).json({ error: 'Canal não encontrado' });
   }
 
-  if (process.env.NODE_ENV === 'production') {
+  if (!isLocalDemoEnvironment()) {
     return res.status(501).json({ error: 'Reconexão ao provedor ainda não implementada.' });
   }
   channel.status = 'connecting';
@@ -178,6 +179,10 @@ communicationRouter.post('/conversations/:id/messages', async (req: RequestWithU
 
 // Disparo de templates automáticos de ERP
 communicationRouter.post('/send-template', async (req: RequestWithUser, res: Response) => {
+  // Templates operacionais exigem consulta da proposta, baixa e gate reais.
+  if (!isLocalDemoEnvironment()) {
+    return res.status(501).json({ error: 'Templates automáticos aguardam integração com os registros e portões do ERP.' });
+  }
   const { templateType, clientPhone, clientName, quoteNumber, orderNumber, amount, voucherNumber } = req.body;
 
   if (!clientPhone || !clientName) {

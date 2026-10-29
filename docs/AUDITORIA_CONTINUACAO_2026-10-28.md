@@ -33,3 +33,14 @@ Entrega de e-mail/interface pública de redefinição, anexos privados S3, gest�
 O alerta histórico do GitGuardian no PR #1 refere-se a uma senha literal antiga em compose.yaml. A configuração atual exige POSTGRES_PASSWORD externo, mas isso não comprova rotação de qualquer instalação que tenha usado o valor anterior. Não houve reescrita de histórico ou alteração de credenciais reais.
 
 Esta revisão focou autenticação, recuperação e listagem de propostas; não constitui aprovação irrestrita de produção nem auditoria exaustiva de todos os módulos.
+
+
+## Nova revisão incremental da comunicação
+
+Base: `aeb9db5`, PR #4 (`feat/team-access-operations`); os PRs #1–#4 permanecem abertos e encadeados. Revisão focada nas rotas de comunicação e no serviço WhatsApp.
+
+- Corrigido isolamento incompleto: homologação com DATABASE_URL podia obter QR ilustrativo e reconexão simulada, incluindo escrita de status fictício. Ambos agora usam o mesmo predicado da demonstração local.
+- Bloqueados templates automáticos fora da demonstração local: o endpoint aceitava dados arbitrários do cliente e podia afirmar sinal confirmado e corte liberado sem verificar baixa/arte. Responde 501 antes de efeitos. Integração com registros autoritativos permanece pendente.
+- Teste HTTP cobre banco configurado com NODE_ENV ausente/development/test/staging/production e staging/production sem banco; verifica ausência de QR fictício, escrita de canal e envio de template. QR local permanece disponível.
+- Validação desta revisão: 37 testes locais, `npm run lint`, `npm run build` e `git diff --check` passaram. Bundle JS produzido: 463,90 kB (119,11 kB gzip). `compile_applet` não está disponível. PostgreSQL/Docker não foram executados localmente nesta revisão; resultados históricos não são evidência deste commit.
+- Sem migração, implantação, mensagem externa ou alteração de conta operacional. Nenhuma aprovação de produção: S3, e-mail, matriz de leitura, WhatsApp (recibos/deduplicação/transações), importação e homologação seguem pendentes.
