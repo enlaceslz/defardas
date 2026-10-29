@@ -194,3 +194,12 @@ Primeira confirmação responde 201. Repetição da mesma chave com dados normal
 O cliente deve gerar uma chave por intenção e conservá-la ao reenviar após erro de rede. `api.createStockMovement(payload, chave)` aceita explicitamente a chave; omiti-la gera uma nova a cada chamada e não protege retries feitos como novas intenções. O cliente não faz retry automático. Não há cache privado em localStorage. Sem chave, somente demonstração local preserva o comportamento anterior.
 
 O registro de movimento conserva a chave derivada enquanto o histórico existir; não há expiração automática. A proteção vale para essa rota, não para cadastro/edição de item, nem para consumidores que troquem a chave no reenvio. RBAC é aplicado também no replay. Não usar a remoção do histórico para forçar nova execução.
+
+
+## Financeiro: contrato manual e retorno da liquidação
+
+Cadastro manual exige valor numérico positivo, mínimo técnico de um centavo, com até duas casas e dentro da capacidade numeric(12,2) existente (9.999.999.999,99). Valor com precisão excessiva é rejeitado em vez de arredondado silenciosamente. Categoria/referência opcionais respeitam limites SQL de 60 caracteres e não recebem categoria de venda fictícia. Títulos de pedido continuam exclusivos do fluxo de conversão; cadastro manual não vincula produção/proposta.
+
+A URL de evidência da baixa deve ser absoluta HTTPS, sintaticamente válida e sem usuário/senha embutidos. Query de assinatura é permitida. Essa validação não verifica existência, autenticidade, propriedade, conteúdo ou privacidade do arquivo e não realiza download; upload privado S3 e validação de evidência ainda estão pendentes. Não tratar URL válida como prova bancária automática.
+
+Leitura da transação preserva confirmedById além do nome do operador. A mensagem de confirmação distingue entrada de saldo e não presume percentual fixo. Baixar saldo não anuncia sinal confirmado; continua sem liberar corte, que depende também dos portões existentes. Título já pago devolve sua confirmação original, sem substituir evidências ou duplicar auditoria. Erros de validação/auditoria mantêm a reversão transacional existente.

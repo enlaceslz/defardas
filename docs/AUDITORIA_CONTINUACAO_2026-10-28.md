@@ -168,3 +168,16 @@ Contrato inclui item/OP normalizados, tipo, quantidade, motivo e documento. Perm
 Validação local: 70 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes HTTP exercitam oito requisições simultâneas, conflito e rollback/retry. Dois testes PostgreSQL adicionados verificam exatamente um movimento/incremento/evento, chave ausente/inválida, conflito, saldo atual em replay e rollback de contador/chave; dependem da CI deste commit. Bundle JS 464,70 kB / 119,49 kB gzip. compile_applet indisponível; build Vite utilizado.
 
 Nenhuma operação em banco real, migração, mensagem externa ou deploy. O escopo não cobre idempotência de cadastro/edição de item ou consumidores que descartem a chave. Custódia detalhada por parceiro/OP, RBAC de leitura, S3/e-mail, demais integrações e homologação continuam pendentes.
+
+
+## Continuação de 29/10/2026: precisão, autoria e mensagens do financeiro
+
+Base: PR #14, commit bc0f6ba8; CI 40812698663 aprovada.
+
+Achados: cadastro manual arredondava valor sem validação de escala/capacidade, podia classificar despesa como Venda de Uniformes por fallback e aceitar metadados fora do schema. Leitura omitia confirmedById. Confirmação de saldo com OP vinculada anunciava sinal de 50% confirmado. Validação de evidência só verificava prefixo HTTPS.
+
+Correções: valor manual estrito conforme numeric(12,2), metadados textuais com limites e sem categoria fictícia; vínculos de produção não são copiados no título manual. Mapeamento preserva autoria. Retorno da baixa distingue entrada/saldo sem percentual presumido e sem liberação automática de corte. URL precisa ser absoluta HTTPS, válida e sem credenciais, sem alegar verificação de arquivo/propriedade ou realizar rede.
+
+Validação local: 72 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes HTTP cobrem valor/metadados, URL, rollback de auditoria e replay de confirmação. Dois testes PostgreSQL adicionados verificam contador preservado em valor inválido, persistência/autoria e baixa de saldo antes da entrada sem falsa confirmação de sinal/corte; dependem da CI deste commit. Após ajuste final da validação de URL, a suíte afetada e tipagem passaram novamente. Bundle permanece 464,70 kB / 119,49 kB gzip. compile_applet indisponível; build Vite utilizado.
+
+Sem migração, operação em banco real, mensagem externa ou deploy. Arquivo privado/evidência autoritativa S3, idempotência de criação manual de título, estornos com política homologada, RBAC de leitura e homologação/integrações seguem pendentes.
