@@ -1356,3 +1356,23 @@ test('PostgreSQL: filtro de auditoria não amplia consulta e rejeita parâmetros
   assert.equal(filtered.status, 200); assert.equal(filtered.data.length, 1);
   assert.equal(filtered.data[0].entityId, id); assert.equal(filtered.data[0].action, 'QUERY_TEST');
 });
+
+
+test('PostgreSQL: movimento valida vínculo de OP antes de gravar ou numerar', async () => {
+  const created = await request('/api/inventory/items', 'POST', { name: 'Link test', category: 'tecido', unit: 'metros', physicalStock: 1, unitCostPrice: 1, minStock: 0 });
+  assert.equal(created.status, 201); const id = created.data.id;
+  const before = { item: (await pool.query('SELECT * FROM estoque.items WHERE id=$1', [id])).rows,
+    counters: (await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows,
+    movements: (await pool.query('SELECT count(*) FROM estoque.movements')).rows,
+    audit: (await pool.query('SELECT count(*) FROM core.audit_logs')).rows };
+  for (const [update, status] of [[{ itemId: 'invalid' }, 400], [{ productionOrderId: 'invalid' }, 400], [{ productionOrderId: crypto.randomUUID() }, 404]] as const) {
+    assert.equal((await request('/api/inventory/movements', 'POST', { itemId: id, type: 'entrada_compra', quantity: 1, ...update })).status, status);
+  }
+  assert.deepEqual((await pool.query('SELECT * FROM estoque.items WHERE id=$1', [id])).rows, before.item);
+  assert.deepEqual((await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows, before.counters);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM estoque.movements')).rows, before.movements);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, before.audit);
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  const moved = await request('/api/inventory/movements', 'POST', { itemId: id.toUpperCase(), productionOrderId: converted.data.orders[0].id.toUpperCase(), type: 'entrada_compra', quantity: 1 });
+  assert.equal(moved.status, 201); assert.equal(moved.data.movement.productionOrderId, converted.data.orders[0].id);
+});

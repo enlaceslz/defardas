@@ -82,3 +82,22 @@ test('falha de auditoria não consome chave; retry confirma uma única movimenta
   assert.equal((await request('/movements', payload, 'POST', key)).status, 200);
   assert.equal((await inventoryRepository.findItemById(created.data.id))?.physicalStock, 2);
 });
+
+test('movimentação rejeita identificadores inválidos e OP ausente antes de saldo/numeração', async () => {
+  const created = await request('/items', item()); assert.equal(created.status, 201);
+  const before = structuredClone([db.inventory, db.movements]);
+  const original = sequenceService.nextMovementNumber; let calls = 0;
+  try {
+    sequenceService.nextMovementNumber = async () => { calls++; throw new Error('Must not allocate'); };
+    for (const [update, status] of [[{ itemId: 'invalid' }, 400], [{ productionOrderId: 'invalid' }, 400], [{ productionOrderId: crypto.randomUUID() }, 404]] as const) {
+      assert.equal((await request('/movements', { itemId: created.data.id, type: 'entrada_compra', quantity: 1, ...update }, 'POST', crypto.randomUUID())).status, status);
+    }
+    assert.equal(calls, 0); assert.deepEqual([db.inventory, db.movements], before);
+  } finally { sequenceService.nextMovementNumber = original; }
+  const id = crypto.randomUUID(); db.orders.set(id, { id } as any);
+  const key = crypto.randomUUID(); const payload = { itemId: created.data.id.toUpperCase(), productionOrderId: id.toUpperCase(), type: 'entrada_compra', quantity: 1 };
+  const valid = await request('/movements', payload, 'POST', key); assert.equal(valid.status, 201);
+  assert.equal(valid.data.movement.productionOrderId, id);
+  const replay = await request('/movements', payload, 'POST', key); assert.equal(replay.status, 200);
+  assert.equal(replay.data.replayed, true); assert.equal(replay.data.item.physicalStock, 1.1);
+});

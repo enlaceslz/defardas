@@ -366,3 +366,12 @@ GET /api/audit/logs exige entityName e entityId juntos quando há filtro. Ambos 
 limit ausente mantém 100; quando informado, precisa ser uma string decimal canônica entre 1 e 500. Zero, negativos, frações, notação exponencial, zeros iniciais e valores acima do máximo passam a receber 400 em vez de coerção/clamp. Clientes próprios precisam respeitar esse contrato; as chamadas existentes da SPA usam 10/30/50 e permanecem compatíveis.
 
 Validação local: 113 testes, tipagem, build e diff-check aprovados. Novo cenário PostgreSQL confere rejeições e isolamento do filtro; CI desta continuação pendente. CI anterior: PR #37, https://github.com/enlaceslz/defardas/actions/runs/40969398612. Sem migração nova, mudança de permissões ou deploy; bloqueios operacionais permanecem.
+
+
+### Continuação: vínculo da movimentação com OP
+
+POST /api/inventory/movements valida itemId e productionOrderId opcional no formato UUID canônico, aceitando caixa alta e normalizando para minúsculas. Formato inválido recebe 400 antes de consultas por identificador. Para nova movimentação, OP informada precisa existir: ausência recebe 404 antes de alterar saldo ou reservar número. Evita vínculo órfão no modo local e alinha a entrada à FK existente no PostgreSQL.
+
+A OP permanece opcional e não há nova restrição por etapa ou tipo de movimento. Replay íntegro continua devolvendo movimentação e saldo atuais sem nova gravação. Não corrige vínculos históricos nem implementa custódia por parceiro.
+
+Validação local: 114 testes, tipagem, build e diff-check aprovados. Cenário PostgreSQL confere saldo, timestamp, movimentos, contador e auditoria intactos nas rejeições, além de vínculo válido com UUID em maiúsculas. CI desta continuação pendente. CI anterior: PR #38, https://github.com/enlaceslz/defardas/actions/runs/40969900914. Sem migração nova ou deploy; bloqueios operacionais permanecem.

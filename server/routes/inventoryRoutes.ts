@@ -5,6 +5,7 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { inventoryRepository } from '../repositories/inventoryRepository';
+import { orderRepository } from '../repositories/orderRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { InventoryItemEntity, StockMovementEntity } from '../types/db';
@@ -92,6 +93,8 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
 
   const requestedItemId = text(itemId, 'Item', 36).toLowerCase();
   const orderId = text(productionOrderId, 'Ordem de produção', 36, false).toLowerCase() || undefined;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (!uuid.test(requestedItemId) || (orderId && !uuid.test(orderId))) throw new InputError('Identificador de item ou OP inválido.');
   oneOf(type, ['entrada_compra', 'saida_corte', 'remessa_parceiro', 'retorno_parceiro', 'perda_tecnica', 'ajuste_inventario'], 'Tipo de movimentação');
   const qty = decimal(quantity, 'Quantidade', type === 'ajuste_inventario' ? -99999999.99 : 0);
   if (qty === 0) throw new InputError('Quantidade não pode ser zero.');
@@ -116,6 +119,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
   }
   const item = await inventoryRepository.findItemById(requestedItemId);
   if (!item) return res.status(404).json({ error: 'Item de estoque não encontrado' });
+  if (orderId && !await orderRepository.findById(orderId)) return res.status(404).json({ error: 'Ordem de produção não encontrada.' });
 
   const oldPhysical = item.physicalStock;
   const oldAllocated = item.allocatedStock;
