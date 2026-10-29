@@ -1,6 +1,6 @@
 # ==============================================================================
 # DE FARDAS ERP — Docker Compose Produção
-# Arquitetura com Banco PostgreSQL Próprio, Redis, ERP e WA-AKG Isolado
+# ERP e PostgreSQL próprio; Redis opcional, WhatsApp somente com provedor real
 # ==============================================================================
 
 services:
@@ -14,21 +14,17 @@ services:
     container_name: defardas-app
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000"
     environment:
       - PORT=3000
       - NODE_ENV=production
       - DATABASE_SSL_MODE=disable
       - DATABASE_URL=postgresql://${POSTGRES_USER:-defardas_user}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no ambiente}@defardas-postgres:5432/${POSTGRES_DB:-defardas_db}?sslmode=disable
-      - REDIS_URL=redis://defardas-redis:6379
-      - WA_AKG_ENDPOINT=http://defardas-wa-akg:8080
     env_file:
       - path: .env
         required: false
     depends_on:
       defardas-postgres:
-        condition: service_healthy
-      defardas-redis:
         condition: service_healthy
     networks:
       - defardas-internal
@@ -61,9 +57,10 @@ services:
       start_period: 10s
 
   # ----------------------------------------------------------------------------
-  # 3. Cache & Filas Assíncronas: Redis 7
+  # 3. Reserva opcional: aplicação atual não usa Redis para sessões/cache/filas
   # ----------------------------------------------------------------------------
   defardas-redis:
+    profiles: [optional-cache]
     image: redis:7-alpine
     container_name: defardas-redis
     restart: unless-stopped
@@ -78,22 +75,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ----------------------------------------------------------------------------
-  # 4. Central WhatsApp QR Code (WA-AKG em Container Isolado)
-  # ----------------------------------------------------------------------------
-  defardas-wa-akg:
-    image: node:20-alpine
-    container_name: defardas-wa-akg
-    restart: unless-stopped
-    working_dir: /app
-    command: sh -c "echo 'WA-AKG Service Container Initialized' && tail -f /dev/null"
-    environment:
-      - PORT=8080
-      - WA_AKG_API_KEY=${WA_AKG_API_KEY:-wa_akg_defardas_secret}
-    volumes:
-      - wa_akg_auth:/app/auth_session
-    networks:
-      - defardas-internal
+  # WA-AKG não é provisionado: configure endpoint real homologado no ambiente.
 
 # ==============================================================================
 # Redes e Volumes Persistentes
@@ -114,5 +96,6 @@ volumes:
     name: defardas_app_uploads
   app_logs:
     name: defardas_app_logs
+  # Reserva histórica; não apagar volume de credenciais de instalação anterior.
   wa_akg_auth:
     name: defardas_wa_akg_auth
