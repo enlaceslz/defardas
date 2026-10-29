@@ -54,3 +54,5 @@ P0 identifica condição para operação com dados reais; P1 pode depender do es
 5. Só então decidir a liberação operacional. Não usar a antiga declaração de homologação como autorização.
 
 Ver [status consolidado](DEVELOPMENT_STATUS.md), [operação transacional](OPERACAO_TRANSACIONAL.md) e [histórico de correções](AUDITORIA_CONTINUACAO_2026-10-28.md).
+
+A primeira execução desta revisão revelou fixtures PostgreSQL que dependiam do endpoint WA-AKG removido. Foram corrigidas para usar endpoint explícito com fetch interceptado; a espera do transporte agora propaga rejeição anterior à rede. Adicionado teste PostgreSQL de endpoint ausente sem nova intenção/requisição. Nenhum provedor externo é chamado nesses testes.

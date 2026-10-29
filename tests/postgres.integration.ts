@@ -440,6 +440,8 @@ test('PostgreSQL: falha na auditoria de recepção reverte tudo e permite reentr
 test('PostgreSQL: envio registra pendente antes da rede, deduplica e não segura conexão durante transporte', async () => {
   const { WhatsAppService } = await import('../server/services/whatsappService');
   const { communicationRepository } = await import('../server/repositories/communicationRepository');
+  const oldEndpoint = process.env.WA_AKG_ENDPOINT;
+  process.env.WA_AKG_ENDPOINT = 'https://provider.example.invalid';
   const oldKey = process.env.WA_AKG_API_KEY; const originalFetch = globalThis.fetch;
   process.env.WA_AKG_API_KEY = crypto.randomBytes(24).toString('hex');
   const channelId = crypto.randomUUID(); const conversationId = crypto.randomUUID();
@@ -455,7 +457,7 @@ test('PostgreSQL: envio registra pendente antes da rede, deduplica e não segura
   try {
     const service = new WhatsAppService();
     const first = service.sendMessage(options);
-    await startedPromise;
+    await Promise.race([startedPromise, first.then(() => { throw new Error('Transport did not start'); })]);
     const repeated = await service.sendMessage(options);
     assert.equal(repeated.status, 'pending'); assert.equal(calls, 1);
     assert.equal((await communicationRepository.findMessageById(repeated.id))?.status, 'pending');
@@ -467,6 +469,7 @@ test('PostgreSQL: envio registra pendente antes da rede, deduplica e não segura
     assert.equal((await pool.query('SELECT * FROM communication.messages WHERE conversation_id=$1', [conversationId])).rowCount, 1);
   } finally {
     globalThis.fetch = originalFetch;
+    if (oldEndpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = oldEndpoint;
     if (oldKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = oldKey;
   }
 });
@@ -474,6 +477,8 @@ test('PostgreSQL: envio registra pendente antes da rede, deduplica e não segura
 test('PostgreSQL: auditoria inicial impede envio e falha final mantém pendente para reconciliação', async () => {
   const { WhatsAppService } = await import('../server/services/whatsappService');
   const { auditService } = await import('../server/services/auditService');
+  const oldEndpoint = process.env.WA_AKG_ENDPOINT;
+  process.env.WA_AKG_ENDPOINT = 'https://provider.example.invalid';
   const oldKey = process.env.WA_AKG_API_KEY; const originalFetch = globalThis.fetch; const originalAudit = auditService.log;
   process.env.WA_AKG_API_KEY = crypto.randomBytes(24).toString('hex');
   const channelId = crypto.randomUUID(); const conversationId = crypto.randomUUID(); let calls = 0;
@@ -498,6 +503,7 @@ test('PostgreSQL: auditoria inicial impede envio e falha final mantém pendente 
     assert.equal((await pool.query('SELECT last_message_text FROM communication.conversations WHERE id=$1', [conversationId])).rows[0].last_message_text, null);
   } finally {
     auditService.log = originalAudit; globalThis.fetch = originalFetch;
+    if (oldEndpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = oldEndpoint;
     if (oldKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = oldKey;
   }
 });
@@ -556,6 +562,8 @@ test('PostgreSQL: resposta tardia do transporte não sobrescreve reconciliação
   const { reconcileWhatsAppMessage } = await import('../server/services/whatsappReconciliationService');
   const { WhatsAppService } = await import('../server/services/whatsappService');
   const { conversationId } = await pendingWhatsAppFixture();
+  const oldEndpoint = process.env.WA_AKG_ENDPOINT;
+  process.env.WA_AKG_ENDPOINT = 'https://provider.example.invalid';
   const previousKey = process.env.WA_AKG_API_KEY; const originalFetch = globalThis.fetch;
   process.env.WA_AKG_API_KEY = crypto.randomBytes(24).toString('hex');
   let started!: () => void; let finish!: () => void;
@@ -564,7 +572,8 @@ test('PostgreSQL: resposta tardia do transporte não sobrescreve reconciliação
   try {
     const service = new WhatsAppService();
     const options = { conversationId, body: 'In flight', idempotencyKey: crypto.randomUUID() };
-    const request = service.sendMessage(options); await startedPromise;
+    const request = service.sendMessage(options);
+    await Promise.race([startedPromise, request.then(() => { throw new Error('Transport did not start'); })]);
     const pending = await service.sendMessage(options);
     await reconcileWhatsAppMessage({ messageId: pending.id, status: 'failed', operator: 'Operator', reason: 'Verified rejection', evidence: 'Provider test ticket' });
     finish(); assert.equal((await request).status, 'failed');
@@ -572,6 +581,7 @@ test('PostgreSQL: resposta tardia do transporte não sobrescreve reconciliação
     assert.equal(saved.status, 'failed'); assert.match(saved.error_message, /reconciliação/);
   } finally {
     globalThis.fetch = originalFetch;
+    if (oldEndpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = oldEndpoint;
     if (previousKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = previousKey;
   }
 });
@@ -1041,4 +1051,25 @@ test('PostgreSQL: proposta decimal recarrega custos, percentuais e totais coeren
   assert.equal(quote.items[0].markupPercentage, 25.5); assert.equal(quote.items[0].calculatedBaseUnitCost, 2.05);
   assert.equal(quote.items[0].suggestedUnitPrice, 2.57); assert.equal(quote.totalBaseCost, 4.1);
   assert.equal(quote.negotiatedTotalAmount, 5.14); assert.equal(quote.entryAmount + quote.balanceAmount, 5.14);
+});
+
+test('PostgreSQL: WA-AKG sem endpoint bloqueia intenção sem rede nem auditoria de envio', async () => {
+  const { WhatsAppService } = await import('../server/services/whatsappService');
+  const { conversationId } = await pendingWhatsAppFixture();
+  const oldEndpoint = process.env.WA_AKG_ENDPOINT; const oldKey = process.env.WA_AKG_API_KEY; const originalFetch = globalThis.fetch;
+  delete process.env.WA_AKG_ENDPOINT; process.env.WA_AKG_API_KEY = crypto.randomBytes(24).toString('hex');
+  let calls = 0; globalThis.fetch = async () => { calls++; return new Response('{}'); };
+  const before = (await pool.query('SELECT count(*) FROM communication.messages WHERE conversation_id=$1', [conversationId])).rows[0].count;
+  const auditCount = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows[0].count;
+  try {
+    await assert.rejects(new WhatsAppService().sendMessage({ conversationId, body: 'Not configured', idempotencyKey: crypto.randomUUID() }),
+      (error: any) => error.status === 503);
+    assert.equal(calls, 0);
+    assert.equal((await pool.query('SELECT count(*) FROM core.audit_logs')).rows[0].count, auditCount);
+    assert.equal((await pool.query('SELECT count(*) FROM communication.messages WHERE conversation_id=$1', [conversationId])).rows[0].count, before);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (oldEndpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = oldEndpoint;
+    if (oldKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = oldKey;
+  }
 });
