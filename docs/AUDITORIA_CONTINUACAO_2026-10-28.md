@@ -300,3 +300,13 @@ Achados: requireAuth/requireRole gravavam originalUrl em entityId/notas, incluin
 Correção: contexto usa só template da rota registrada e método conhecido, com marcador fixo quando ainda não há rota resolvida. Eventos 401/403 e rate limit não gravam URL/params/query/headers/body. Limitação usa template+IP; janela/máximo/resposta não mudam. IP e identidade legítimos continuam auditados. Compartilhamento por template/instância e limite em memória estão documentados. Sem limpeza ou supressão de histórico existente.
 
 Validação local: 94 testes, tipagem, build e diff-check aprovados. Dois testes HTTP verificam segredos em caminho/query/body/credenciais sem inclusão nos eventos e bloqueio por variações de caixa/param/query com Retry-After. Teste PostgreSQL adicional confere eventos reais 401/403/429 sem URL privada e contagem por rota registrada; depende da CI. Sem migração, banco real, mensagem externa, merge ou deploy. Logs de proxy, eventos de negócio e retenção histórica não são alterados.
+
+## Continuação de 29/10/2026: prazos representáveis e conversão sem falha de data
+
+Base: PR #26, commit 0635d64c; CI 40945106280 aprovada.
+
+Achados: prazo aceitava inteiro maior que a coluna SQL ou que a capacidade do cálculo Date; conversão podia lançar RangeError ou truncar ISO de ano expandido. Validador aceitava ano 0000, que PostgreSQL recusa. Campos do cabeçalho eram validados depois de reservar número, causando diferença na numeração demonstrativa quando inválidos.
+
+Correções: cabeçalho validado antes da numeração; prazo validado contra integer e data AAAA-MM-DD (0001–9999) na criação e conversão. Ano zero é rejeitado no validador comum. Data vazia informada não recebe fallback silencioso para hoje. Mantido cálculo de dias corridos/UTC e idempotência de conversão existente; sem novo prazo comercial, calendário útil ou reparo de dados históricos.
+
+Validação local: 97 testes, tipagem, build e diff-check aprovados. Dois testes da validação cobrem bissexto, virada de ano, limite de formato e entradas inválidas; teste HTTP cobre cabeçalho sem reserva de número e conversão histórica sem OP/título. Novo teste PostgreSQL verifica contador/dados preservados, recusa legada, retry após correção apenas da fixture e replay de conversão. CI PostgreSQL/Docker ainda deve validar este commit. Sem migração, banco real, mensagem externa, merge ou deploy.

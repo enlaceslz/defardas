@@ -58,3 +58,21 @@ test('proposta conserva decomposição decimal e markup; margem negativa represe
     freightUnitCost: 0, technicalLossPercentage: 0, markupPercentage: 0, negotiatedUnitPrice: 1.5 }]));
   assert.equal(below.status, 201); assert.equal(below.data.estimatedMarginPercentage, -33.33);
 });
+
+test('prazo/data inválidos são rejeitados antes do número e conversão histórica não grava parcialmente', async () => {
+  const before = structuredClone(db.quotes); const original = sequenceService.nextQuoteNumber; let counterCalls = 0;
+  try {
+    sequenceService.nextQuoteNumber = async () => { counterCalls++; throw new Error('Invalid header must not allocate'); };
+    for (const update of [{ productionLeadDays: 2147483648 }, { productionLeadDays: 2147483647 }, { productionLeadDays: 1.5 },
+      { productionLeadDays: 0 }, { date: '0000-01-01' }, { date: '' }, { validUntil: '0000-01-01' }]) {
+      assert.equal((await create({ ...input(), ...update })).status, 400);
+    }
+  } finally { sequenceService.nextQuoteNumber = original; }
+  assert.equal(counterCalls, 0); assert.deepEqual(db.quotes, before);
+  const saved = await create({ ...input(), commercialStatus: 'aprovado' }); assert.equal(saved.status, 201);
+  const id = saved.data.id; db.quotes.get(id)!.productionLeadDays = 2147483647; // Historical invalid fixture.
+  const orders = structuredClone(db.orders); const titles = structuredClone(db.finance); const quote = structuredClone(db.quotes.get(id));
+  const response = await fetch(`${base}/quotes/${id}/convert-to-order`, { method: 'POST' });
+  assert.equal(response.status, 400); assert.deepEqual(db.orders, orders); assert.deepEqual(db.finance, titles);
+  assert.deepEqual(db.quotes.get(id), quote);
+});

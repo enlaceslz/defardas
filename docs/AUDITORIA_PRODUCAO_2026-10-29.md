@@ -68,3 +68,9 @@ Validação local passa a 92 testes, com inspeção das opções efetivas do dri
 Após o PR #25, foram encontrados URLs completos em eventos de bloqueio e contadores separados por caixa do caminho. Os middlewares passam a usar o template definido no servidor, com marcador fixo antes de resolver a rota; query, valores do caminho, corpo e credenciais não compõem esses eventos. Rate limit usa template+IP e mantém seus limites/janelas. Validação local passa a 94 testes; conferir a CI do PR correspondente para persistência PostgreSQL e imagem.
 
 Isso não limpa histórico que possa conter URLs privadas nem configura logs do proxy. Avaliar retenção/acesso a auditoria no ambiente real; rate limit distribuído, RBAC de leitura e demais bloqueios continuam pendentes. A última CI de base aprovada é 40943845858, do PR #25.
+
+## Continuação: limites técnicos de prazo e data
+
+Após o PR #26, foram corrigidos prazo que excedia integer/Date e aceitação de ano zero. Criação valida o cabeçalho antes da numeração; conversão confere prazo novamente antes de criar OP/título. Erros recebem 400 sem efeitos parciais, inclusive em fixture histórica inválida. Datas mantêm o formato AAAA-MM-DD (0001–9999), dias corridos de 24h e comportamento UTC anterior; isso não homologa calendário ou prazo comercial.
+
+Validação local passa a 97 testes, com bissexto, viradas e limites de representação; teste PostgreSQL adicional confere preservação de contador/estado e repetição de conversão. Conferir CI do novo PR. Última CI de base: 40945106280, PR #26. Nenhum dado real foi corrigido/migrado; bloqueios operacionais anteriores permanecem.

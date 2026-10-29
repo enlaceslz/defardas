@@ -1100,3 +1100,27 @@ test('PostgreSQL: auditoria de segurança não persiste URL privada e rate limit
   assert.equal(events.filter((row) => row.action === 'AUTH_RATE_LIMIT_EXCEEDED').length, 2);
   assert.ok(events.filter((row) => row.action === 'AUTH_RATE_LIMIT_EXCEEDED').every((row) => row.notes.includes('/api/test/private-rate/:id')));
 });
+
+test('PostgreSQL: prazos e ano zero são rejeitados sem reservar número; conversão legada não grava OP/títulos', async () => {
+  const before = (await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows;
+  const count = (await pool.query('SELECT count(*) FROM crm.quotes')).rows[0].count;
+  const payload = { clientId, validUntil: '2027-01-01', productionLeadDays: 10, items: [item('Deadline', 1)] };
+  for (const update of [{ productionLeadDays: 2147483648 }, { productionLeadDays: 2147483647 }, { productionLeadDays: 1.5 },
+    { productionLeadDays: 0 }, { date: '0000-01-01' }, { validUntil: '0000-01-01' }]) {
+    assert.equal((await request('/api/quotes', 'POST', { ...payload, ...update })).status, 400);
+  }
+  assert.deepEqual((await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows, before);
+  assert.equal((await pool.query('SELECT count(*) FROM crm.quotes')).rows[0].count, count);
+  const quote = await createQuote();
+  await pool.query('UPDATE crm.quotes SET production_lead_days=2147483647 WHERE id=$1', [quote.id]);
+  const counters = (await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows;
+  assert.equal((await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST')).status, 400);
+  assert.equal((await pool.query('SELECT count(*) FROM producao.production_orders WHERE quote_id=$1', [quote.id])).rows[0].count, '0');
+  assert.equal((await pool.query('SELECT count(*) FROM financeiro.transactions WHERE quote_id=$1', [quote.id])).rows[0].count, '0');
+  assert.deepEqual((await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows, counters);
+  assert.equal((await request(`/api/quotes/${quote.id}`)).data.commercialStatus, 'aprovado');
+  await pool.query('UPDATE crm.quotes SET production_lead_days=10 WHERE id=$1', [quote.id]); // Fixture correction permits a real retry.
+  const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  assert.match(converted.data.orders[0].targetDeliveryDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal((await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST')).data.alreadyConverted, true);
+});
