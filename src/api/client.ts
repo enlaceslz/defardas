@@ -253,9 +253,10 @@ class ApiClient {
     });
   }
 
-  public async createStockMovement(payload: any) {
+  public async createStockMovement(payload: any, idempotencyKey: string = crypto.randomUUID()) {
     return this.request<any>('/inventory/movements', {
       method: 'POST',
+      headers: { 'idempotency-key': idempotencyKey },
       body: JSON.stringify(payload),
     });
   }

@@ -43,7 +43,7 @@ const item = (model: string, quantity: number, material = 10) => ({ modelName: m
   materialUnitCost: material, outsourcedSewingUnitCost: 5, customizationUnitCost: 1, freightUnitCost: 1,
   technicalLossPercentage: 0, markupPercentage: 50 });
 async function request(path: string, method = 'GET', body?: any) {
-  const response = await fetch(base + path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(base + path, { method, headers: { ...headers, ...(path === '/api/inventory/movements' && method === 'POST' ? { 'idempotency-key': crypto.randomUUID() } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: response.status, data: await response.json() };
 }
 async function createQuote() {
@@ -630,4 +630,47 @@ test('PostgreSQL: colisão de movimento não confirma saldo nem auditoria parcia
   assert.equal((await inventoryRepository.findItemById(id))?.physicalStock, 2);
   assert.equal((await pool.query('SELECT count(*) FROM estoque.movements WHERE item_id=$1', [id])).rows[0].count, '1');
   assert.equal((await pool.query('SELECT count(*) FROM core.audit_logs')).rows[0].count, beforeAudit);
+});
+
+async function keyedStockRequest(body: any, key?: string) {
+  const response = await fetch(base + '/api/inventory/movements', { method: 'POST',
+    headers: { ...headers, ...(key ? { 'idempotency-key': key } : {}) }, body: JSON.stringify(body) });
+  return { status: response.status, data: await response.json() };
+}
+test('PostgreSQL: requisições concorrentes de estoque com mesma chave gravam evento/contador uma vez', async () => {
+  const created = await request('/api/inventory/items', 'POST', { name: 'Keyed stock', category: 'tecido', unit: 'metros', physicalStock: 0, minStock: 0, unitCostPrice: 1 });
+  assert.equal(created.status, 201); const id = created.data.id; const key = crypto.randomUUID();
+  const payload = { itemId: id, type: 'entrada_compra', quantity: 3, reason: 'Test receipt', referenceDoc: 'Test reference' };
+  const before = BigInt((await pool.query("SELECT value FROM core.number_counters WHERE kind='movement'")).rows[0].value);
+  const responses = await Promise.all(Array.from({ length: 8 }, () => keyedStockRequest(payload, key)));
+  assert.equal(responses.filter((response) => response.status === 201).length, 1);
+  assert.equal(responses.filter((response) => response.status === 200).length, 7);
+  assert.equal(new Set(responses.map((response) => response.data.movement.id)).size, 1);
+  assert.equal(BigInt((await pool.query("SELECT value FROM core.number_counters WHERE kind='movement'")).rows[0].value), before + 1n);
+  const movement = responses[0].data.movement;
+  assert.equal((await pool.query('SELECT count(*) FROM estoque.movements WHERE item_id=$1', [id])).rows[0].count, '1');
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='STOCK_MOVEMENT' AND entity_id=$1", [movement.movementNumber])).rows[0].count, '1');
+  assert.equal((await keyedStockRequest({ ...payload, quantity: 4 }, key)).status, 409);
+  assert.equal((await keyedStockRequest(payload)).status, 400);
+  assert.equal((await keyedStockRequest(payload, 'invalid-key')).status, 400);
+  await request('/api/inventory/movements', 'POST', { ...payload, quantity: 2 });
+  const replay = await keyedStockRequest(payload, key); assert.equal(replay.status, 200);
+  assert.equal(replay.data.item.physicalStock, 5); assert.equal(replay.data.movement.quantity, 3);
+});
+
+test('PostgreSQL: rollback preserva chave disponível para retry com único evento', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const created = await request('/api/inventory/items', 'POST', { name: 'Key rollback', category: 'tecido', unit: 'metros', physicalStock: 0, minStock: 0, unitCostPrice: 1 });
+  const id = created.data.id; const key = crypto.randomUUID(); const payload = { itemId: id, type: 'entrada_compra', quantity: 6 };
+  const before = (await pool.query("SELECT value FROM core.number_counters WHERE kind='movement'")).rows[0].value;
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected keyed stock audit failure'); };
+    assert.equal((await keyedStockRequest(payload, key)).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query("SELECT value FROM core.number_counters WHERE kind='movement'")).rows[0].value, before);
+  assert.equal((await pool.query('SELECT count(*) FROM estoque.movements WHERE item_id=$1', [id])).rows[0].count, '0');
+  assert.equal((await keyedStockRequest(payload, key)).status, 201);
+  assert.equal((await keyedStockRequest(payload, key)).status, 200);
+  assert.equal((await pool.query('SELECT physical_stock FROM estoque.items WHERE id=$1', [id])).rows[0].physical_stock, '6.00');
 });

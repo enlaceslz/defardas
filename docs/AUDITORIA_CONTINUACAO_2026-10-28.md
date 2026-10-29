@@ -155,3 +155,16 @@ Validação local: 68 testes, tipagem, build Vite e diff-check aprovados. Dois n
 Nenhuma migração, mensagem externa, operação no banco real ou deploy. Repetição de requisição de estoque ainda precisa de idempotência própria; esta entrega protege colisões do histórico. Política de precisão ampliada, custódia detalhada por facção/OP, leitura por perfil e homologação continuam pendentes, junto das demais integrações.
 
 A CI inicial encontrou conflito encapsulado pelo Drizzle retornando HTTP 500 em vez de 409. A classificação agora busca exclusivamente códigos da lista fechada em até três níveis de causa, sem serializar conteúdo. A suíte PostgreSQL passa a montar o handler real da aplicação; teste HTTP de privacidade cobre erro encapsulado. Uma execução inicial também falhou no transporte de resultados do runner Node 22 (desserialização), sem asserção de domínio; isso não foi tratado como aprovação.
+
+
+## Continuação de 29/10/2026: repetição segura de movimentos de estoque
+
+Base: PR #13, commit `c4e32892`; CI 40812058558 aprovada.
+
+Implementada chave UUID de repetição em POST /api/inventory/movements operacional, combinada com usuário autenticado para gerar ID interno. Repetição compatível devolve evento original (200/replayed) sem executar saldo/contador/auditoria; alteração de dados na mesma chave retorna 409. Falha reverte chave e dados na transação existente. Primeira confirmação segue 201. O replay devolve item atual, não snapshot antigo de saldo. Sem migração/schema novo.
+
+Contrato inclui item/OP normalizados, tipo, quantidade, motivo e documento. Permissões permanecem obrigatórias; ajuste mantém sua alçada atual antes do replay. Cliente API aceita chave explícita e gera nova quando omitida; consumidores precisam preservá-la em retries, sem promessa de deduplicar chaves distintas. Nenhum retry automático ou localStorage privado introduzido.
+
+Validação local: 70 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes HTTP exercitam oito requisições simultâneas, conflito e rollback/retry. Dois testes PostgreSQL adicionados verificam exatamente um movimento/incremento/evento, chave ausente/inválida, conflito, saldo atual em replay e rollback de contador/chave; dependem da CI deste commit. Bundle JS 464,70 kB / 119,49 kB gzip. compile_applet indisponível; build Vite utilizado.
+
+Nenhuma operação em banco real, migração, mensagem externa ou deploy. O escopo não cobre idempotência de cadastro/edição de item ou consumidores que descartem a chave. Custódia detalhada por parceiro/OP, RBAC de leitura, S3/e-mail, demais integrações e homologação continuam pendentes.
