@@ -158,3 +158,45 @@ test('aprovação inválida ou auditoria com falha não altera OP e permite nova
   } finally { auditService.log = original; }
   assert.deepEqual(db.orders.get(id), stored);
 });
+
+
+async function advanceStage(id: string, body?: any) {
+  const response = await fetch(`${base}/orders/${id}/advance-stage`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  return { status: response.status, data: await response.json() };
+}
+test('etapa repetida não troca conclusão histórica, updatedAt ou auditoria; concorrência confirma uma vez', async () => {
+  const id = crypto.randomUUID(); const orderNumber = `STAGE-${id.slice(0,8)}`;
+  db.orders.set(id, { id, orderNumber, stage: 'expedicao', artApproved: true, entryPaymentConfirmed: true } as any);
+  const responses = await Promise.all(Array.from({ length: 8 }, () => advanceStage(id, { targetStage: 'entregue' })));
+  assert.ok(responses.every((r) => r.status === 200)); assert.equal(responses.filter((r) => r.data.alreadyAtStage).length, 7);
+  assert.equal((await auditService.getRecentLogs(500, 'producao.production_orders', orderNumber)).filter((r) => r.action === 'ADVANCE_STAGE').length, 1);
+  // Historical fixture: retry on a later day must preserve the original delivery date.
+  db.orders.get(id)!.completionDate = '2026-01-01';
+  db.orders.get(id)!.updatedAt = '2026-01-01T00:00:00Z';
+  const before = structuredClone(db.orders.get(id)); const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Replay must not audit'); };
+    const repeated = await advanceStage(id, { targetStage: 'entregue' });
+    assert.equal(repeated.status, 200); assert.equal(repeated.data.alreadyAtStage, true);
+  } finally { auditService.log = original; }
+  assert.deepEqual(db.orders.get(id), before);
+});
+
+test('repetição de etapa mantém gates e validação; falha de auditoria reverte transição real', async () => {
+  const id = crypto.randomUUID(); const fresh = { id, orderNumber: `STAGE-${id.slice(0,8)}`, stage: 'aguardando_liberacao', artApproved: false, entryPaymentConfirmed: false } as any;
+  db.orders.set(id, structuredClone(fresh));
+  assert.equal((await advanceStage(id, { targetStage: 'aguardando_liberacao' })).data.alreadyAtStage, true);
+  for (const input of [undefined, {}, { targetStage: 'invalid' }]) assert.equal((await advanceStage(id, input)).status, 400);
+  assert.equal((await advanceStage(id, { targetStage: 'corte' })).status, 422);
+  db.orders.get(id)!.stage = 'corte'; // Inconsistent legacy fixture: no-op must not bypass gates.
+  assert.equal((await advanceStage(id, { targetStage: 'corte' })).status, 422);
+  db.orders.set(id, { ...fresh, artApproved: true, entryPaymentConfirmed: true });
+  const before = structuredClone(db.orders.get(id)); const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected stage audit failure'); };
+    assert.equal((await advanceStage(id, { targetStage: 'corte' })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual(db.orders.get(id), before);
+  const saved = await advanceStage(id, { targetStage: 'corte' }); assert.equal(saved.status, 200); assert.equal(saved.data.order.stage, 'corte');
+});

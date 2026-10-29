@@ -238,3 +238,13 @@ Achado: repetir approve-art sobrescrevia responsável/data, repetia notas técni
 Correção: se a OP já está aprovada, retorna a confirmação atual com alreadyApproved=true sem salvar/auditar novamente. Os dados novos de um reenvio não substituem os originais; a ação não é um fluxo de revisão/revogação de arte. Primeira confirmação mantém validação de nome, corpo ausente recebe 400, e auditoria/OP confirmam na mesma transação/lock. Sem migração, liberação automática do corte ou alteração financeira.
 
 Validação local: 81 testes, tipagem, build Vite e diff-check aprovados. Dois testes HTTP e dois PostgreSQL adicionados cobrem oito chamadas concorrentes com uma confirmação/auditoria, replay com nome/arquivo diferente ou sem corpo, conservação dos metadados/notas/etapa, validação, rollback e retry. PostgreSQL depende da CI. Bundle permanece 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite usado. Sem banco real, mensagem externa, merge ou deploy. Evidência externa de aceite, S3 privado, revisão/revogação e reparo de metadados históricos seguem pendentes.
+
+## Continuação de 29/10/2026: preservar data de conclusão no reenvio da etapa atual
+
+Base: PR #20, commit ff2763be; CI 40865822620 aprovada.
+
+Achado: solicitar novamente a etapa atual regravava updatedAt, adicionava ADVANCE_STAGE sem mudança real e, em entregue, substituía a data de conclusão pela data do reenvio.
+
+Correção: após validação do destino e dos portões, etapa igual retorna alreadyAtStage=true sem salvar/auditar. Corpo ausente recebe 400. Transição real mantém rollback, autorização e regras de gate. Não inventa sequência de etapas ou reabertura. Sem chave durável de comando: reenvio após outra transição continua sujeito ao contrato anterior e exige controle de concorrência futuro. Não repara datas históricas.
+
+Validação local: 83 testes, tipagem, build Vite e diff-check aprovados. Dois testes HTTP e dois PostgreSQL verificam oito chamadas concorrentes com uma auditoria, entrega histórica preservada, espera sem alteração, entradas inválidas, portões e rollback de transição. PostgreSQL depende da CI. Bundle permanece 464,96 kB / 119,60 kB gzip. compile_applet indisponível; build Vite usado. Sem migração, banco real, mensagem externa, merge ou deploy.
