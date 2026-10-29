@@ -1013,3 +1013,32 @@ test('PostgreSQL: escrita rejeitada reverte antes da auditoria independente e fa
   assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
   assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='TEST_REJECTED' AND entity_id=$1", [order.id])).rows[0].count, '1');
 });
+
+test('PostgreSQL: proposta rejeita entradas e derivados fora do schema sem contador ou gravação parcial', async () => {
+  const before = (await pool.query("SELECT value FROM core.number_counters WHERE kind='quote'")).rows[0].value;
+  const count = (await pool.query('SELECT count(*) FROM crm.quotes')).rows[0].count;
+  const baseItem = item('Precision', 2);
+  const variants = [{ materialUnitCost: 1.005 }, { outsourcedSewingUnitCost: 100000000 }, { technicalLossPercentage: 1000 },
+    { markupPercentage: 10000 }, { negotiatedUnitPrice: 1.005 }, { materialUnitCost: 99999999.99 },
+    { sizes: { p: 2147483648 }, totalQuantity: 2147483648 }, { materialUnitCost: 1000, negotiatedUnitPrice: 0.01 }];
+  const payload = (items: any[]) => ({ clientId, validUntil: '2027-01-01', productionLeadDays: 10, items });
+  for (const variant of variants) assert.equal((await request('/api/quotes', 'POST', payload([{ ...baseItem, ...variant }]))).status, 400);
+  const large = { ...baseItem, materialUnitCost: 60000000, outsourcedSewingUnitCost: 0, customizationUnitCost: 0, freightUnitCost: 0,
+    technicalLossPercentage: 0, markupPercentage: 0, sizes: { p: 100 }, totalQuantity: 100 };
+  assert.equal((await request('/api/quotes', 'POST', payload([large, large]))).status, 400);
+  assert.equal((await request('/api/quotes', 'POST', payload([null]))).status, 400);
+  assert.equal((await request('/api/quotes', 'POST')).status, 400);
+  assert.equal((await pool.query("SELECT value FROM core.number_counters WHERE kind='quote'")).rows[0].value, before);
+  assert.equal((await pool.query('SELECT count(*) FROM crm.quotes')).rows[0].count, count);
+});
+
+test('PostgreSQL: proposta decimal recarrega custos, percentuais e totais coerentes com markup', async () => {
+  const response = await request('/api/quotes', 'POST', { clientId, validUntil: '2027-01-01', productionLeadDays: 10,
+    items: [{ ...item('Decimal', 2), materialUnitCost: 1.25, outsourcedSewingUnitCost: 0.35, customizationUnitCost: 0.15,
+      freightUnitCost: 0.25, technicalLossPercentage: 2.5, markupPercentage: 25.5 }] });
+  assert.equal(response.status, 201); const quote = (await request(`/api/quotes/${response.data.id}`)).data;
+  assert.equal(quote.items[0].materialUnitCost, 1.25); assert.equal(quote.items[0].technicalLossPercentage, 2.5);
+  assert.equal(quote.items[0].markupPercentage, 25.5); assert.equal(quote.items[0].calculatedBaseUnitCost, 2.05);
+  assert.equal(quote.items[0].suggestedUnitPrice, 2.57); assert.equal(quote.totalBaseCost, 4.1);
+  assert.equal(quote.negotiatedTotalAmount, 5.14); assert.equal(quote.entryAmount + quote.balanceAmount, 5.14);
+});
