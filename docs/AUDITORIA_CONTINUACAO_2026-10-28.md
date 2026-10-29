@@ -140,3 +140,18 @@ Correção: logger operacional com campos fixos, UUID gerado no servidor e códi
 Validação local: 66 testes, tipagem, build Vite e diff-check aprovados. Três novos testes verificam projeção de erro/código desconhecido, requisições HTTP reais com JSON inválido/limite/SQL/headers/query/credenciais e CLIs com URL inválida contendo segredo fictício; nenhum valor sensível da fixture apareceu nas saídas. Teste de startup atualizado para código fixo, preservando exit 1. PostgreSQL, backup e Docker deste commit dependem da CI. `compile_applet` indisponível; build Vite utilizado. Bundle permanece 464,64 kB / 119,48 kB gzip.
 
 Escopo: caminhos de erro tratados pela aplicação nesta entrega. Não é avaliação integral de todos os logs, dependências ou infraestrutura; logs de proxy/PostgreSQL/provedor e política de retenção permanecem operacionais. Não houve inspeção/remoção de logs reais, migração, mensagem externa, deploy ou alteração de conta operacional. RBAC de leitura, S3/e-mail, integrações e homologação continuam pendentes.
+
+
+## Continuação de 29/10/2026: precisão e histórico de estoque
+
+Base: PR #12, commit `6db5ea31`; CI 40810976920 aprovada.
+
+Achados: API aceitava quantidades/saldos/custos com precisão superior a numeric(10,2), causando divergência por arredondamento entre resposta e persistência; histórico usava ON CONFLICT DO NOTHING e podia confirmar saldo sem gravar movimento em colisão. Cadastro/leitura inventavam fornecedor homologado e localização para valores ausentes; leitura perdia operatorId.
+
+Correções: validação da capacidade/escala existentes nas entradas e normalização dos resultados calculados, com rejeição de estouro de saldo final; inserção estrita de movimentos também na demonstração, revertendo operação em colisão. Textos opcionais validados nos limites SQL e sem rótulos fictícios. Mapeamento preserva operador. Não há mudança de regra comercial, unidade ou schema e não há limpeza de histórico.
+
+Validação local: 68 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes HTTP cobrem soma decimal, entradas de precisão excessiva, metadados, edição inválida, estouro e rollback por colisão. Dois testes PostgreSQL adicionados cobrem equivalência resposta/banco, leitura do operador e saldo/histórico/auditoria preservados em conflito; execução depende da CI. `compile_applet` indisponível; build Vite utilizado. Bundle permanece 464,64 kB / 119,48 kB gzip.
+
+Nenhuma migração, mensagem externa, operação no banco real ou deploy. Repetição de requisição de estoque ainda precisa de idempotência própria; esta entrega protege colisões do histórico. Política de precisão ampliada, custódia detalhada por facção/OP, leitura por perfil e homologação continuam pendentes, junto das demais integrações.
+
+A CI inicial encontrou conflito encapsulado pelo Drizzle retornando HTTP 500 em vez de 409. A classificação agora busca exclusivamente códigos da lista fechada em até três níveis de causa, sem serializar conteúdo. A suíte PostgreSQL passa a montar o handler real da aplicação; teste HTTP de privacidade cobre erro encapsulado. Uma execução inicial também falhou no transporte de resultados do runner Node 22 (desserialização), sem asserção de domínio; isso não foi tratado como aprovação.

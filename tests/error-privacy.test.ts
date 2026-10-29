@@ -22,6 +22,7 @@ test('diagnóstico só registra campos fixos e código permitido, sem serializar
     assert.equal(records.join('').includes(secret), false);
     assert.equal(operationalErrorCode({ code: secret }), 'UNCLASSIFIED');
     assert.equal(operationalErrorCode(null), 'UNCLASSIFIED');
+    assert.equal(operationalErrorCode(new Error(secret, { cause: Object.assign(new Error(secret), { code: '23505' }) })), '23505');
     assert.equal(operationalErrorCode({ get code() { throw new Error(secret); } }), 'UNCLASSIFIED');
   } finally { console.error = original; }
 });
@@ -30,7 +31,7 @@ test('HTTP não expõe nem registra JSON inválido, SQL, headers, query ou crede
   const records: string[] = []; const original = console.error;
   console.error = (...args) => { records.push(JSON.stringify(args)); };
   const app = express(); app.use(express.json({ limit: 1024 }));
-  app.post('/sql', () => { throw Object.assign(new Error(secret), { code: '23505', detail: secret, parameters: [secret] }); });
+  app.post('/sql', () => { throw new Error(secret, { cause: Object.assign(new Error(secret), { code: '23505', detail: secret, parameters: [secret] }) }); });
   app.get('/unknown', () => { throw { message: secret, code: secret, stack: secret }; });
   app.get('/validation', () => { throw new InputError('Campo obrigatório.'); });
   app.use(apiErrorHandler);
