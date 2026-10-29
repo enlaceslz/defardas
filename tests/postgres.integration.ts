@@ -918,3 +918,49 @@ test('PostgreSQL: falha de validação ou auditoria na aprovação mantém OP e 
   } finally { auditService.log = original; }
   assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], stored);
 });
+
+
+test('PostgreSQL: transições concorrentes repetidas preservam data de entrega e uma auditoria', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+  assert.equal(converted.status, 201); const order = converted.data.orders[0];
+  const entry = (await pool.query("SELECT id FROM financeiro.transactions WHERE quote_id=$1 AND sub_type='entrada_pedido'", [quote.id])).rows[0];
+  assert.equal((await request(`/api/finance/transactions/${entry.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'STAGE', receiptEvidenceUrl: 'https://example.invalid/stage' })).status, 200);
+  assert.equal((await request(`/api/orders/${order.id}/approve-art`, 'POST', { approverName: 'Cliente' })).status, 200);
+  const path = `/api/orders/${order.id}/advance-stage`;
+  const responses = await Promise.all(Array.from({ length: 8 }, () => request(path, 'POST', { targetStage: 'entregue' })));
+  assert.ok(responses.every((r) => r.status === 200)); assert.equal(responses.filter((r) => r.data.alreadyAtStage).length, 7);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='ADVANCE_STAGE' AND entity_id=$1", [order.orderNumber])).rows[0].count, '1');
+  await pool.query("UPDATE producao.production_orders SET completion_date='2026-01-01',updated_at='2026-01-01T00:00:00Z' WHERE id=$1", [order.id]);
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Replay must not audit'); };
+    const repeated = await request(path, 'POST', { targetStage: 'entregue' });
+    assert.equal(repeated.status, 200); assert.equal(repeated.data.alreadyAtStage, true); assert.equal(repeated.data.order.completionDate, '2026-01-01');
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
+});
+
+test('PostgreSQL: etapa repetida em espera não altera OP e falha de auditoria reverte transição', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+  assert.equal(converted.status, 201); const order = converted.data.orders[0]; const path = `/api/orders/${order.id}/advance-stage`;
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  assert.equal((await request(path, 'POST', { targetStage: 'aguardando_liberacao' })).data.alreadyAtStage, true);
+  for (const input of [undefined, {}, { targetStage: 'invalid' }]) assert.equal((await request(path, 'POST', input)).status, 400);
+  assert.equal((await request(path, 'POST', { targetStage: 'corte' })).status, 422);
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
+  await request(`/api/orders/${order.id}/approve-art`, 'POST', { approverName: 'Cliente' });
+  const entry = (await pool.query("SELECT id FROM financeiro.transactions WHERE quote_id=$1 AND sub_type='entrada_pedido'", [quote.id])).rows[0];
+  await request(`/api/finance/transactions/${entry.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'STAGE-ROLLBACK', receiptEvidenceUrl: 'https://example.invalid/stage' });
+  const approved = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected stage audit failure'); };
+    assert.equal((await request(path, 'POST', { targetStage: 'corte' })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], approved);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='ADVANCE_STAGE' AND entity_id=$1", [order.orderNumber])).rows[0].count, '0');
+  assert.equal((await request(path, 'POST', { targetStage: 'corte' })).status, 200);
+});

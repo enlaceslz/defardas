@@ -34,7 +34,7 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
 
-  const { targetStage } = req.body;
+  const { targetStage } = req.body || {};
   if (!['aguardando_liberacao', 'corte', 'bordado_silk', 'costura', 'conferencia_qualidade', 'retrabalho', 'expedicao', 'entregue'].includes(targetStage)) {
     return res.status(400).json({ error: 'targetStage é obrigatório' });
   }
@@ -70,6 +70,12 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
         },
       });
     }
+  }
+
+  // Mesmo destino é uma consulta da confirmação atual, sem regravar datas/histórico.
+  // Mantém os portões acima, inclusive para OP histórica em estado inconsistente.
+  if (oldStage === targetStage) {
+    return res.json({ success: true, alreadyAtStage: true, message: `OP já está na etapa ${targetStage}.`, order });
   }
 
   order.stage = targetStage;
