@@ -77,3 +77,20 @@ test('rollback libera chave, exclusão não permite que retry antigo recrie tít
   assert.equal(await financeRepository.findById(saved.data.id), null);
   assert.equal(db.financeRequests.size, before + 1);
 });
+
+test('baixa de título de pedido rejeita vínculo ausente/divergente e valor inexato sem efeitos', async () => {
+  const id = crypto.randomUUID(); const quoteId = crypto.randomUUID(); const orderId = crypto.randomUUID();
+  db.quotes.set(quoteId, { id: quoteId, entryAmount: 2.35, balanceAmount: 2.35 } as any);
+  db.orders.set(orderId, { id: orderId, quoteId, financialStatus: 'entrada_pendente' } as any);
+  const valid = { id, transactionNumber: 'TEST-LINK', quoteId, productionOrderId: orderId, type: 'receber', subType: 'entrada_pedido', amount: 2.35, status: 'pendente' };
+  const receipt = { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' };
+  for (const update of [{ quoteId: undefined }, { productionOrderId: undefined }, { productionOrderId: crypto.randomUUID() }, { amount: 2.351 }]) {
+    db.finance.set(id, { ...valid, ...update } as any);
+    const before = structuredClone([db.finance, db.orders]);
+    assert.equal((await request(`/transactions/${id}/confirm-payment`, receipt)).status, 409);
+    assert.deepEqual([db.finance, db.orders], before);
+  }
+  db.finance.set(id, valid as any);
+  assert.equal((await request(`/transactions/${id}/confirm-payment`, receipt)).status, 200);
+  assert.equal(db.orders.get(orderId)?.entryPaymentConfirmed, true);
+});

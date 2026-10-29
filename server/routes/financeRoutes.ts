@@ -101,10 +101,11 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
     throw new InputError('Informe uma URL HTTPS do comprovante sem credenciais embutidas.');
   }
   let relatedOrders = trx.quoteId ? await orderRepository.findByQuoteId(trx.quoteId) : [];
-  if (trx.quoteId && ['entrada_pedido', 'saldo_entrega'].includes(trx.subType)) {
-    const quote = await quoteRepository.findById(trx.quoteId);
+  if (['entrada_pedido', 'saldo_entrega'].includes(trx.subType)) {
+    const quote = trx.quoteId ? await quoteRepository.findById(trx.quoteId) : null;
     const expected = trx.subType === 'entrada_pedido' ? quote?.entryAmount : quote?.balanceAmount;
-    if (!quote || !relatedOrders.length || money(trx.amount) !== expected || trx.type !== 'receber') {
+    if (!quote || !trx.productionOrderId || !relatedOrders.some((order) => order.id === trx.productionOrderId) ||
+        !Number.isFinite(trx.amount) || trx.amount <= 0 || money(trx.amount) !== trx.amount || trx.amount !== expected || trx.type !== 'receber') {
       return res.status(409).json({ error: 'Título incompatível com a proposta e suas ordens.' });
     }
   }

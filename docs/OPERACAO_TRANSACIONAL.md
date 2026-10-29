@@ -375,3 +375,12 @@ POST /api/inventory/movements valida itemId e productionOrderId opcional no form
 A OP permanece opcional e não há nova restrição por etapa ou tipo de movimento. Replay íntegro continua devolvendo movimentação e saldo atuais sem nova gravação. Não corrige vínculos históricos nem implementa custódia por parceiro.
 
 Validação local: 114 testes, tipagem, build e diff-check aprovados. Cenário PostgreSQL confere saldo, timestamp, movimentos, contador e auditoria intactos nas rejeições, além de vínculo válido com UUID em maiúsculas. CI desta continuação pendente. CI anterior: PR #38, https://github.com/enlaceslz/defardas/actions/runs/40969900914. Sem migração nova ou deploy; bloqueios operacionais permanecem.
+
+
+### Continuação: vínculos obrigatórios na baixa de títulos de pedido
+
+Nova baixa de entrada_pedido/saldo_entrega exige quoteId com proposta existente e productionOrderId pertencente às OPs dessa proposta. Ausência ou divergência retorna 409 antes de marcar pago, atualizar OP ou auditar sucesso. Valor precisa ser finito, positivo, representável em centavos e exatamente igual à parcela da proposta; não se arredonda valor histórico para passar na comparação.
+
+Títulos manuais continuam com fluxo independente. Replay de título já pago permanece leitura da confirmação anterior, sem nova baixa. A checagem não substitui a reconciliação integral da conversão (todos os itens e títulos), nem valida autenticidade do comprovante. Dados históricos não são reparados automaticamente.
+
+Validação local: 115 testes, tipagem, build e diff-check aprovados. Cenário PostgreSQL remove separadamente os vínculos e confere título, OPs e auditoria intactos, depois valida baixa com vínculos restaurados. CI desta continuação pendente. CI anterior: PR #39, https://github.com/enlaceslz/defardas/actions/runs/40970398395. Sem migração nova, merge ou deploy; bloqueios operacionais permanecem.
