@@ -36,6 +36,7 @@ export class DatabaseManager {
   public channels: Map<string, any> = new Map();
   public conversations: Map<string, any> = new Map();
   public messages: Map<string, any> = new Map();
+  public publicSettings = new Map<string, Record<string, string | number>>();
 
   public readonly ready: Promise<void>;
 

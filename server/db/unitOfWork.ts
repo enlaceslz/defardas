@@ -3,7 +3,7 @@ import { db } from './connection';
 import { withPgTransaction } from './index';
 
 let memoryQueue: Promise<void> = Promise.resolve();
-const memoryCollections = ['clients', 'leads', 'quotes', 'orders', 'finance', 'financeRequests', 'inventory', 'movements', 'channels', 'conversations', 'messages'] as const;
+const memoryCollections = ['clients', 'leads', 'quotes', 'orders', 'finance', 'financeRequests', 'inventory', 'movements', 'channels', 'conversations', 'messages', 'publicSettings'] as const;
 
 export async function unitOfWork<T>(operation: () => Promise<T>): Promise<T> {
   await db.ready;

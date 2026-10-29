@@ -1308,3 +1308,18 @@ test('PostgreSQL: login além de 72 bytes falha sem sessão e credencial exata c
   assert.equal((await sessionStore.getSession(accepted.data.token))?.user.id, id);
   assert.equal((await pool.query('SELECT password_hash FROM core.users WHERE id=$1', [id])).rows[0].password_hash, hash);
 });
+
+
+test('PostgreSQL: perfil e auditoria permanecem intactos quando edição falha', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const before = (await pool.query("SELECT * FROM core.public_settings WHERE key='company_profile'")).rows;
+  const logs = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows;
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected settings audit failure'); };
+    assert.equal((await request('/api/settings/profile', 'PUT', { name: 'Must roll back', tradeName: 'Marca', foundedYear: 0, productionCapacityPiecesMonth: 0 })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query("SELECT * FROM core.public_settings WHERE key='company_profile'")).rows, before);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, logs);
+  assert.equal((await request('/api/settings/profile', 'PUT')).status, 400);
+});

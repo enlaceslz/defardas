@@ -117,3 +117,10 @@ A comparação de senhas recusa entradas maiores que 72 bytes em UTF-8 antes de 
 Não são aplicados retroativamente os critérios de força na comparação, nem alterados hashes ou sessões existentes. Contas históricas criadas por ferramentas externas com senhas acima do limite precisam de redefinição pelo procedimento administrativo existente; não presumir que o excedente fazia parte do segredo verificado por bcrypt.
 
 Validação local: 110 testes, tipagem, build e diff-check aprovados. Novo cenário PostgreSQL verifica rejeição sem sessão, evento de falha, preservação do hash e sucesso com a credencial exata. CI desta continuação pendente. PR #34 teve CI completa aprovada em https://github.com/enlaceslz/defardas/actions/runs/40967384070. Sem migração nova, alteração de credenciais reais ou liberação dos bloqueios de produção.
+
+
+### Continuação: rollback do perfil institucional
+
+O perfil no modo local passa a integrar as coleções da unidade transacional. Falha da auditoria reverte primeira gravação e edição, evitando erro HTTP com configuração já modificada. PostgreSQL mantém a gravação e auditoria na mesma transação, agora com teste explícito de rollback. Corpo ausente recebe 400 por validação de campos obrigatórios. Não muda visibilidade pública, campos ou regras do perfil.
+
+Validação local: 111 testes, tipagem, build e diff-check aprovados; CI desta continuação pendente. Teste PostgreSQL confere perfil, timestamp e contagem da auditoria após falha. Sem migração nova ou alteração em produção. CI anterior aprovada no PR #35: https://github.com/enlaceslz/defardas/actions/runs/40968022232. Bloqueios operacionais anteriores permanecem.
