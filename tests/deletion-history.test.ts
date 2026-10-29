@@ -96,7 +96,7 @@ test('edição de OP preserva centavos e equipe vazia, sem mutações em entrada
   const input = { priority: 'alta', targetDeliveryDate: '2027-02-01', technicalNotes: 'Alterado',
     assignedTeam: '', outsourcedPartner: '', partnerCostPerPiece: 8.25 };
   const edit = (body?: any) => fetch(`${base}/orders/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    ...(body === undefined ? {} : { body: JSON.stringify({ ...body, expectedRevision: db.orders.get(id)?.revision ?? 1 }) }) });
   for (const value of [-1, 1.005, 100000000, '2.35']) {
     assert.equal((await edit({ ...input, partnerCostPerPiece: value })).status, 400);
     assert.deepEqual(db.orders.get(id), originalOrder);
@@ -262,4 +262,13 @@ test('revisão antiga recebe conflito antes dos gates; revisão atual continua b
   const current = await advanceStage(id, { targetStage: 'corte', expectedRevision: 2 });
   assert.equal(current.status, 422); assert.equal(current.data.gateStatus.artApproved, false);
   assert.deepEqual(db.orders.get(id), before);
+});
+
+
+test('edição de ficha antiga não sobrescreve metadados e revisão atual pode salvar', async () => {
+  const id = crypto.randomUUID(); db.orders.set(id, { id, revision: 2, assignedTeam: 'Equipe atual' } as any);
+  const input = { priority: 'normal', targetDeliveryDate: '2027-01-01', assignedTeam: 'Outra equipe', partnerCostPerPiece: 0 };
+  const edit = (expectedRevision: number) => fetch(`${base}/orders/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...input, expectedRevision }) });
+  assert.equal((await edit(1)).status, 409); assert.equal(db.orders.get(id)?.assignedTeam, 'Equipe atual');
+  const saved = await edit(2); assert.equal(saved.status, 200); assert.equal((await saved.json()).revision, 3);
 });

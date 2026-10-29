@@ -91,7 +91,7 @@ class ApiClient {
     return headers;
   }
 
-  public updateOrder(id: string, payload: any) { return this.request<any>(`/orders/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
+  public updateOrder(id: string, payload: any) { return this.request<any>(`/orders/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ ...payload, expectedRevision: payload.revision }) }); }
   public updateQuoteStatus(id: string, status: string) { return this.request<any>(`/quotes/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); }
   public updateInventoryItem(id: string, payload: any) { return this.request<any>(`/inventory/items/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
   public deleteInventoryItem(id: string) { return this.request<any>(`/inventory/items/${encodeURIComponent(id)}`, { method: 'DELETE' }); }

@@ -45,6 +45,10 @@ const item = (model: string, quantity: number, material = 10) => ({ modelName: m
   materialUnitCost: material, outsourcedSewingUnitCost: 5, customizationUnitCost: 1, freightUnitCost: 1,
   technicalLossPercentage: 0, markupPercentage: 50 });
 async function request(path: string, method = 'GET', body?: any) {
+  if (method === 'PUT' && /^\/api\/orders\/[^/]+$/.test(path) && body && body.expectedRevision === undefined) {
+    const current = await fetch(base + path, { headers });
+    body = { ...body, expectedRevision: (await current.json()).revision };
+  }
   if (path.endsWith('/advance-stage') && method === 'POST' && body && body.expectedRevision === undefined) {
     const current = await fetch(base + path.replace('/advance-stage', ''), { headers });
     body = { ...body, expectedRevision: (await current.json()).revision };

@@ -107,7 +107,11 @@ export default function App() {
   const handleSaveOrder = async (order: ProductionOrder) => {
     const existing = state.orders.find((item) => item.id === order.id);
     if (!existing?.backendId) { startOrder(); return false; }
-    return mutate(() => api.updateOrder(existing.backendId!, order));
+    return mutate(async () => {
+      const response = await api.updateOrder(existing.backendId!, order);
+      if (response.code === 'ORDER_REVISION_CONFLICT') await refreshServerState();
+      return response;
+    });
   };
   const handleEditOrder = (order: ProductionOrder) => { setEditingOrder(order); setIsNewOrderModalOpen(true); };
   const handleDeleteOrder = async (id: string) => {

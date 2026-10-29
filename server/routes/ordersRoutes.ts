@@ -180,9 +180,11 @@ ordersRouter.delete('/:id', requirePermission('orders:delete'), atomic(async (re
 }));
 
 ordersRouter.put('/:id', requirePermission('orders:create'), atomic(async (req: RequestWithUser, res: Response) => {
-  const order = await orderRepository.findById(req.params.id);
+  const order = await orderRepository.findByIdForUpdate(req.params.id);
   if (!order) return res.status(404).json({ error: 'OP não encontrada.' });
   const body = req.body || {};
+  const expectedRevision = number(body.expectedRevision, 'Revisão esperada da OP', 1, true);
+  if (expectedRevision !== (order.revision ?? 1)) return res.status(409).json({ error: 'A OP foi alterada. Feche e reabra a ficha para revisar os dados antes de salvar.', code: 'ORDER_REVISION_CONFLICT' });
   order.priority = oneOf(body.priority, ['normal', 'alta', 'urgente'], 'Prioridade');
   order.targetDeliveryDate = date(body.targetDeliveryDate, 'Entrega');
   order.technicalNotes = text(body.technicalNotes, 'Notas técnicas', 10000, false);
