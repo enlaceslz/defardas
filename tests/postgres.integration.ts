@@ -16,6 +16,7 @@ import { ordersRouter } from '../server/routes/ordersRoutes';
 import { financeRouter } from '../server/routes/financeRoutes';
 import { settingsRouter } from '../server/routes/settingsRoutes';
 import { spawnSync } from 'node:child_process';
+import { leadsRouter } from '../server/routes/leadsRoutes';
 import { inventoryRouter } from '../server/routes/inventoryRoutes';
 import type { Server } from 'node:http';
 import { PasswordResetService } from '../server/auth/passwordResetService';
@@ -61,6 +62,7 @@ before(async () => {
   app.use('/api', settingsRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/clients', clientsRouter); app.use('/api/quotes', quotesRouter); app.use('/api/orders', ordersRouter);
+  app.use('/api/leads', leadsRouter);
   app.use('/api/finance', financeRouter); app.use('/api/inventory', inventoryRouter);
   app.use((err: any, _req: any, res: any, _next: any) => { res.status(err.status || 500).json({ error: err.message }); });
   server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => server.on('listening', resolve));
@@ -557,4 +559,43 @@ test('PostgreSQL: resposta tardia do transporte não sobrescreve reconciliação
     globalThis.fetch = originalFetch;
     if (previousKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = previousKey;
   }
+});
+
+test('PostgreSQL: captura valida quantidade antes de consumir contador e reverte falha de auditoria', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const counter = (await pool.query("SELECT value FROM core.number_counters WHERE kind='lead'")).rows[0].value;
+  const beforeCount = (await pool.query('SELECT count(*) FROM crm.leads')).rows[0].count;
+  const payload = { clientName: ' Contact ', companyName: ' Company ', phone: '000', email: '', category: 'polos', estimatedQty: 3, notes: '' };
+  assert.equal((await request('/api/leads', 'POST', { ...payload, estimatedQty: 0 })).status, 400);
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected capture audit failure'); };
+    assert.equal((await request('/api/leads', 'POST', payload)).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query("SELECT value FROM core.number_counters WHERE kind='lead'")).rows[0].value, counter);
+  assert.equal((await pool.query('SELECT count(*) FROM crm.leads')).rows[0].count, beforeCount);
+  const captured = await request('/api/leads', 'POST', payload); assert.equal(captured.status, 201);
+  const saved = (await pool.query('SELECT * FROM crm.leads WHERE id=$1', [captured.data.leadId])).rows[0];
+  assert.equal(saved.estimated_quantity, 3); assert.equal(saved.client_name, 'Contact');
+});
+
+test('PostgreSQL: atribuição comercial persiste, audita e reverte integralmente', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const { leadRepository } = await import('../server/repositories/leadRepository');
+  const captured = await request('/api/leads', 'POST', { clientName: 'Assignment', companyName: 'Company', phone: '000', category: 'camisetas', estimatedQty: 7 });
+  assert.equal(captured.status, 201); const id = captured.data.leadId; const sellerId = crypto.randomUUID();
+  await pool.query(`INSERT INTO core.users(id,full_name,email,password_hash,role,is_active)
+    VALUES($1,'Assigned seller',$2,'not-a-login-hash','vendedor',true)`, [sellerId, `${sellerId}@example.invalid`]);
+  assert.equal((await request(`/api/leads/${id}/status`, 'PATCH', { status: 'em_contato', sellerId })).status, 200);
+  const reloaded = await leadRepository.findById(id); assert.equal(reloaded?.assignedSellerId, sellerId); assert.equal(reloaded?.status, 'em_contato');
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected lead update audit failure'); };
+    assert.equal((await request(`/api/leads/${id}/status`, 'PATCH', { status: 'desqualificado', sellerId: null })).status, 500);
+  } finally { auditService.log = original; }
+  const preserved = await leadRepository.findById(id); assert.equal(preserved?.assignedSellerId, sellerId); assert.equal(preserved?.status, 'em_contato');
+  assert.equal((await request(`/api/leads/${id}/status`, 'PATCH', { status: 'convertido_em_proposta' })).status, 422);
+  assert.equal((await request(`/api/leads/${id}/status`, 'PATCH', { sellerId: null })).status, 200);
+  assert.equal((await leadRepository.findById(id))?.assignedSellerId, undefined);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE entity_id=$1 AND action='LEAD_UPDATED'", [id])).rows[0].count, '2');
 });

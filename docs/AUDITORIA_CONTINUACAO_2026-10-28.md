@@ -114,3 +114,16 @@ Validação local: 60 testes, tipagem, build Vite e diff-check aprovados. Dois n
 Recibos e consulta real ao provedor, reenvio autorizado, worker/outbox, RBAC de leitura, S3/e-mail, provisão e homologação continuam pendentes. Evidência de timeout sozinha não autoriza classificar falha.
 
 Ajuste final do mesmo escopo: erro de rede/timeout e HTTP 5xx mantêm pending para reconciliação, com auditoria WHATSAPP_SEND_UNCONFIRMED; HTTP 4xx mantém failed. Testes de transporte atualizados para distinguir resultado incerto de rejeição.
+
+
+## Continuação de 29/10/2026: integridade do CRM público e atribuição comercial
+
+Base: PR #10, commit `4b5b6200`; CI 40809343383 e 40809348032 aprovadas.
+
+Achados: captura aceitava campos fora dos limites do banco e transformava quantidade ausente/inválida/zero em 50; patch aceitava estado arbitrário e não auditava; vendedor atribuído era omitido no INSERT/UPDATE/mapeamento PostgreSQL apesar da resposta anunciar sucesso.
+
+Correções: validação de campos/categoria e quantidade inteira positiva dentro do tipo SQL antes de alocar número; sem quantidade/observação inventada no backend. Alteração exige estado reconhecido/responsável válido e ativo dos perfis comerciais existentes; conversão sem proposta vinculada é rejeitada. Atribuição agora persiste e é lida. Auditoria da alteração confirma junto com o dado, repetição idêntica não duplica evento, captura/alteração usam UUID como referência dos novos eventos. Não muda política comercial nem limpa dados históricos.
+
+Validação local: 63 testes, tipagem, build Vite e diff-check aprovados. Três novos testes HTTP cobrem normalização, quantidade sem fallback, limites/tipos, campos privados ignorados, estados inválidos, conversão fictícia, atribuição e rollback/idempotência. Dois testes PostgreSQL adicionados cobrem contador/captura em falha de auditoria e atribuição/remoção recarregada com rollback e trilha de eventos; execução depende da CI deste commit. Bundle permanece 464,64 kB / 119,48 kB gzip. `compile_applet` indisponível; build Vite utilizado.
+
+Nenhuma migração nova, operação em banco real, deploy ou mensagem externa. Pendências: controles de abuso distribuídos no portal, leitura por perfil, conversão lead→proposta e interface/homologação do CRM; demais frentes S3/e-mail/WhatsApp permanecem abertas. Esta revisão não constitui liberação de produção.

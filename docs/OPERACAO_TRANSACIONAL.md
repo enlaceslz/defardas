@@ -150,3 +150,14 @@ A identidade informada é declaratória e deve ser rastreada pelo controle de ac
 Alteração de estado/ID e auditoria `WHATSAPP_RECONCILED` confirmam na mesma transação. Falha reverte tudo; não há retransmissão. Só mensagens de saída pendentes podem mudar. Repetir estado/ID já aplicado não duplica auditoria. Estado final divergente é rejeitado. Aceitação pode atualizar a prévia somente se não houver mensagem mais recente; não lidas são preservadas. Resposta tardia do envio original respeita o estado já reconciliado. Recibos automáticos, consulta real ao provedor, ferramenta de reenvio autorizado e worker/outbox continuam pendentes.
 
 Timeout/erro de transporte e resposta HTTP 5xx agora permanecem `pending`, com evento `WHATSAPP_SEND_UNCONFIRMED`. Resposta HTTP 4xx registra rejeição `failed`. Repetir a mesma chave nunca retransmite nenhum desses estados; o operador deve verificar o provedor antes de resolver um pendente.
+
+
+## CRM: captura e atribuição de leads
+
+A captura pública exige quantidade numérica inteira positiva, até o limite PostgreSQL integer (2.147.483.647), e não substitui ausência/erro por 50 peças. Isso valida a representação dos dados e não cria política de pedido mínimo. Contato, empresa, telefone e e-mail respeitam os limites do schema; categoria precisa existir no catálogo de tipos do ERP. E-mail não vazio exige formato válido. Observações são texto de até 10.000 caracteres. Campos são normalizados antes de alocar contador/gravar; estado e vendedor fornecidos pelo visitante são ignorados.
+
+Atualização privada mantém RBAC comercial e só aceita os quatro estados existentes. Não pode marcar convertido sem proposta vinculada pelo fluxo comercial; a conversão lead→proposta continua pendente. Responsável exige UUID de conta ativa admin/gerente_comercial/vendedor, os perfis comerciais existentes; `sellerId: null` remove atribuição explicitamente. Não atribuir a usuário inativo ou de outro setor.
+
+Atribuição é persistida em `assigned_seller_id` e devolvida na leitura. Estado/responsável e auditoria `LEAD_UPDATED` participam da mesma transação. Repetir estado/atribuição idênticos não grava novo evento. A captura `LEAD_CAPTURED` passa a referenciar UUID interno do lead, como as alterações; eventos antigos com número comercial permanecem históricos. Falha de auditoria reverte gravação e, no PostgreSQL, contador de captura.
+
+Não há migração nova nesta correção. Proteção distribuída contra abuso da captura pública, política de leitura, conversão comercial completa e interface de gestão dos leads ainda exigem entrega/homologação.
