@@ -11,7 +11,7 @@ import { auditService } from '../services/auditService';
 import { PricingEngine } from '../services/pricingEngine';
 import { QuoteEntity, QuoteItemEntity, ProductionOrderEntity, FinancialTransactionEntity } from '../types/db';
 import { productionDeadline } from '../validation/productionDeadline';
-import { InputError, text, number, date, oneOf, money, sizes } from '../validation/input';
+import { InputError, text, number, date, oneOf, money, sizes, customizations } from '../validation/input';
 
 // Limites técnicos das colunas numeric existentes, sem alçada comercial nova.
 function quoteDecimal(value: unknown, name: string, digits: number, minimum = 0): number {
@@ -64,7 +64,7 @@ quotesRouter.post('/', requirePermission('quotes:create'), atomic(async (req: Re
       materialUnitCost, outsourcedSewingUnitCost, customizationUnitCost, freightUnitCost, technicalLossPercentage, markupPercentage,
       calculatedBaseUnitCost: pricing.calculatedBaseUnitCost, suggestedUnitPrice: pricing.suggestedUnitPrice,
       negotiatedUnitPrice: pricing.negotiatedUnitPrice, totalItemPrice,
-      customizations: Array.isArray(item.customizations) ? item.customizations : [] };
+      customizations: customizations(item.customizations) };
   });
   const totalBaseCost = money(items.reduce((sum, item) => sum + item.calculatedBaseUnitCost * item.totalQuantity, 0));
   const suggestedTotalAmount = money(items.reduce((sum, item) => sum + item.suggestedUnitPrice * item.totalQuantity, 0));

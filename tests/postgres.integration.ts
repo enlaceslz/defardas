@@ -1271,3 +1271,25 @@ test('PostgreSQL: rejeição de U+0000 preserva cliente e auditoria sem remover 
   assert.deepEqual((await pool.query('SELECT * FROM crm.clients WHERE id=$1', [created.data.id])).rows[0], stored);
   assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, auditBefore);
 });
+
+
+test('PostgreSQL: personalizações inválidas não consomem contador; personalização válida persiste na OP', async () => {
+  const customizations = [{ id: 'custom-1', type: 'bordado_peito', description: 'Logo São Luís 🧵', location: 'Peito', unitCost: 1.25, partnerName: 'Parceiro' }];
+  const body = { clientId, validUntil: '2027-01-01', productionLeadDays: 10, commercialStatus: 'aprovado', items: [item('Personalizado', 2)] };
+  const before = {
+    counters: (await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows,
+    quotes: (await pool.query('SELECT count(*) FROM crm.quotes')).rows,
+    audit: (await pool.query('SELECT count(*) FROM core.audit_logs')).rows,
+  };
+  for (const invalid of [null, {}, [null], [{ ...customizations[0], description: {} }], [{ ...customizations[0], type: null }], [{ ...customizations[0], location: 'Peito\u0000' }]]) {
+    assert.equal((await request('/api/quotes', 'POST', { ...body, items: [{ ...body.items[0], customizations: invalid }] })).status, 400);
+  }
+  assert.deepEqual((await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows, before.counters);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM crm.quotes')).rows, before.quotes);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, before.audit);
+  const created = await request('/api/quotes', 'POST', { ...body, items: [{ ...body.items[0], customizations }] });
+  assert.equal(created.status, 201);
+  assert.deepEqual((await request(`/api/quotes/${created.data.id}`)).data.items[0].customizations, customizations);
+  const converted = await request(`/api/quotes/${created.data.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  assert.deepEqual((await request(`/api/orders/${converted.data.orders[0].id}`)).data.customizations, customizations);
+});
