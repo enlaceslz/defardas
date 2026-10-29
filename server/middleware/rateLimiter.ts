@@ -4,6 +4,7 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { auditService } from '../services/auditService';
+import { securityRequestContext } from '../observability/requestContext';
 
 interface RateLimitRecord {
   count: number;
@@ -44,7 +45,8 @@ export class InMemoryRateLimiter {
                  req.socket.remoteAddress ||
                  'unknown';
 
-      const key = `${req.path}:${ip}`;
+      const context = securityRequestContext(req);
+      const key = `${context.route}:${ip}`;
       const now = Date.now();
       const record = this.records.get(key);
 
@@ -71,7 +73,7 @@ export class InMemoryRateLimiter {
           entityName: 'security_rate_limit',
           entityId: ip,
           action: 'AUTH_RATE_LIMIT_EXCEEDED',
-          notes: `Bloqueio por excesso de requisições (${record.count + 1}/${this.options.maxRequests}) em ${req.path}. Tente em ${retryAfterSeconds}s.`,
+          notes: `Bloqueio por excesso de requisições (${record.count + 1}/${this.options.maxRequests}) em ${context.method} ${context.route}. Tente em ${retryAfterSeconds}s.`,
           ipAddress: ip,
         });
 

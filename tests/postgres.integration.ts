@@ -10,7 +10,8 @@ import cookieParser from 'cookie-parser';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { pool, db as drizzle } from '../server/db/index';
 import { db as manager } from '../server/db/connection';
-import { authMiddleware } from '../server/auth/rbac';
+import { authMiddleware, requireAuth, requireRole } from '../server/auth/rbac';
+import { InMemoryRateLimiter } from '../server/middleware/rateLimiter';
 import { sessionStore } from '../server/auth/sessionStore';
 import { clientsRouter } from '../server/routes/clientsRoutes';
 import { quotesRouter } from '../server/routes/quotesRoutes';
@@ -79,6 +80,9 @@ before(async () => {
       if (req.body.failAudit) throw new Error('Injected second transaction failure');
     });
   }));
+  app.get('/api/test/private-role/:id', requireAuth, requireRole(['admin']), (_req, res) => res.json({ ok: true }));
+  const privateLimiter = new InMemoryRateLimiter({ windowMs: 60000, maxRequests: 1, message: 'Limited' });
+  app.post('/api/test/private-rate/:id', privateLimiter.middleware(), (_req, res) => res.json({ ok: true }));
   app.use(apiErrorHandler);
   server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => server.on('listening', resolve));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -1072,4 +1076,27 @@ test('PostgreSQL: WA-AKG sem endpoint bloqueia intenção sem rede nem auditoria
     if (oldEndpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = oldEndpoint;
     if (oldKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = oldKey;
   }
+});
+
+
+test('PostgreSQL: auditoria de segurança não persiste URL privada e rate limit usa rota registrada', async () => {
+  const secret = `private-${crypto.randomUUID()}-token-and-personal-data`;
+  const userId = crypto.randomUUID();
+  await pool.query("INSERT INTO core.users(id,full_name,email,password_hash,role,is_active) VALUES($1,'Test',$2,'not-a-login-hash','vendedor',true)", [userId, `${userId}@example.invalid`]);
+  const session = await sessionStore.createSession({ id: userId, fullName: 'Test', email: `${userId}@example.invalid`, role: 'vendedor' });
+  const before = new Set((await pool.query('SELECT id FROM core.audit_logs')).rows.map((row) => row.id));
+  const unauthenticated = await fetch(base + `/api/clients/${secret}?token=${secret}`);
+  assert.equal(unauthenticated.status, 401);
+  const forbidden = await fetch(base + `/api/test/private-role/${secret}?password=${secret}`, { headers: { Authorization: `Bearer ${session.token}` } });
+  assert.equal(forbidden.status, 403);
+  assert.equal((await fetch(base + '/api/test/private-rate/first', { method: 'POST' })).status, 200);
+  const limited = await fetch(base + `/api/test/PRIVATE-RATE/${secret}?token=${secret}`, { method: 'POST' });
+  assert.equal(limited.status, 429); assert.ok(Number(limited.headers.get('Retry-After')) > 0);
+  assert.equal((await fetch(base + '/api/test/Private-Rate/another', { method: 'POST' })).status, 429);
+  const events = (await pool.query('SELECT * FROM core.audit_logs')).rows.filter((row) => !before.has(row.id));
+  assert.equal(events.length, 4); assert.equal(JSON.stringify(events).includes(secret), false);
+  assert.equal(events.find((row) => row.action === 'UNAUTHORIZED_ACCESS_ATTEMPT').entity_id, 'protected-resource');
+  assert.equal(events.find((row) => row.action === 'FORBIDDEN_ACCESS_ATTEMPT').entity_id, '/api/test/private-role/:id');
+  assert.equal(events.filter((row) => row.action === 'AUTH_RATE_LIMIT_EXCEEDED').length, 2);
+  assert.ok(events.filter((row) => row.action === 'AUTH_RATE_LIMIT_EXCEEDED').every((row) => row.notes.includes('/api/test/private-rate/:id')));
 });

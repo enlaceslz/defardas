@@ -13,6 +13,7 @@ import { Request, Response, NextFunction } from 'express';
 import { UserRole } from '../types/db';
 import { sessionStore } from './sessionStore';
 import { auditService } from '../services/auditService';
+import { securityRequestContext } from '../observability/requestContext';
 
 export interface AuthenticatedUser {
   id: string;
@@ -103,13 +104,14 @@ export async function authMiddleware(req: RequestWithUser, _res: Response, next:
 export async function requireAuth(req: RequestWithUser, res: Response, next: NextFunction) {
   if (!req.user) {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const context = securityRequestContext(req);
     await auditService.log({
       actorName: 'Anônimo / Não Autenticado',
       actorRole: 'unauthenticated',
       entityName: 'security',
-      entityId: req.originalUrl,
+      entityId: context.route,
       action: 'UNAUTHORIZED_ACCESS_ATTEMPT',
-      notes: `Tentativa de acesso não autenticado bloqueada na rota [${req.method} ${req.originalUrl}] a partir de IP ${ip}.`,
+      notes: `Tentativa de acesso não autenticado bloqueada na rota [${context.method} ${context.route}] a partir de IP ${ip}.`,
       ipAddress: ip,
     });
 
@@ -136,14 +138,15 @@ export function requireRole(allowedRoles: UserRole[]) {
 
     if (!allowedRoles.includes(req.user.role)) {
       const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const context = securityRequestContext(req);
       await auditService.log({
         actorId: req.user.id,
         actorName: req.user.fullName,
         actorRole: req.user.role,
         entityName: 'security',
-        entityId: req.originalUrl,
+        entityId: context.route,
         action: 'FORBIDDEN_ACCESS_ATTEMPT',
-        notes: `Acesso negado para o perfil [${req.user.role}] na rota [${req.method} ${req.originalUrl}]. Operação restrita a: [${allowedRoles.join(', ')}].`,
+        notes: `Acesso negado para o perfil [${req.user.role}] na rota [${context.method} ${context.route}]. Operação restrita a: [${allowedRoles.join(', ')}].`,
         ipAddress: ip,
       });
 
