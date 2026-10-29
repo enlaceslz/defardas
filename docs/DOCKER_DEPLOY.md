@@ -73,3 +73,13 @@ POSTGRES_DB=defardas_restore_test bash scripts/restore.sh /caminho/privado/backu
 Banco de destino deve existir e ter acesso adequado. O comando é destrutivo nesse destino e pede confirmação. `--force` dispensa a pergunta e é usado somente no ensaio automatizado autorizado. SHA-256 valida bytes contra o checksum acompanhante; não prova autenticidade se ambos forem substituídos. Restore usa uma transação e falha em erro SQL; não encerra conexões nem para a aplicação automaticamente. Não usar `docker compose down -v`: apaga volumes.
 
 A CI comprova Compose válido, imagem construída/iniciada, health interno com PORT=3300, HTTP, desligamento e backup/restauração em banco descartável. Isso não comprova DNS, certificados, volumes, cópia externa ou capacidade no servidor real.
+
+## Configuração TLS do PostgreSQL
+
+DATABASE_SSL_MODE aceita apenas `disable`, `require` e `verify-full`; modo desconhecido/vazio impede inicialização. Em produção, ausência usa `require` com validação de certificado. Quando TLS é solicitado, certificados são validados também fora de produção. DATABASE_CA_CERT recebe o conteúdo PEM da CA, não caminho de arquivo. `verify-full` não admite desativar validação.
+
+O ambiente da aplicação controla TLS. Preferir DATABASE_URL sem parâmetros SSL. `sslmode` redundante na URL só é aceito uma vez e com o mesmo modo efetivo; é removido antes de entregar a URL ao driver, preservando a configuração de CA. `ssl`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`, `uselibpqcompat` e outros parâmetros com prefixo ssl são rejeitados. Certificado de cliente/mTLS por URL não é suportado neste contrato. Configurações existentes com essas opções precisam ser revistas antes da atualização.
+
+DATABASE_ALLOW_INSECURE_SSL é booleano textual `true`/`false`; `true` só é aceito em `require`, sem CA, e desabilita verificação de certificado explicitamente. Não usar esse escape para homologar PostgreSQL remoto; preferir `verify-full` com CA/certificado corretos. TLS desativado não admite CA ou escape inseguro conflitantes e não herda PGSSLMODE do processo. O Compose local mantém disable explícito para a rede interna.
+
+DATABASE_POOL_MAX deve ser inteiro positivo em formato decimal; padrão 20, sem aceitar sufixos como `20abc`, zero ou frações. Configuração inválida encerra o processo antes da conexão e registra DATABASE_CONFIG_INVALID, sem imprimir URL, CA ou valores recebidos. Corrigir ambiente e reiniciar; nunca divulgar credenciais em diagnóstico. Essas verificações não substituem ensaio de certificado, hostname e conectividade no destino real. Scripts Bash de pg_dump/psql usam ferramentas libpq e seu próprio contrato de TLS; não recebem automaticamente a configuração Node.

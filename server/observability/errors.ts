@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-const knownCodes = new Set(['DATABASE_URL_MISSING', '23505', '23503', '23514', '22P02', '42P01', '42703', '28P01', '53300',
+const knownCodes = new Set(['DATABASE_CONFIG_INVALID', 'DATABASE_URL_MISSING', '23505', '23503', '23514', '22P02', '42P01', '42703', '28P01', '53300',
   '57P01', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT']);
 export type ErrorContext = 'api' | 'startup' | 'database_connect' | 'user_repository' | 'password_compare' |
   'session_cleanup' | 'migration' | 'admin_provision' | 'password_reset';

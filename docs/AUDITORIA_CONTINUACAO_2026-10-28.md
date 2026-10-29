@@ -280,3 +280,13 @@ Corrigidos guia de migração inicial, alegações de Redis/WA-AKG/zero downtime
 Validação local: 88 testes, tipagem e build aprovados; YAML verificado com parser. Docker/PostgreSQL dependem da CI ampliada. Auditoria npm encontrou quatro alertas moderados na cadeia de desenvolvimento Drizzle/esbuild e zero alertas com --omit=dev; nenhum downgrade automático aplicado. compile_applet indisponível; build Vite utilizado. Sem schema/migração real, mensagem externa, merge ou deploy. Novos documentos substituem instruções obsoletas; auditoria anterior permanece histórica.
 
 A primeira execução desta revisão revelou fixtures PostgreSQL que dependiam do endpoint WA-AKG removido. Foram corrigidas para usar endpoint explícito com fetch interceptado; a espera do transporte agora propaga rejeição anterior à rede. Adicionado teste PostgreSQL de endpoint ausente sem nova intenção/requisição. Nenhum provedor externo é chamado nesses testes.
+
+## Continuação de 29/10/2026: configuração PostgreSQL com validação de TLS
+
+Base: PR #24, commit d148c8c5; CI 40900379159/40900369819 aprovadas.
+
+Achados confirmados no código do driver instalado: modo SSL desconhecido caía em conexão sem TLS; parse de connectionString sobrescrevia ssl do pool, podendo descartar CA e alterar validação; ssl=false era enviado como undefined, permitindo herdar PGSSLMODE; parseInt aceitava sufixos/frações no tamanho do pool.
+
+Correção: parser isolado valida modos, escape e inteiro positivo; ambiente é autoridade TLS. SSL redundante na URL deve concordar e é removido; overrides SSL/compatibilidade são rejeitados antes do driver. verify-full não admite escape; require valida certificado por padrão também fora de produção. Inseguro só por opção explícita require/sem CA. Código diagnóstico DATABASE_CONFIG_INVALID é permitido sem serializar URL/CA/entradas. Configuração falha antes de conectar e não há fallback de segurança.
+
+Validação local: 92 testes, tipagem, build e diff-check aprovados. Quatro testes novos cobrem driver pg real sem rede, CA preservada, conflitos/valores inválidos, não herdar PGSSLMODE e processo CLI encerrado com diagnóstico privado. CI PostgreSQL/Docker ainda deve validar o novo commit. Sem migração, banco real, mensagem externa, merge ou deploy. Handshake TLS no servidor contratado não foi executado; backup Bash/libpq continua com seu contrato próprio.
