@@ -8,6 +8,8 @@ import { db } from '../server/db/connection';
 await db.ready;
 async function fixture(run: (context: any) => Promise<void>) {
   const previousKey = process.env.WA_AKG_API_KEY;
+  const previousEndpoint = process.env.WA_AKG_ENDPOINT;
+  process.env.WA_AKG_ENDPOINT = 'https://provider.example.invalid';
   const originalFetch = globalThis.fetch;
   const originalAudit = auditService.log;
   const channelId = crypto.randomUUID(); const conversationId = crypto.randomUUID();
@@ -23,6 +25,7 @@ async function fixture(run: (context: any) => Promise<void>) {
   try { await run(context); }
   finally {
     globalThis.fetch = originalFetch; auditService.log = originalAudit;
+    if (previousEndpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = previousEndpoint;
     if (previousKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = previousKey;
   }
 }

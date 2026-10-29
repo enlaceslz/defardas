@@ -9,6 +9,8 @@ async function fixture(run: (context: any) => Promise<void>) {
   const originals = { findMessageById: repository.findMessageById, findConversationById: repository.findConversationById, findChannelById: repository.findChannelById,
     saveMessage: repository.saveMessage, saveConversation: repository.saveConversation, log: auditService.log, fetch: globalThis.fetch };
   const previousKey = process.env.WA_AKG_API_KEY;
+  const previousEndpoint = process.env.WA_AKG_ENDPOINT;
+  process.env.WA_AKG_ENDPOINT = 'https://provider.example.invalid';
   process.env.WA_AKG_API_KEY = 'test-only-runtime-key';
   const context = { requests: [] as any[], messages: [] as any[], conversations: [] as any[], audits: [] as any[],
     channel: { id: 'channel', provider: 'wa_akg', isActive: true, status: 'connected' } as any };
@@ -28,6 +30,7 @@ async function fixture(run: (context: any) => Promise<void>) {
     repository.saveConversation = originals.saveConversation;
     auditService.log = originals.log;
     globalThis.fetch = originals.fetch;
+    if (previousEndpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = previousEndpoint;
     if (previousKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = previousKey;
   }
 }
@@ -89,5 +92,18 @@ test('texto normalizado é o mesmo no provedor e no histórico; rejeição HTTP 
     assert.equal(JSON.stringify(rejected).includes('private-provider-error'), false);
     globalThis.fetch = async () => new Response('{}', { status: 503 });
     assert.equal((await service.sendMessage({ conversationId: 'conversation', body: 'incerto' })).status, 'pending');
+  });
+});
+
+
+test('WA-AKG sem endpoint explícito bloqueia antes de gravar intenção ou tentar rede', async () => {
+  await fixture(async (context) => {
+    for (const endpoint of [undefined, '', '   ']) {
+      if (endpoint === undefined) delete process.env.WA_AKG_ENDPOINT; else process.env.WA_AKG_ENDPOINT = endpoint;
+      await assert.rejects(new WhatsAppService().sendMessage({ conversationId: 'conversation', body: 'texto' }),
+        (error: any) => error instanceof CommunicationError && error.status === 503);
+    }
+    assert.equal(context.requests.length, 0); assert.equal(context.messages.length, 0);
+    assert.equal(context.audits.length, 0);
   });
 });

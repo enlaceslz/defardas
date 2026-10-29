@@ -67,7 +67,7 @@ EXPOSE 3000
 
 # Healthcheck interno do container
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:3000/api/health || exit 1
+  CMD curl --fail --silent --show-error --max-time 4 "http://localhost:${PORT:-3000}/api/health" || exit 1
 
 # Comando padrão de inicialização do servidor de produção
 CMD ["npm", "run", "start"]

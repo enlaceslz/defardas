@@ -31,7 +31,7 @@ export interface SendMessageOptions {
 export class WhatsAppService {
   private metaToken = process.env.META_WA_TOKEN;
   private metaPhoneNumberId = process.env.META_WA_PHONE_NUMBER_ID;
-  private waAkgEndpoint = process.env.WA_AKG_ENDPOINT || 'http://defardas-wa-akg:8080';
+  private waAkgEndpoint = process.env.WA_AKG_ENDPOINT?.trim();
   private waAkgApiKey = process.env.WA_AKG_API_KEY;
 
   /**
@@ -69,7 +69,7 @@ export class WhatsAppService {
         throw new CommunicationError('Canal de WhatsApp inativo ou desconectado.', 503);
       }
       if ((channel.provider === 'meta_cloud' && (!this.metaToken?.trim() || !this.metaPhoneNumberId?.trim())) ||
-          (channel.provider === 'wa_akg' && !this.waAkgApiKey?.trim()) ||
+          (channel.provider === 'wa_akg' && (!this.waAkgApiKey?.trim() || !this.waAkgEndpoint)) ||
           !['meta_cloud', 'wa_akg'].includes(channel.provider)) {
         throw new CommunicationError('Provedor WhatsApp não configurado.', 503);
       }

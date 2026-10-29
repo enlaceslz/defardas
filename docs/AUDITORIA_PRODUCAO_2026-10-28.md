@@ -1,5 +1,7 @@
 # Auditoria e preparação para produção — DE FARDAS
 
+Registro histórico; estado consolidado atual em [auditoria de 29/10/2026](AUDITORIA_PRODUCAO_2026-10-29.md). Os números e pendências abaixo correspondem à revisão original.
+
 Data: 28/10/2026. Repositório: `enlaceslz/defardas`. Trabalho na branch `fix/production-audit`, PR #1.
 
 **Parecer: núcleo transacional implementado e testado; liberação operacional ainda condicionada às integrações e à homologação descritas abaixo.** Não foi alterada a infraestrutura contratada nem o banco operacional.

@@ -1,4 +1,4 @@
-> Estado atual de produção: leia [a auditoria de 28/10/2026](docs/AUDITORIA_PRODUCAO_2026-10-28.md) e [a operação transacional](docs/OPERACAO_TRANSACIONAL.md). A publicação estática da SPA não substitui a API/PostgreSQL, e a liberação operacional ainda depende das pendências documentadas.
+> Estado atual: consulte a [auditoria de produção de 29/10/2026](docs/AUDITORIA_PRODUCAO_2026-10-29.md), o [status de desenvolvimento](docs/DEVELOPMENT_STATUS.md) e o [guia Docker revisado](docs/DOCKER_DEPLOY.md). O núcleo tem validação automatizada; a liberação operacional depende dos bloqueios documentados. Publicação estática da SPA não executa API/PostgreSQL.
 
 # DE FARDAS — Sistema Integrado de Gestão & Portal Comercial
 

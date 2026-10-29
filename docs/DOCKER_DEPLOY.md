@@ -1,128 +1,75 @@
-# Guia de Implantação e Operação Docker — DE FARDAS ERP
+# DE FARDAS — implantação e operação Docker
 
-Este documento orienta a equipe de operações e engenharia sobre como compilar, implantar, executar migrações e realizar backups do sistema **DE FARDAS ERP** em servidores de produção.
+Revisão de 29/10/2026. Procedimento para ensaio em homologação; não representa autorização ou evidência de implantação no servidor contratado. Ver [bloqueios de produção](AUDITORIA_PRODUCAO_2026-10-29.md).
 
----
+## Topologia e requisitos
 
-## 1. Visão Geral da Arquitetura de Contêineres
+O Compose padrão inicia `defardas-app` e `defardas-postgres` (PostgreSQL 16 próprio). A aplicação usa Node 22, usuário UID 1001 e sessões no PostgreSQL. Redis só inicia com `--profile optional-cache`; o runtime atual não o usa para sessões/cache/filas. Não há serviço WA-AKG fictício: um provedor real precisa ser provisionado e homologado separadamente. Volumes históricos não são apagados por esta alteração.
 
-O ambiente de contêineres é orquestrado através do `compose.yaml` com 4 serviços:
+Docker Engine e Compose v2 com suporte a `env_file.required` (2.24 ou superior), Bash, gzip e sha256sum são necessários. Validar versões e compatibilidade no servidor de destino. O guia anterior citava Compose 2.20, incompatível com essa opção do arquivo.
 
-1. **`defardas-app`**:
-   - Imagem construída a partir do `Dockerfile` multi-stage em Node 22-alpine.
-   - Executa a aplicação React 19 compilada e o servidor Express com endpoints modulares.
-   - Roda sob usuário não-privilegiado (`defardas:defardas`, UID 1001).
-   - Possui healthcheck interno em `GET /api/health`.
+A porta do ERP é publicada somente em `127.0.0.1:${PORT:-3000}` por padrão. Configurar proxy HTTPS na topologia contratada; se o proxy for outro container/host, ajustar `APP_BIND_ADDRESS` e redes/firewall deliberadamente. Não assumir zero downtime, alta disponibilidade ou rate limiting distribuído. O proxy não deve expor PostgreSQL/Redis e trust proxy precisa ser definido conforme a topologia real; o código atual não confia em X-Forwarded-For arbitrário.
 
-2. **`defardas-postgres`**:
-   - Imagem oficial `postgres:16-alpine`.
-   - Banco de dados relacional próprio da DE FARDAS.
-   - Volumes nomeados para persistência em disco: `defardas_postgres_data`.
-   - Isolado na rede interna `defardas-internal`.
+## Instalação inicial em banco novo
 
-3. **`defardas-redis`**:
-   - Imagem oficial `redis:7-alpine`.
-   - Utilizado para sessões, cache e filas assíncronas com persistência AOF ativada.
-
-4. **`defardas-wa-akg`**:
-   - Container isolado para o serviço de automação WhatsApp via QR Code / Baileys.
-   - Armazena credenciais e chaves criptográficas em volume dedicado `defardas_wa_akg_auth`.
-
----
-
-## 2. Pré-Requisitos
-
-- Servidor Linux (Ubuntu 22.04 LTS ou superior recomendado).
-- Docker Engine v24.0+ e Docker Compose v2.20+.
-- Portas 80/443 e 3000 liberadas conforme a topologia de proxy reverso (Nginx/Traefik).
-
----
-
-## 3. Passo a Passo de Implantação
-
-### 3.1. Configuração do Arquivo `.env`
-Copie o template e preencha as credenciais seguras de produção:
+Somente na primeira instalação, sem substituir um `.env` existente:
 
 ```bash
 cp .env.example .env
-nano .env
+chmod 600 .env
 ```
 
-Garanta que as seguintes variáveis estejam preenchidas:
-- `POSTGRES_USER` e `POSTGRES_PASSWORD` (senhas fortes e aleatórias)
-- `POSTGRES_DB=defardas_db`
-- `DATABASE_URL` apontando para o contêiner `defardas-postgres`
-- `S3_*` para armazenamento de artes e comprovantes
-- `META_WA_*` ou `WA_AKG_*` para comunicação
+Preencher `POSTGRES_PASSWORD`, usuário/banco e configuração institucional real. O Compose monta a URL interna usando `POSTGRES_*`; não usa `DATABASE_URL` do arquivo para escolher outro servidor. Usar senha aleatória compatível com URL (por exemplo hexadecimal de alta entropia); caracteres reservados exigem tratamento de codificação da URL na configuração. Nunca versionar `.env` nem imprimir a configuração expandida com segredos em logs/tickets. Para PostgreSQL remoto contratado, preparar variante do Compose com URL/TLS/CA e dependências adequadas, ensaiando-a separadamente.
 
-### 3.2. Construção e Inicialização dos Contêineres
-Suba todos os serviços em segundo plano:
+`DATABASE_SSL_MODE=disable` no Compose vale para o PostgreSQL da rede interna local. Não copiar esse modo para banco remoto sem avaliar a rede/TLS. S3 e Gemini não são ativados por simplesmente preencher variáveis. Deixar WA-AKG sem endpoint/chave enquanto não houver serviço real; envio sem configuração é bloqueado.
+
+A aplicação exige schema migrado para iniciar. Construir a imagem e executar o runner de migração em container temporário antes de subir a aplicação:
 
 ```bash
-docker compose up -d --build
-```
-
-Verifique o status de execução e healthchecks:
-
-```bash
-docker compose ps
-docker compose logs -f defardas-app
-```
-
-### 3.3. Execução das Migrações Drizzle ORM
-Com o banco ativo e saudável, execute as migrações:
-
-```bash
-docker compose exec defardas-app npx drizzle-kit migrate
-```
-
-Para inspecionar as tabelas criadas no banco:
-
-```bash
-docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dn"
-docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt core.*"
-docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt crm.*"
-docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt producao.*"
-docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt estoque.*"
-docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt financeiro.*"
-```
-
----
-
-## 4. Rotinas de Backup e Recuperação de Desastres
-
-### 4.1. Backup Manual ou Agendado (Cron)
-O script `scripts/backup.sh` executa `pg_dump` compactado com gzip, calcula o hash SHA-256 e descarta cópias com mais de 30 dias:
-
-```bash
-chmod +x scripts/backup.sh scripts/restore.sh
-./scripts/backup.sh
-```
-
-Para automatizar no crontab diário às 03:00 AM:
-
-```bash
-0 3 * * * /caminho/para/defardas/scripts/backup.sh >> /var/log/defardas_backup.log 2>&1
-```
-
-### 4.2. Restauração de Dados
-Para restaurar um backup homologado em caso de falha de hardware ou desastre:
-
-```bash
-./scripts/restore.sh backups/defardas_db_YYYYMMDD_HHMMSS.sql.gz
-```
-
-O script verifica automaticamente o checksum SHA-256 antes de aplicar as alterações no banco.
-
----
-
-## 5. Atualização de Versões da Aplicação (Zero Downtime)
-
-Para atualizar o código do ERP sem interrupção abrupta:
-
-```bash
-git pull origin main
+docker compose config --quiet
 docker compose build defardas-app
-docker compose up -d --no-deps defardas-app
-docker compose exec defardas-app npx drizzle-kit migrate
+docker compose up -d --wait defardas-postgres
+docker compose run --rm --no-deps defardas-app npm run db:migrate
 ```
+
+Usar somente `drizzle/` e seu journal. Não aplicar junto os arquivos SQL históricos de `migrations/`. A imagem final não contém drizzle-kit; não usar `npx drizzle-kit migrate` nem depender de `exec` em uma aplicação que ainda não consegue iniciar.
+
+Provisionar o primeiro administrador com `ADMIN_EMAIL`, `ADMIN_NAME` e `ADMIN_PASSWORD` exportados temporariamente no shell, sem inserir senha literal no histórico:
+
+```bash
+docker compose run --rm --no-deps -e ADMIN_EMAIL -e ADMIN_NAME -e ADMIN_PASSWORD defardas-app npm run admin:create
+unset ADMIN_EMAIL ADMIN_NAME ADMIN_PASSWORD
+docker compose up -d --no-deps --wait defardas-app
+docker compose ps
+curl --fail --max-time 5 http://127.0.0.1:3000/api/health
+```
+
+Ajustar a porta do curl se PORT for diferente. O provisionamento recusa e-mail existente; não substitui conta. Gestão dos demais acessos usa `npm run user:manage` conforme [operação transacional](OPERACAO_TRANSACIONAL.md). Conferir login, perfis, dados da empresa e jornada funcional em HTTPS antes de qualquer liberação. Não existe senha operacional padrão.
+
+## Atualização e recuperação
+
+Escolher um commit/release revisado e aprovado, evitando atualizar produção por `git pull` sem revisão. Ensaiar migrações em cópia restaurada do banco e conferir constraints, duplicidades e dados antigos. Registrar backup, commit anterior e plano de recuperação. Neste modelo, programar manutenção; não há garantia de zero downtime.
+
+1. Fazer backup e validar restauração em banco isolado.
+2. Construir a imagem do commit escolhido, interromper tráfego/escritas e parar a aplicação.
+3. Executar `docker compose run --rm --no-deps defardas-app npm run db:migrate` com o banco ativo.
+4. Subir a aplicação, conferir healthcheck interno, HTTPS, login e jornada comercial/financeira/produção.
+5. Se falhar, manter tráfego interrompido e aplicar o plano ensaiado. Voltar somente a imagem não desfaz migração nem garante compatibilidade com schema/dados novos.
+
+## Backup e restauração
+
+```bash
+BACKUP_DIR=/caminho/privado/backups bash scripts/backup.sh
+```
+
+Scripts usam container `defardas-postgres` e nomes padrão de usuário/banco, ou `DATABASE_URL` e ferramentas PostgreSQL locais quando o container não está disponível. Exportar `POSTGRES_USER`, `POSTGRES_DB`, `POSTGRES_CONTAINER` se personalizados; o script não carrega `.env` automaticamente. Diretório deve ter acesso restrito. O padrão `RETENTION_DAYS=30` é configuração do script, não política empresarial homologada. Definir retenção, cópia externa, criptografia, alertas e responsáveis na operação.
+
+Para restaurar, primeiro parar aplicação e demais escritores, confirmar o banco de destino e preservar evidência do estado anterior:
+
+```bash
+POSTGRES_DB=defardas_restore_test bash scripts/restore.sh /caminho/privado/backup.sql.gz
+```
+
+Banco de destino deve existir e ter acesso adequado. O comando é destrutivo nesse destino e pede confirmação. `--force` dispensa a pergunta e é usado somente no ensaio automatizado autorizado. SHA-256 valida bytes contra o checksum acompanhante; não prova autenticidade se ambos forem substituídos. Restore usa uma transação e falha em erro SQL; não encerra conexões nem para a aplicação automaticamente. Não usar `docker compose down -v`: apaga volumes.
+
+A CI comprova Compose válido, imagem construída/iniciada, health interno com PORT=3300, HTTP, desligamento e backup/restauração em banco descartável. Isso não comprova DNS, certificados, volumes, cópia externa ou capacidade no servidor real.
