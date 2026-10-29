@@ -17,6 +17,7 @@ import { clientsRouter } from '../server/routes/clientsRoutes';
 import { quotesRouter } from '../server/routes/quotesRoutes';
 import { ordersRouter } from '../server/routes/ordersRoutes';
 import { financeRouter } from '../server/routes/financeRoutes';
+import { auditRouter } from '../server/routes/auditRoutes';
 import { settingsRouter } from '../server/routes/settingsRoutes';
 import { spawnSync } from 'node:child_process';
 import { leadsRouter } from '../server/routes/leadsRoutes';
@@ -70,7 +71,7 @@ before(async () => {
   const session = await sessionStore.createSession({ id: userId, fullName: 'Integration Admin', email: `${userId}@example.invalid`, role: 'admin' });
   headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` };
   const app = express(); app.use(express.json()); app.use(cookieParser()); app.use('/api', authMiddleware);
-  app.use('/api', settingsRouter);
+  app.use('/api', settingsRouter); app.use('/api/audit', auditRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/clients', clientsRouter); app.use('/api/quotes', quotesRouter); app.use('/api/orders', ordersRouter);
   app.use('/api/leads', leadsRouter);
@@ -1340,4 +1341,18 @@ test('PostgreSQL: autenticação inválida não cria sessão nem tokens e não e
   assert.deepEqual((await pool.query('SELECT count(*) FROM core.sessions')).rows, sessions);
   assert.deepEqual((await pool.query('SELECT count(*) FROM core.password_reset_tokens')).rows, tokens);
   assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, audit);
+});
+
+
+test('PostgreSQL: filtro de auditoria não amplia consulta e rejeita parâmetros inválidos', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const id = crypto.randomUUID();
+  await auditService.log({ actorName: 'Test', actorRole: 'system', entityName: 'test.audit', entityId: id, action: 'QUERY_TEST' });
+  await auditService.log({ actorName: 'Test', actorRole: 'system', entityName: 'test.audit', entityId: crypto.randomUUID(), action: 'QUERY_OTHER' });
+  for (const query of ['entityName=test.audit', 'entityName[]=test.audit&entityId=x', 'limit=1e2', 'entityName=test.audit&entityId=%00']) {
+    assert.equal((await request('/api/audit/logs?' + query)).status, 400);
+  }
+  const filtered = await request(`/api/audit/logs?limit=1&entityName=test.audit&entityId=${id}`);
+  assert.equal(filtered.status, 200); assert.equal(filtered.data.length, 1);
+  assert.equal(filtered.data[0].entityId, id); assert.equal(filtered.data[0].action, 'QUERY_TEST');
 });
