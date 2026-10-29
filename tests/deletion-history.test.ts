@@ -114,3 +114,47 @@ test('edição de OP preserva centavos e equipe vazia, sem mutações em entrada
     assert.equal(db.orders.get(id)?.partnerCostPerPiece, cost);
   }
 });
+
+
+async function approveArt(id: string, body?: any) {
+  const response = await fetch(`${base}/orders/${id}/approve-art`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  return { status: response.status, data: await response.json() };
+}
+test('aprovações concorrentes registram uma vez e replay preserva responsável, data e notas', async () => {
+  const id = crypto.randomUUID(); const orderNumber = `ART-${id.slice(0,8)}`;
+  db.orders.set(id, { id, orderNumber, artApproved: false, stage: 'aguardando_liberacao', technicalNotes: 'Original' } as any);
+  const responses = await Promise.all(Array.from({ length: 8 }, () => approveArt(id, { approverName: 'Cliente original' })));
+  assert.ok(responses.every((r) => r.status === 200));
+  assert.equal(responses.filter((r) => r.data.alreadyApproved).length, 7);
+  const stored = structuredClone(db.orders.get(id));
+  assert.ok(stored?.artApproved); assert.equal(stored?.stage, 'aguardando_liberacao');
+  assert.equal(stored?.artApprovedBy, 'Cliente original');
+  assert.equal(stored?.technicalNotes?.split('[Arte aprovada').length, 2);
+  const replay = await approveArt(id, { approverName: 'Outro cliente', fileUrl: 'https://example.invalid/other' });
+  assert.equal(replay.data.alreadyApproved, true); assert.deepEqual(db.orders.get(id), stored);
+  assert.equal((await approveArt(id)).data.alreadyApproved, true);
+  const logs = await auditService.getRecentLogs(500, 'producao.production_orders', orderNumber);
+  assert.equal(logs.filter((log) => log.action === 'APPROVE_ART').length, 1);
+});
+
+test('aprovação inválida ou auditoria com falha não altera OP e permite nova tentativa', async () => {
+  const id = crypto.randomUUID(); const originalOrder = { id, orderNumber: `ART-${id.slice(0,8)}`, artApproved: false, technicalNotes: 'Original' } as any;
+  db.orders.set(id, structuredClone(originalOrder));
+  for (const payload of [undefined, {}, { approverName: ' ' }, { approverName: 'x'.repeat(101) }]) {
+    assert.equal((await approveArt(id, payload)).status, 400); assert.deepEqual(db.orders.get(id), originalOrder);
+  }
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected art approval failure'); };
+    assert.equal((await approveArt(id, { approverName: 'Cliente' })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual(db.orders.get(id), originalOrder);
+  assert.equal((await approveArt(id, { approverName: 'Cliente' })).status, 200);
+  const stored = structuredClone(db.orders.get(id));
+  try {
+    auditService.log = async () => { throw new Error('Replay must not audit'); };
+    assert.equal((await approveArt(id, { approverName: 'Outro' })).data.alreadyApproved, true);
+  } finally { auditService.log = original; }
+  assert.deepEqual(db.orders.get(id), stored);
+});

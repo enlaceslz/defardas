@@ -875,3 +875,46 @@ test('PostgreSQL: edição de OP recarrega centavos e equipe vazia sem arredonda
     assert.equal((await pool.query('SELECT partner_cost_per_piece,assigned_team FROM producao.production_orders WHERE id=$1', [id])).rows[0].partner_cost_per_piece, cost.toFixed(2));
   }
 });
+
+
+test('PostgreSQL: aprovação de arte concorrente registra uma auditoria e conserva aprovação original no replay', async () => {
+  const quote = await createQuote();
+  const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  const order = converted.data.orders[0]; const path = `/api/orders/${order.id}/approve-art`;
+  const responses = await Promise.all(Array.from({ length: 8 }, () => request(path, 'POST', { approverName: 'Cliente original' })));
+  assert.ok(responses.every((r) => r.status === 200)); assert.equal(responses.filter((r) => r.data.alreadyApproved).length, 7);
+  const stored = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  assert.equal(stored.art_approved, true); assert.equal(stored.art_approved_by, 'Cliente original');
+  assert.equal(stored.stage, 'aguardando_liberacao'); assert.equal(stored.entry_payment_confirmed, false);
+  assert.equal(stored.technical_notes.split('[Arte aprovada').length, 2);
+  const repeated = await request(path, 'POST', { approverName: 'Outro cliente', fileUrl: 'https://example.invalid/other' });
+  assert.equal(repeated.status, 200); assert.equal(repeated.data.alreadyApproved, true);
+  assert.equal((await request(path, 'POST')).data.alreadyApproved, true);
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], stored);
+  const logs = (await pool.query("SELECT * FROM core.audit_logs WHERE action='APPROVE_ART' AND entity_id=$1", [order.orderNumber])).rows;
+  assert.equal(logs.length, 1); assert.equal(logs[0].new_data.artApprovedBy, 'Cliente original');
+});
+
+test('PostgreSQL: falha de validação ou auditoria na aprovação mantém OP e retry pode confirmar', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+  assert.equal(converted.status, 201); const order = converted.data.orders[0]; const path = `/api/orders/${order.id}/approve-art`;
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  for (const payload of [undefined, {}, { approverName: ' ' }, { approverName: 'x'.repeat(101) }]) {
+    assert.equal((await request(path, 'POST', payload)).status, 400);
+  }
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected art audit failure'); };
+    assert.equal((await request(path, 'POST', { approverName: 'Cliente' })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='APPROVE_ART' AND entity_id=$1", [order.orderNumber])).rows[0].count, '0');
+  assert.equal((await request(path, 'POST', { approverName: 'Cliente' })).status, 200);
+  const stored = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  try {
+    auditService.log = async () => { throw new Error('Replay must not audit'); };
+    assert.equal((await request(path, 'POST', { approverName: 'Outro' })).data.alreadyApproved, true);
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], stored);
+});
