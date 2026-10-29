@@ -314,3 +314,7 @@ Os gates continuam obrigatórios. Mesmo destino, após validar token e gates, de
 A interface envia a revisão que exibiu; em conflito recarrega os dados e informa falha, sem repetir a ação automaticamente. Revisão ausente na tela também exige nova leitura antes de outra ação. Atualizar clientes da API para enviar o novo campo; não buscar uma revisão nova e repetir silenciosamente uma intenção antiga.
 
 Para destino diferente da etapa atual, o conflito de revisão é verificado antes dos gates. Isso permite à interface recarregar uma leitura antiga mesmo quando os gates atuais não permitem avanço. Com revisão atual, os gates continuam retornando 422 e registrando a tentativa bloqueada. No-op continua verificando gates antes de devolver estado atual. Nenhum desses caminhos aplica transição automaticamente.
+
+### Revisão na edição da ficha
+
+PUT /api/orders/:id também exige expectedRevision inteiro positivo da leitura. O repositório mantém lock de linha; revisão antiga retorna 409/ORDER_REVISION_CONFLICT antes de modificar campos. A interface envia a revisão do formulário, recarrega dados no conflito e conserva o formulário sem reenviar. Fechar e reabrir permite revisar a ficha atual. Não substituir o token por revisão recém-consultada para aplicar silenciosamente campos antigos. Clientes próprios precisam enviar o novo campo; usa a migração 0006 existente.

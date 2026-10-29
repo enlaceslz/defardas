@@ -346,3 +346,7 @@ CI desta entrega ampliada para comparar IDs/revisões entre origem e banco resta
 ## Continuação: precedência do conflito de revisão
 
 A revisão de transição real agora é conferida antes dos gates. Anteriormente, leitura antiga com gates pendentes recebia 422, impedindo o tratamento de conflito/releitura da interface. Revisão antiga recebe 409; revisão atual sem gates continua recebendo 422 auditado, sem alteração da OP. Teste HTTP cobre os dois caminhos e conservação do estado. Validação local: 104 testes, tipagem, build e diff-check aprovados. Sem nova migração ou alteração em banco real. Publicação e CI dessa correção ainda pendentes.
+
+## Continuação: edição da ficha com revisão
+
+PUT de OP passa a exigir revisão da leitura e lock de linha, impedindo sobrescrita de equipe/prazo/custo por formulário antigo. API cliente transmite revision como expectedRevision; interface recarrega conflito sem reenviar nem fechar formulário. Teste HTTP verifica estado preservado no conflito e salvamento com revisão atual. Helpers PostgreSQL foram adaptados ao contrato; execução PostgreSQL/CI ainda pendente. Validação local: 105 testes, tipagem e build aprovados. Sem nova migração, banco real ou deploy. Publicação no GitHub pendente.
