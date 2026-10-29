@@ -92,3 +92,10 @@ Validação local passa a 100 testes; dois testes PostgreSQL novos cobrem oito d
 Após o PR #29, a OP recebe revision persistida e incrementada por trigger na migração 0006. Transição exige expectedRevision da leitura e recusa tela desatualizada com conflito; lock de linha mantém comparação e gravação na mesma transação. UI recarrega conflito sem reenviar intenção. No-op ainda conserva estado/gates, sem reescrita. Outros editores incrementam revisão, mas não passam a exigir CAS.
 
 Validação local passa a 103 testes; testes PostgreSQL novos cobrem trigger, concorrência e rollback. Conferir CI do novo PR. Migração e frontend devem ser implantados juntos, após ensaio em cópia; startup exige coluna nova. Última CI de base: 40960567134, PR #29. Não foi migrado banco real nem implementada chave durável de comandos; demais bloqueios operacionais permanecem.
+
+
+### Continuação: caractere nulo nos campos textuais
+
+O validador compartilhado `text` recusa U+0000 com HTTP 400 antes da persistência, tanto em campos obrigatórios quanto opcionais. PostgreSQL não aceita esse caractere em text/varchar. O conteúdo não é truncado nem saneado silenciosamente; acentos, emoji, quebras de linha e tabulações continuam aceitos nos limites existentes. A regra alcança os campos que passam por esse validador; não constitui validação de todos os payloads JSON nem migração de histórico.
+
+Validação local: 106 testes, tipagem e build aprovados. Novo cenário PostgreSQL verifica rejeição de criação/edição sem alterar cadastro ou auditoria e persistência de Unicode válido; execução pela CI ainda pendente. Sem migração nova; bloqueios de produção anteriores permanecem.

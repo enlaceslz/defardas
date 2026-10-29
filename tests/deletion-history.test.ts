@@ -272,3 +272,22 @@ test('edição de ficha antiga não sobrescreve metadados e revisão atual pode 
   assert.equal((await edit(1)).status, 409); assert.equal(db.orders.get(id)?.assignedTeam, 'Equipe atual');
   const saved = await edit(2); assert.equal(saved.status, 200); assert.equal((await saved.json()).revision, 3);
 });
+
+
+test('texto com U+0000 recebe 400 sem criar ou sobrescrever cliente', async () => {
+  const before = structuredClone(db.clients);
+  for (const field of ['companyName', 'standardUniformNotes']) {
+    const rejected = await createClient({ ...clientInput(), [field]: 'Texto\u0000inválido' });
+    assert.equal(rejected.status, 400);
+    assert.deepEqual(db.clients, before);
+  }
+  const input = { ...clientInput(), companyName: 'Confecção São Luís 🧵', standardUniformNotes: 'Linha 1\nLinha 2\tçã' };
+  const created = await createClient(input); assert.equal(created.status, 201);
+  assert.equal(created.data.companyName, input.companyName);
+  assert.equal(created.data.standardUniformNotes, input.standardUniformNotes);
+  const saved = structuredClone(db.clients.get(created.data.id));
+  const response = await fetch(`${base}/clients/${created.data.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...input, standardUniformNotes: 'Alteração\u0000inválida' }) });
+  assert.equal(response.status, 400);
+  assert.deepEqual(db.clients.get(created.data.id), saved);
+});

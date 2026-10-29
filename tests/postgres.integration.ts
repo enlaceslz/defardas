@@ -1252,3 +1252,22 @@ test('PostgreSQL: concorrência por revisão tem um vencedor e falha de auditori
   assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rows[0], before);
   assert.equal((await request(path, 'POST', { targetStage: 'expedicao', expectedRevision: before.revision })).data.order.revision, before.revision + 1);
 });
+
+
+test('PostgreSQL: rejeição de U+0000 preserva cliente e auditoria sem remover Unicode válido', async () => {
+  const input = { companyName: 'Confecção São Luís 🧵', cnpj: crypto.randomUUID().slice(0,20), contactName: 'João', phone: '000', standardUniformNotes: 'Linha 1\nLinha 2\tçã' };
+  const before = (await pool.query('SELECT * FROM crm.clients ORDER BY id')).rows;
+  const logs = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows;
+  for (const field of ['companyName', 'standardUniformNotes']) {
+    assert.equal((await request('/api/clients', 'POST', { ...input, [field]: 'Texto\u0000inválido' })).status, 400);
+  }
+  assert.deepEqual((await pool.query('SELECT * FROM crm.clients ORDER BY id')).rows, before);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, logs);
+  const created = await request('/api/clients', 'POST', input); assert.equal(created.status, 201);
+  const stored = (await pool.query('SELECT * FROM crm.clients WHERE id=$1', [created.data.id])).rows[0];
+  assert.equal(stored.company_name, input.companyName); assert.equal(stored.standard_uniform_notes, input.standardUniformNotes);
+  const auditBefore = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows;
+  assert.equal((await request(`/api/clients/${created.data.id}`, 'PUT', { ...input, standardUniformNotes: 'Alteração\u0000inválida' })).status, 400);
+  assert.deepEqual((await pool.query('SELECT * FROM crm.clients WHERE id=$1', [created.data.id])).rows[0], stored);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, auditBefore);
+});

@@ -4,7 +4,8 @@ export function text(value: unknown, name: string, max = 200, required = true): 
     if (required) throw new InputError(`${name} é obrigatório.`);
     return '';
   }
-  if (typeof value !== 'string' || value.trim().length > max || (required && !value.trim())) throw new InputError(`${name} inválido.`);
+  // PostgreSQL não representa U+0000 em text/varchar; rejeitar, sem remover silenciosamente.
+  if (typeof value !== 'string' || value.includes('\u0000') || value.trim().length > max || (required && !value.trim())) throw new InputError(`${name} inválido.`);
   return value.trim();
 }
 export function number(value: unknown, name: string, minimum = 0, integer = false): number {
