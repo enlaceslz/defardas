@@ -131,3 +131,12 @@ Validação local: 111 testes, tipagem, build e diff-check aprovados; CI desta c
 Login, recuperação e redefinição tratam corpo ausente como entrada inválida (400), sem erro de desestruturação. Login e recuperação validam e-mail com o validador textual compartilhado e limite de 150 caracteres do cadastro, rejeitando U+0000 e valores vazios após trim antes de consultar usuários. E-mail é normalizado por trim/lowercase, como já ocorria na busca do repositório; não se altera a senha. Respostas de validação não ecoam o valor recebido. Limites de requisições permanecem aplicáveis, inclusive a entradas inválidas.
 
 Validação local: 112 testes, tipagem, build e diff-check aprovados; teste PostgreSQL acrescentado para preservação de sessões, tokens e auditoria nas rejeições. CI desta continuação pendente. CI anterior: PR #36, https://github.com/enlaceslz/defardas/actions/runs/40968720112. Sem migração nova ou alteração em produção; entrega de recuperação por e-mail e demais bloqueios operacionais continuam pendentes.
+
+
+### Continuação: parâmetros da consulta de auditoria
+
+GET /api/audit/logs exige entityName e entityId juntos quando há filtro. Ambos devem ser strings não vazias de até 60 caracteres, compatíveis com a trilha armazenada. Filtro parcial, array, objeto, repetição de parâmetros ou U+0000 retorna 400 antes do serviço; não amplia silenciosamente a busca para a lista geral. Sem filtros, a consulta geral continua disponível apenas a administradores autorizados.
+
+limit ausente mantém 100; quando informado, precisa ser uma string decimal canônica entre 1 e 500. Zero, negativos, frações, notação exponencial, zeros iniciais e valores acima do máximo passam a receber 400 em vez de coerção/clamp. Clientes próprios precisam respeitar esse contrato; as chamadas existentes da SPA usam 10/30/50 e permanecem compatíveis.
+
+Validação local: 113 testes, tipagem, build e diff-check aprovados. Novo cenário PostgreSQL confere rejeições e isolamento do filtro; CI desta continuação pendente. CI anterior: PR #37, https://github.com/enlaceslz/defardas/actions/runs/40969398612. Sem migração nova, mudança de permissões ou deploy; bloqueios operacionais permanecem.
