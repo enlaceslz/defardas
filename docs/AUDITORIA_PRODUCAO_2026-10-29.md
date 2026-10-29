@@ -80,3 +80,9 @@ Validação local passa a 97 testes, com bissexto, viradas e limites de represen
 Após o PR #27, a conversão passou a conferir total dos itens, percentual armazenado e duas parcelas positivas/coerentes antes de gravar. Propostas zero/de um centavo não geram título zero; divergências históricas recebem conflito sem correção automática. A leitura agora conserva percentual real, enquanto novas propostas continuam exigindo 50. Arredondamento de centavos e markup não mudam, e não foi definido mínimo comercial.
 
 Validação local passa a 99 testes; dois testes PostgreSQL adicionais verificam persistência, contadores e divergência histórica. Conferir CI do novo PR; última CI de base aprovada: 40947222300, PR #27. Bloqueios de produção documentados permanecem e nenhum dado real foi alterado.
+
+## Continuação: integridade do replay de conversão
+
+Após o PR #28, o replay deixa de usar existência de uma OP como prova de conclusão. São conferidos vínculos de proposta/itens/versões e os dois recebíveis; histórico incompleto retorna conflito sem recriação ou reparo. Replay íntegro devolve títulos atuais e preserva baixa/auditoria. Consulta financeira é limitada à proposta.
+
+Validação local passa a 100 testes; dois testes PostgreSQL novos cobrem oito divergências estruturais e reenvio após baixa real de sinal. Conferir CI do novo PR; última CI de base: 40959659799, PR #28. A mudança não reconcilia automaticamente dados antigos, evidências ou todos os estados operacionais/financeiros. Bloqueios operacionais anteriores permanecem.

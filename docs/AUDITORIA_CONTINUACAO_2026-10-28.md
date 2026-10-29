@@ -320,3 +320,13 @@ Achados: proposta zero/de um centavo gerava parcela zero, aceita na memória e r
 Correções: guard 409/QUOTE_FINANCIAL_CONFLICT antes de numerar/gravar OPs/títulos confere representação, positividade, soma dos itens, percentual 50 e parcelas conforme arredondamento existente. Leitura preserva percentual real; tipo da entidade representa histórico sem relaxar validação de criação/conversão. Sem preço mínimo comercial, mudança de markup/cobrança, reparo automático ou alteração do replay já convertido.
 
 Validação local: 99 testes, tipagem, build e diff-check aprovados. Dois testes HTTP verificam zero/um centavo bloqueados, dois/três centavos convertidos com soma correta e repetição, além de divergências sem reserva de número. Dois testes PostgreSQL adicionados verificam contador/dados preservados, parcelas positivas e percentual 45 lido como 45 e bloqueado; dependem da CI. Sem migração, banco real, mensagem externa, merge ou deploy.
+
+## Continuação de 29/10/2026: replay sem falso sucesso para conversão parcial
+
+Base: PR #28, commit 446602ab; CI 40959659799 aprovada.
+
+Achado: qualquer OP encontrada fazia a rota retornar alreadyConverted=true sem conferir demais OPs, títulos ou vínculo/status da proposta. Histórico parcial podia ser relatado como conversão concluída.
+
+Correções: consulta financeira por quote_id e validação estrutural de proposta, ponteiro principal, OP por item/versão/cliente/quantidade e recebíveis únicos com valores/vínculos compatíveis. Histórico incompleto retorna 409/QUOTE_CONVERSION_INCOMPLETE antes de numerar/gravar; inclui títulos sem OPs e OP histórica sem item. Nenhuma reconstrução automática. Replay íntegro inclui títulos atuais e OP principal consistente, sem alterar pagamento/estado/auditoria.
+
+Validação local: 100 testes, tipagem, build e diff-check aprovados. Novo teste HTTP cobre falta/divergência de OP/título/status/ponteiro/valor, ausência de numeração, preservação de estado e título pago. Dois testes PostgreSQL adicionados cobrem oito cenários parciais, estado/contador/auditoria intactos e replay após baixa real de sinal; dependem da CI. Sem migração, banco real, mensagem externa, merge ou deploy. Não substitui reconciliação histórica completa ou autenticação da evidência.

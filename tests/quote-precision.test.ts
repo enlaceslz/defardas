@@ -114,3 +114,39 @@ test('conversão recusa divergência histórica de percentual/parcelas/itens ant
   } finally { sequenceService.nextOrderNumber = orderNumber; sequenceService.nextFinanceNumber = financeNumber; }
   assert.equal(calls, 0);
 });
+
+test('replay recusa conversão parcial/divergente sem recriar vínculos e conserva título já pago', async () => {
+  const created = await create({ ...input(), commercialStatus: 'aprovado' }); assert.equal(created.status, 201);
+  const first = await convert(created.data.id); assert.equal(first.status, 201); const result = await first.json();
+  const id = created.data.id; const quote = structuredClone(db.quotes.get(id)!);
+  const orders = structuredClone(result.orders); const titles = structuredClone(result.financeTransactions);
+  const reset = () => {
+    db.quotes.set(id, structuredClone(quote));
+    for (const row of orders) db.orders.set(row.id, structuredClone(row));
+    for (const row of titles) db.finance.set(row.id, structuredClone(row));
+  };
+  const originalOrderNumber = sequenceService.nextOrderNumber; const originalFinanceNumber = sequenceService.nextFinanceNumber; let calls = 0;
+  try {
+    sequenceService.nextOrderNumber = sequenceService.nextFinanceNumber = async () => { calls++; throw new Error('Replay must not allocate'); };
+    for (const mutate of [
+      () => db.orders.delete(orders[0].id), () => db.finance.delete(titles[0].id),
+      () => { db.quotes.get(id)!.commercialStatus = 'aprovado'; },
+      () => { db.quotes.get(id)!.convertedOrderId = crypto.randomUUID(); },
+      () => { db.orders.get(orders[0].id)!.quoteItemId = undefined; },
+      () => { db.orders.get(orders[0].id)!.quoteVersion++; },
+      () => { db.finance.get(titles[0].id)!.amount++; },
+      () => { db.finance.get(titles[0].id)!.productionOrderId = undefined; },
+      () => { db.finance.get(titles[0].id)!.amount = Infinity; db.quotes.get(id)!.entryAmount = Infinity; },
+    ]) {
+      reset(); mutate(); const before = structuredClone([db.quotes, db.orders, db.finance]);
+      const response = await convert(id); assert.equal(response.status, 409);
+      assert.equal((await response.json()).code, 'QUOTE_CONVERSION_INCOMPLETE');
+      assert.deepEqual([db.quotes, db.orders, db.finance], before);
+    }
+    reset(); db.finance.get(titles[0].id)!.status = 'pago';
+    const before = structuredClone([db.quotes, db.orders, db.finance]);
+    const replay = await convert(id); assert.equal(replay.status, 200); const data = await replay.json();
+    assert.equal(data.alreadyConverted, true); assert.equal(data.order.id, quote.convertedOrderId); assert.equal(data.financeTransactions.find((row: any) => row.id === titles[0].id).status, 'pago');
+    assert.deepEqual([db.quotes, db.orders, db.finance], before); assert.equal(calls, 0);
+  } finally { sequenceService.nextOrderNumber = originalOrderNumber; sequenceService.nextFinanceNumber = originalFinanceNumber; }
+});

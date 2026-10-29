@@ -1164,3 +1164,45 @@ test('PostgreSQL: leitura conserva percentual histórico divergente e conversão
   assert.equal((await pool.query('SELECT count(*) FROM financeiro.transactions WHERE quote_id=$1', [quote.id])).rows[0].count, '0');
   assert.deepEqual((await pool.query("SELECT kind,value FROM core.number_counters WHERE kind IN ('order','finance') ORDER BY kind")).rows, counters);
 });
+
+test('PostgreSQL: replay de conversão recusa histórico parcial/divergente sem recriar ou modificar dados', async () => {
+  for (const scenario of ['missing_order', 'missing_title', 'wrong_version', 'quote_status', 'wrong_amount', 'title_unlinked', 'wrong_pointer', 'titles_only']) {
+    const quote = await createQuote(); const response = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+    assert.equal(response.status, 201); const related = response.data.orders;
+    if (scenario === 'missing_order') await pool.query('DELETE FROM producao.production_orders WHERE id=$1', [related[1].id]);
+    if (scenario === 'missing_title') await pool.query("DELETE FROM financeiro.transactions WHERE quote_id=$1 AND sub_type='saldo_entrega'", [quote.id]);
+    if (scenario === 'wrong_version') await pool.query('UPDATE producao.production_orders SET quote_version=quote_version+1 WHERE id=$1', [related[0].id]);
+    if (scenario === 'quote_status') await pool.query("UPDATE crm.quotes SET commercial_status='aprovado' WHERE id=$1", [quote.id]);
+    if (scenario === 'wrong_amount') await pool.query("UPDATE financeiro.transactions SET amount=amount+1 WHERE quote_id=$1 AND sub_type='entrada_pedido'", [quote.id]);
+    if (scenario === 'title_unlinked') await pool.query('UPDATE financeiro.transactions SET production_order_id=NULL WHERE quote_id=$1', [quote.id]);
+    if (scenario === 'wrong_pointer') await pool.query('UPDATE crm.quotes SET converted_order_id=$2 WHERE id=$1', [quote.id, crypto.randomUUID()]);
+    if (scenario === 'titles_only') {
+      await pool.query('DELETE FROM producao.production_orders WHERE quote_id=$1', [quote.id]);
+      await pool.query("UPDATE crm.quotes SET commercial_status='aprovado',is_locked=false,converted_order_id=NULL WHERE id=$1", [quote.id]);
+    }
+    const snapshot = async () => ({ quote: (await pool.query('SELECT * FROM crm.quotes WHERE id=$1', [quote.id])).rows,
+      orders: (await pool.query('SELECT * FROM producao.production_orders WHERE quote_id=$1 ORDER BY id', [quote.id])).rows,
+      titles: (await pool.query('SELECT * FROM financeiro.transactions WHERE quote_id=$1 ORDER BY id', [quote.id])).rows,
+      counters: (await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows,
+      audit: (await pool.query('SELECT count(*) FROM core.audit_logs')).rows });
+    const before = await snapshot();
+    const repeated = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+    assert.equal(repeated.status, 409, scenario); assert.equal(repeated.data.code, 'QUOTE_CONVERSION_INCOMPLETE');
+    assert.deepEqual(await snapshot(), before, scenario);
+  }
+});
+
+test('PostgreSQL: replay completo retorna títulos atuais e conserva pagamento e auditoria originais', async () => {
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  const entry = converted.data.financeTransactions.find((title: any) => title.subType === 'entrada_pedido');
+  assert.equal((await request(`/api/finance/transactions/${entry.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'REPLAY', receiptEvidenceUrl: 'https://example.invalid/replay' })).status, 200);
+  const before = (await pool.query('SELECT * FROM financeiro.transactions WHERE quote_id=$1 ORDER BY id', [quote.id])).rows;
+  const counters = (await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows;
+  const repeated = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+  assert.equal(repeated.status, 200); assert.equal(repeated.data.alreadyConverted, true);
+  assert.equal(repeated.data.order.id, converted.data.order.id);
+  assert.equal(repeated.data.financeTransactions.find((title: any) => title.id === entry.id).status, 'pago');
+  assert.deepEqual((await pool.query('SELECT * FROM financeiro.transactions WHERE quote_id=$1 ORDER BY id', [quote.id])).rows, before);
+  assert.deepEqual((await pool.query('SELECT kind,value FROM core.number_counters ORDER BY kind')).rows, counters);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='CONVERT_QUOTE_TO_ORDER' AND entity_id=$1", [quote.id])).rows[0].count, '1');
+});

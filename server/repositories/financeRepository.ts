@@ -9,6 +9,15 @@ import { transactions, FinancialTransaction, NewFinancialTransaction } from '../
 import { FinancialTransactionEntity } from '../types/db';
 
 export class FinanceRepository {
+  public async findByQuoteId(quoteId: string): Promise<FinancialTransactionEntity[]> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) {
+      return (await drizzleDb.select().from(transactions).where(eq(transactions.quoteId, quoteId))).map((row) => this.mapToEntity(row));
+    }
+    if (process.env.DATABASE_URL || process.env.NODE_ENV === 'production') throw new Error('PostgreSQL indisponível.');
+    return [...fallbackDb.finance.values()].filter((row) => row.quoteId === quoteId);
+  }
+
   public async findAll(): Promise<FinancialTransactionEntity[]> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
