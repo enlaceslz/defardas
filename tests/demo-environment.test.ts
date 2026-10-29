@@ -133,3 +133,19 @@ test('comunicação não simula conexão, QR ou confirmação financeira fora da
     whatsAppService.sendDownpaymentConfirmedTemplate = originalTemplate;
   }
 });
+
+test('listagem de canais não expõe configuração interna ou QR de pareamento', async () => {
+  const original = communicationRepository.findAllChannels;
+  communicationRepository.findAllChannels = async () => [{ id: 'channel-test', provider: 'wa_akg', channelName: 'Canal',
+    phoneNumber: '000', status: 'disconnected', isActive: true, createdAt: '', updatedAt: '',
+    config: { apiKey: 'private-fixture', nested: { token: 'private-fixture' } }, qrCode: 'private-pairing-fixture' }];
+  try {
+    const response = await fetch(base + '/communication/channels');
+    assert.equal(response.status, 200);
+    const channels = await response.json();
+    assert.equal(channels[0].id, 'channel-test');
+    assert.equal('config' in channels[0], false);
+    assert.equal('qrCode' in channels[0], false);
+    assert.equal(JSON.stringify(channels).includes('private-'), false);
+  } finally { communicationRepository.findAllChannels = original; }
+});

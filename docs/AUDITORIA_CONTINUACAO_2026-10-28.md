@@ -44,3 +44,21 @@ Base: `aeb9db5`, PR #4 (`feat/team-access-operations`); os PRs #1–#4 permanece
 - Teste HTTP cobre banco configurado com NODE_ENV ausente/development/test/staging/production e staging/production sem banco; verifica ausência de QR fictício, escrita de canal e envio de template. QR local permanece disponível.
 - Validação desta revisão: 37 testes locais, `npm run lint`, `npm run build` e `git diff --check` passaram. Bundle JS produzido: 463,90 kB (119,11 kB gzip). `compile_applet` não está disponível. PostgreSQL/Docker não foram executados localmente nesta revisão; resultados históricos não são evidência deste commit.
 - Sem migração, implantação, mensagem externa ou alteração de conta operacional. Nenhuma aprovação de produção: S3, e-mail, matriz de leitura, WhatsApp (recibos/deduplicação/transações), importação e homologação seguem pendentes.
+
+
+## Continuação: interface e exposição de canais
+
+Base: PR #5, commit `d1f126e`. As execuções 40805837119 e 40805822522 passaram, incluindo PostgreSQL, backup/restauração e imagem Docker.
+
+Achados corrigidos nesta continuação:
+
+- A interface contornava a ausência de QR com imagem gerada por serviço externo. Agora consulta o endpoint de QR e apresenta indisponibilidade/reconexão com erro explícito.
+- A listagem e a resposta demonstrativa de reconexão serializavam a entidade do canal inteira. Agora usam lista explícita de campos públicos de apresentação, sem `config` e sem QR. O acesso ao endpoint próprio de pareamento mantém a autorização existente; matriz de leitura por perfil segue pendente.
+- Envio apagava o rascunho antes de obter resposta e podia inserir objeto de erro no histórico. Agora preserva texto em falha, bloqueia submissões concorrentes e exige resposta 201 com identificador e estado diferente de falha para limpar o compositor.
+- Histórico mostrava duplo check inclusive em falha. Agora exibe o estado registrado sem converter aceitação do provedor em recibo de entrega.
+- Atalhos enviavam imediatamente textos que presumiam chave PIX/CNPJ e corte liberado por aprovação. Agora preparam rascunho para revisão, sem essas afirmações.
+- Rascunhos são separados por conversa; respostas atrasadas de histórico não substituem a seleção atual. Polling não redefine seleção existente para o primeiro contato.
+
+Validação: testes HTTP de projeção de canal e testes JSDOM de falha/sucesso, duplo envio, QR/reconexão, atalhos e troca de conversa. Sem envio real, deploy ou alteração de banco operacional. JSDOM não substitui homologação visual. Recibos/deduplicação/transações WhatsApp continuam pendentes.
+
+Resultado local final desta continuação: 43 testes, tipagem, build e diff-check aprovados; bundle JS 464,42 kB / 119,39 kB gzip. PostgreSQL/Docker deste commit serão validados pela CI. `compile_applet` indisponível; utilizado build Vite.

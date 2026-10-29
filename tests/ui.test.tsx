@@ -10,7 +10,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, H
 Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true });
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).alert = () => {};
-const { render, fireEvent, waitFor, cleanup } = await import('@testing-library/react');
+const { render, fireEvent, waitFor, cleanup, act } = await import('@testing-library/react');
 const { NewOrderModal } = await import('../src/components/NewOrderModal');
 const { PublicPortalView } = await import('../src/components/PublicPortalView');
 const { PrintOrderTicketModal } = await import('../src/components/PrintOrderTicketModal');
@@ -72,4 +72,116 @@ test('estado inicial remove dados privados legados de localStorage', () => {
   const state = loadERPState();
   assert.deepEqual(state.clients, []); assert.deepEqual(state.finance, []);
   assert.equal(localStorage.getItem('defardas_clients_v2'), null);
+});
+
+const { WhatsAppOmnichannelView } = await import('../src/components/WhatsAppOmnichannelView');
+const { api } = await import('../src/api/client');
+const conversationFixture = { id: 'conversation-test', channelId: 'channel-test', customerName: 'Contato Teste',
+  customerPhone: '000', status: 'open', unreadCount: 0 };
+async function withCommunication(run: () => Promise<void>) {
+  const originals = { getChannels: api.getChannels, getConversations: api.getConversations,
+    getConversationMessages: api.getConversationMessages, sendConversationMessage: api.sendConversationMessage,
+    getChannelQr: api.getChannelQr, reconnectChannel: api.reconnectChannel };
+  api.getChannels = async () => ({ status: 200, data: [{ id: 'channel-test', provider: 'wa_akg', phoneNumber: '000', status: 'disconnected' }] });
+  api.getConversations = async () => ({ status: 200, data: [conversationFixture] });
+  api.getConversationMessages = async () => ({ status: 200, data: [] });
+  try { await run(); } finally { cleanup(); Object.assign(api, originals); }
+}
+
+test('WhatsApp preserva texto na falha e bloqueia envio simultâneo', async () => {
+  await withCommunication(async () => {
+    let calls = 0; let finish!: (value: any) => void;
+    api.sendConversationMessage = async () => { calls++; return new Promise((resolve) => { finish = resolve; }); };
+    const component = render(<WhatsAppOmnichannelView />);
+    const input = await component.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...');
+    fireEvent.change(input, { target: { value: 'Mensagem preservada' } });
+    const form = input.closest('form')!;
+    fireEvent.submit(form); fireEvent.submit(form);
+    assert.equal(calls, 1);
+    finish({ status: 503, error: 'Provedor indisponível' });
+    await waitFor(() => assert.equal(component.getByRole('alert').textContent, 'Provedor indisponível'));
+    assert.equal((input as HTMLInputElement).value, 'Mensagem preservada');
+    assert.ok(component.getByRole('button', { name: 'Enviar' }));
+  });
+});
+
+test('WhatsApp mostra falha persistida sem recibo de entrega e limpa texto apenas no sucesso', async () => {
+  await withCommunication(async () => {
+    api.sendConversationMessage = async () => ({ status: 201, data: { id: 'failed-message', direction: 'outbound',
+      body: 'Texto', status: 'failed', createdAt: new Date().toISOString() } });
+    const component = render(<WhatsAppOmnichannelView />);
+    const input = await component.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...');
+    fireEvent.change(input, { target: { value: 'Texto' } });
+    fireEvent.submit(input.closest('form')!);
+    await component.findByText('Falha no envio');
+    assert.equal((input as HTMLInputElement).value, 'Texto');
+    assert.equal(component.queryByLabelText('Status: delivered'), null);
+    api.sendConversationMessage = async () => ({ status: 201, data: { id: 'sent-message', direction: 'outbound',
+      body: 'Texto', status: 'sent', createdAt: new Date().toISOString() } });
+    await waitFor(() => assert.equal(component.getByRole('button', { name: 'Enviar' }).hasAttribute('disabled'), false));
+    fireEvent.submit(input.closest('form')!);
+    await component.findByText('Enviada ao provedor');
+    await waitFor(() => assert.equal((input as HTMLInputElement).value, ''));
+  });
+});
+
+test('WhatsApp consulta QR real e informa falhas de QR e reconexão sem imagem externa', async () => {
+  await withCommunication(async () => {
+    let qrCalls = 0;
+    api.getChannelQr = async () => { qrCalls++; return { status: 503, error: 'QR indisponível' }; };
+    api.reconnectChannel = async () => ({ status: 501, error: 'Reconexão indisponível' });
+    const component = render(<WhatsAppOmnichannelView />);
+    await component.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...');
+    const qrButton = component.container.querySelector('button svg.lucide-qr-code')?.closest('button');
+    assert.ok(qrButton); fireEvent.click(qrButton);
+    await component.findByText('QR indisponível');
+    assert.equal(qrCalls, 1);
+    assert.equal(component.queryByAltText('QR Code WhatsApp'), null);
+    assert.equal(component.container.innerHTML.includes('qrserver.com'), false);
+    fireEvent.click(component.getByRole('button', { name: 'Reconectar Canal' }));
+    await component.findByText('Reconexão indisponível');
+    assert.equal(component.queryByAltText('QR Code WhatsApp'), null);
+  });
+});
+
+test('atalhos WhatsApp preparam rascunho para revisão sem envio nem chave PIX presumida', async () => {
+  await withCommunication(async () => {
+    let calls = 0;
+    api.sendConversationMessage = async () => { calls++; throw new Error('Unexpected send'); };
+    const component = render(<WhatsAppOmnichannelView />);
+    const input = await component.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...') as HTMLInputElement;
+    fireEvent.click(component.getByRole('button', { name: 'Preparar pedido de aprovação' }));
+    assert.match(input.value, /validação da arte e do sinal/);
+    fireEvent.click(component.getByRole('button', { name: 'Preparar lembrete de sinal' }));
+    assert.match(input.value, /dados de pagamento/);
+    assert.doesNotMatch(input.value, /CNPJ|PIX|50%/);
+    assert.equal(calls, 0);
+  });
+});
+
+test('troca de conversa preserva rascunhos separados e ignora histórico atrasado', async () => {
+  await withCommunication(async () => {
+    api.getConversations = async () => ({ status: 200, data: [conversationFixture,
+      { ...conversationFixture, id: 'conversation-second', customerName: 'Segundo Contato' }] });
+    let finishFirst!: (value: any) => void;
+    api.getConversationMessages = async (id) => id === 'conversation-test'
+      ? new Promise((resolve) => { finishFirst = resolve; })
+      : { status: 200, data: [{ id: 'second-msg', direction: 'inbound', status: 'delivered', body: 'Histórico segundo', createdAt: new Date().toISOString() }] };
+    const component = render(<WhatsAppOmnichannelView />);
+    const input = await component.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Rascunho primeiro' } });
+    fireEvent.click(component.getByText('Segundo Contato'));
+    await component.findByText('Histórico segundo');
+    assert.equal(input.value, '');
+    fireEvent.change(input, { target: { value: 'Rascunho segundo' } });
+    await act(async () => {
+      finishFirst({ status: 200, data: [{ id: 'first-msg', body: 'Histórico atrasado', createdAt: new Date().toISOString() }] });
+    });
+    assert.equal(component.queryByText('Histórico atrasado'), null);
+    fireEvent.click(component.getByText('Contato Teste'));
+    assert.equal(input.value, 'Rascunho primeiro');
+    fireEvent.click(component.getByText('Segundo Contato'));
+    assert.equal(input.value, 'Rascunho segundo');
+    await component.findByText('Histórico segundo');
+  });
 });
