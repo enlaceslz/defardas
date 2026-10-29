@@ -844,3 +844,34 @@ test('PostgreSQL: exclusão de OP preserva vínculos financeiros, estoque, cust�
   assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 200);
   assert.equal((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rowCount, 0);
 });
+
+
+test('PostgreSQL: edição de OP recarrega centavos e equipe vazia sem arredondar entrada inválida', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const quote = await createQuote();
+  const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  const id = converted.data.orders[0].id;
+  assert.equal((await request(`/api/orders/${id}`)).data.assignedTeam, '');
+  const input = { priority: 'alta', targetDeliveryDate: '2027-02-01', technicalNotes: 'Edited',
+    assignedTeam: '', outsourcedPartner: '', partnerCostPerPiece: 8.25 };
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rows[0];
+  const count = (await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='UPDATE_ORDER' AND entity_id=$1", [id])).rows[0].count;
+  for (const value of [-1, 1.005, 100000000, '2.35']) {
+    assert.equal((await request(`/api/orders/${id}`, 'PUT', { ...input, partnerCostPerPiece: value })).status, 400);
+    assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rows[0], before);
+  }
+  assert.equal((await request(`/api/orders/${id}`, 'PUT')).status, 400);
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected order edit failure'); };
+    assert.equal((await request(`/api/orders/${id}`, 'PUT', input)).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rows[0], before);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='UPDATE_ORDER' AND entity_id=$1", [id])).rows[0].count, count);
+  for (const cost of [0, 8.25, 99999999.99]) {
+    assert.equal((await request(`/api/orders/${id}`, 'PUT', { ...input, partnerCostPerPiece: cost })).status, 200);
+    const saved = (await request(`/api/orders/${id}`)).data;
+    assert.equal(saved.partnerCostPerPiece, cost); assert.equal(saved.assignedTeam, '');
+    assert.equal((await pool.query('SELECT partner_cost_per_piece,assigned_team FROM producao.production_orders WHERE id=$1', [id])).rows[0].partner_cost_per_piece, cost.toFixed(2));
+  }
+});

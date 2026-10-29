@@ -86,3 +86,31 @@ test('OP aguardando liberação conserva aprovação, comprovante e vínculos an
   assert.ok(db.orders.has(id));
   assert.equal((await remove(`/orders/${id}`)).status, 200); assert.equal(db.orders.has(id), false);
 });
+
+
+test('edição de OP preserva centavos e equipe vazia, sem mutações em entrada inválida ou falha de auditoria', async () => {
+  const id = crypto.randomUUID();
+  const originalOrder = { id, priority: 'normal', targetDeliveryDate: '2027-01-01', technicalNotes: 'Original',
+    assignedTeam: 'Equipe anterior', outsourcedPartner: 'Facção anterior', partnerCostPerPiece: 2.35 } as any;
+  db.orders.set(id, structuredClone(originalOrder));
+  const input = { priority: 'alta', targetDeliveryDate: '2027-02-01', technicalNotes: 'Alterado',
+    assignedTeam: '', outsourcedPartner: '', partnerCostPerPiece: 8.25 };
+  const edit = (body?: any) => fetch(`${base}/orders/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  for (const value of [-1, 1.005, 100000000, '2.35']) {
+    assert.equal((await edit({ ...input, partnerCostPerPiece: value })).status, 400);
+    assert.deepEqual(db.orders.get(id), originalOrder);
+  }
+  assert.equal((await edit()).status, 400); assert.deepEqual(db.orders.get(id), originalOrder);
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected order update failure'); };
+    assert.equal((await edit(input)).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual(db.orders.get(id), originalOrder);
+  for (const cost of [0, 8.25, 99999999.99]) {
+    const response = await edit({ ...input, partnerCostPerPiece: cost }); assert.equal(response.status, 200);
+    const saved = await response.json(); assert.equal(saved.partnerCostPerPiece, cost); assert.equal(saved.assignedTeam, '');
+    assert.equal(db.orders.get(id)?.partnerCostPerPiece, cost);
+  }
+});
