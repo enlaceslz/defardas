@@ -218,3 +218,20 @@ test('webhooks operacionais exigem canal explícito e conferem provedor/telefone
     }
   }
 });
+
+test('envio operacional exige chave e usa identidade autenticada para deduplicação', async () => {
+  const original = whatsAppService.sendMessage;
+  const received: any[] = [];
+  whatsAppService.sendMessage = async (options) => { received.push(options); return { id: 'pending', status: 'pending' } as any; };
+  try {
+    await inEnvironment('production', 'postgresql://invalid.example.invalid/never_connected', async () => {
+      const request = (key?: string) => fetch(base + '/communication/conversations/test/messages', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(key ? { 'idempotency-key': key } : {}) },
+        body: JSON.stringify({ body: 'Texto', actorId: 'forged', actorRole: 'forged' }) });
+      assert.equal((await request()).status, 400); assert.equal(received.length, 0);
+      const key = crypto.randomUUID(); assert.equal((await request(key)).status, 201);
+      assert.equal(received[0].idempotencyKey, key);
+      assert.notEqual(received[0].actorId, 'forged'); assert.equal(received[0].actorRole, 'admin');
+    });
+  } finally { whatsAppService.sendMessage = original; }
+});

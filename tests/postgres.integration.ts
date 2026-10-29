@@ -419,3 +419,68 @@ test('PostgreSQL: falha na auditoria de recepção reverte tudo e permite reentr
   await new WhatsAppService().handleInboundMessage(secondPayload);
   assert.equal((await pool.query('SELECT unread_count FROM communication.conversations WHERE id=$1', [saved.conversationId])).rows[0].unread_count, 2);
 });
+
+test('PostgreSQL: envio registra pendente antes da rede, deduplica e não segura conexão durante transporte', async () => {
+  const { WhatsAppService } = await import('../server/services/whatsappService');
+  const { communicationRepository } = await import('../server/repositories/communicationRepository');
+  const oldKey = process.env.WA_AKG_API_KEY; const originalFetch = globalThis.fetch;
+  process.env.WA_AKG_API_KEY = crypto.randomBytes(24).toString('hex');
+  const channelId = crypto.randomUUID(); const conversationId = crypto.randomUUID();
+  await pool.query(`INSERT INTO communication.channels(id,provider,channel_name,phone_number,status,is_active)
+    VALUES($1,'wa_akg','Outbound test','000','connected',true)`, [channelId]);
+  await pool.query(`INSERT INTO communication.conversations(id,channel_id,remote_jid,customer_name,customer_phone,unread_count)
+    VALUES($1,$2,'outbound@test','Outbound','000123',3)`, [conversationId, channelId]);
+  let finish!: () => void; let started!: () => void; let calls = 0;
+  const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+  globalThis.fetch = async () => { calls++; started(); return new Promise<Response>((resolve) => { finish = () => resolve(new Response('{}')); }); };
+  const actorId = (await pool.query("SELECT id FROM core.users WHERE role='admin' AND is_active=true LIMIT 1")).rows[0].id;
+  const options = { conversationId, body: 'Outbound', actorId, idempotencyKey: crypto.randomUUID() };
+  try {
+    const service = new WhatsAppService();
+    const first = service.sendMessage(options);
+    await startedPromise;
+    const repeated = await service.sendMessage(options);
+    assert.equal(repeated.status, 'pending'); assert.equal(calls, 1);
+    assert.equal((await communicationRepository.findMessageById(repeated.id))?.status, 'pending');
+    await pool.query('UPDATE communication.conversations SET unread_count=4 WHERE id=$1', [conversationId]);
+    finish(); assert.equal((await first).status, 'sent');
+    assert.equal((await service.sendMessage(options)).id, repeated.id); assert.equal(calls, 1);
+    assert.equal((await pool.query('SELECT unread_count FROM communication.conversations WHERE id=$1', [conversationId])).rows[0].unread_count, 4);
+    await assert.rejects(service.sendMessage({ ...options, body: 'Changed' }), (error: any) => error.status === 409);
+    assert.equal((await pool.query('SELECT * FROM communication.messages WHERE conversation_id=$1', [conversationId])).rowCount, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (oldKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = oldKey;
+  }
+});
+
+test('PostgreSQL: auditoria inicial impede envio e falha final mantém pendente para reconciliação', async () => {
+  const { WhatsAppService } = await import('../server/services/whatsappService');
+  const { auditService } = await import('../server/services/auditService');
+  const oldKey = process.env.WA_AKG_API_KEY; const originalFetch = globalThis.fetch; const originalAudit = auditService.log;
+  process.env.WA_AKG_API_KEY = crypto.randomBytes(24).toString('hex');
+  const channelId = crypto.randomUUID(); const conversationId = crypto.randomUUID(); let calls = 0;
+  await pool.query(`INSERT INTO communication.channels(id,provider,channel_name,phone_number,status,is_active)
+    VALUES($1,'wa_akg','Outbound rollback','000','connected',true)`, [channelId]);
+  await pool.query(`INSERT INTO communication.conversations(id,channel_id,remote_jid,customer_name,customer_phone)
+    VALUES($1,$2,'rollback@test','Outbound','000123')`, [conversationId, channelId]);
+  globalThis.fetch = async () => { calls++; return new Response('{}'); };
+  const options = { conversationId, body: 'Outbound', idempotencyKey: crypto.randomUUID() };
+  try {
+    const service = new WhatsAppService();
+    auditService.log = async () => { throw new Error('Injected initial outbound audit failure'); };
+    await assert.rejects(service.sendMessage(options), /Injected initial/); assert.equal(calls, 0);
+    assert.equal((await pool.query('SELECT * FROM communication.messages WHERE conversation_id=$1', [conversationId])).rowCount, 0);
+    auditService.log = async (event) => {
+      if (event.action === 'SEND_WHATSAPP_MESSAGE') throw new Error('Injected final outbound audit failure');
+      return originalAudit.call(auditService, event);
+    };
+    await assert.rejects(service.sendMessage(options), /Injected final/); assert.equal(calls, 1);
+    auditService.log = originalAudit;
+    assert.equal((await service.sendMessage(options)).status, 'pending'); assert.equal(calls, 1);
+    assert.equal((await pool.query('SELECT last_message_text FROM communication.conversations WHERE id=$1', [conversationId])).rows[0].last_message_text, null);
+  } finally {
+    auditService.log = originalAudit; globalThis.fetch = originalFetch;
+    if (oldKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = oldKey;
+  }
+});

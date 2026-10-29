@@ -67,8 +67,8 @@ test('erro do transporte não vaza segredo no registro nem na auditoria', async 
     assert.equal(message.status, 'failed');
     assert.match(message.errorMessage!, /Envio não confirmado/);
     assert.equal(JSON.stringify([context.messages, context.audits]).includes('private-credential'), false);
-    assert.equal(context.audits[0].action, 'WHATSAPP_MESSAGE_FAILED');
-    assert.doesNotMatch(context.audits[0].notes, /Mensagem enviada/);
+    assert.equal(context.audits.at(-1).action, 'WHATSAPP_MESSAGE_FAILED');
+    assert.doesNotMatch(context.audits.at(-1).notes, /Mensagem enviada/);
   });
 });
 

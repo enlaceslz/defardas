@@ -184,6 +184,8 @@ communicationRouter.get('/conversations/:id/messages', async (req: RequestWithUs
 communicationRouter.post('/conversations/:id/messages', async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const { body, mediaUrl, mediaMimeType, messageType } = req.body || {};
+  const idempotencyKey = req.get('idempotency-key');
+  if (!idempotencyKey && !isLocalDemoEnvironment()) return res.status(400).json({ error: 'Chave de repetição obrigatória.' });
 
   if (!body) {
     return res.status(400).json({ error: 'O corpo da mensagem é obrigatório.' });
@@ -194,6 +196,9 @@ communicationRouter.post('/conversations/:id/messages', async (req: RequestWithU
       conversationId: req.params.id,
       body,
       senderName: actor.fullName,
+      actorId: actor.id,
+      actorRole: actor.role,
+      idempotencyKey,
       mediaUrl,
       mediaMimeType,
       messageType,

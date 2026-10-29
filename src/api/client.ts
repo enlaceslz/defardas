@@ -313,9 +313,10 @@ class ApiClient {
     return this.request<any[]>(`/communication/conversations/${conversationId}/messages`, { method: 'GET' });
   }
 
-  public async sendConversationMessage(conversationId: string, body: string, mediaUrl?: string) {
+  public async sendConversationMessage(conversationId: string, body: string, mediaUrl?: string, idempotencyKey: string = crypto.randomUUID()) {
     return this.request<any>(`/communication/conversations/${conversationId}/messages`, {
       method: 'POST',
+      headers: { 'idempotency-key': idempotencyKey },
       body: JSON.stringify({ body, mediaUrl }),
     });
   }

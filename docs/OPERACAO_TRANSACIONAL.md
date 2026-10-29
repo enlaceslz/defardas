@@ -117,3 +117,14 @@ GROUP BY conversation_id, direction, external_id HAVING count(*) > 1;
 Se houver duplicidades, a criação de índices falha sem apagar/mesclar histórico. A reconciliação precisa preservar mensagens, vínculos e auditoria; não executar exclusão automática. A proteção do identificador por canal é aplicada pelo serviço sob lock; os índices fornecem proteção adicional por conversa. SQL administrativo direto não deve contornar esse procedimento.
 
 Esta entrega não implementa download de mídias, recibos de saída, fila/outbox, entrega única ao provedor ou provisionamento de canais. A marcação `delivered` da entrada significa mensagem recebida pelo ERP; não representa recibo de entrega de mensagem enviada.
+
+
+## Envio: intenção persistida e repetição segura
+
+`POST /api/communication/conversations/:id/messages` exige `idempotency-key` UUID fora da demonstração local. A identidade autenticada e a chave determinam o ID da mensagem. Repetir mesma chave, contato e texto devolve o registro existente, inclusive `pending` ou `failed`, sem contatar novamente o provedor. Usar a chave para outro texto/conversa retorna 409. Identidade/perfil para auditoria vêm da sessão, não do corpo da requisição.
+
+Antes da rede, uma transação grava mensagem `pending` e auditoria `WHATSAPP_SEND_REQUESTED`. Se essa transação falhar, nada é enviado. A chamada de rede ocorre depois do commit, sem manter lock/conexão. Outra transação grava o resultado, prévia da conversa e auditoria; se falhar, a intenção permanece pendente e não é retransmitida pela mesma chave. A conversa é recarregada para preservar não lidas recebidas durante o transporte.
+
+A interface mantém a chave para repetir o mesmo rascunho na sessão do componente e não limpa texto em resultado pendente/falha. Recarregar a página perde essa chave em memória; conferir histórico antes de criar nova tentativa. Não há retry automático, worker/outbox ou entrega única garantida pelo provedor. `pending` pode significar que a rede não foi iniciada ou que o resultado não foi persistido; precisa de reconciliação operacional, ainda sem ferramenta automática. Não apagar pendentes para forçar envio.
+
+O ID interno deixa de ser copiado como identificador externo fictício. Captura do ID real e recibos ainda estão pendentes; `sent` registra aceitação HTTP do transporte, não entrega ao destinatário. Mensagens anteriores mantêm seus dados históricos. Nenhuma migração nova é necessária nesta etapa.

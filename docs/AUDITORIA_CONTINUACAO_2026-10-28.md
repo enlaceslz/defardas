@@ -86,3 +86,16 @@ Correções: mapeamento explícito por `META_WA_CHANNEL_ID`/`WA_AKG_CHANNEL_ID`,
 Validação local: 53 testes, tipagem, build Vite e diff-check passaram. Quatro novos testes de serviço cobrem oito reentregas simultâneas, separação entre canais, rollback em auditoria/mensagem, reentrega e ID ausente. Teste HTTP com assinatura Meta/segredo WA-AKG cobre mapeamento explícito, provedor incompatível e telefone Meta divergente. Dois testes PostgreSQL foram adicionados para deduplicação concorrente, constraints SQL e rollback integral inclusive de contador existente; sua execução depende da CI deste commit. Bundle permanece 464,42 kB / 119,39 kB gzip. `compile_applet` indisponível; build Vite utilizado.
 
 Nenhuma migração no banco operacional, mensagem externa, implantação ou reconciliação de dados reais foi executada. O lock global prioriza integridade e requer medição. Mídias, recibos reais, transação/outbox de saída, provisão de canais, RBAC de leitura, S3/e-mail e homologação de infraestrutura continuam pendentes. Uma auditoria integral do produto ainda não foi concluída.
+
+
+## Continuação: intenção de envio persistida antes da rede
+
+Base: PR #8, commit `3166f574`. CI 40807697447 aprovada, incluindo testes PostgreSQL, backup/restauração e Docker.
+
+Achado: envio era disparado antes de persistir histórico/auditoria; falha podia deixar mensagem externa sem registro e permitir retransmissão por repetição da requisição. O envio agora confirma intenção pendente e auditoria numa transação, chama transporte fora do lock e confirma resultado/prévia/auditoria em outra transação. Se a fase final falhar, a intenção permanece pendente para reconciliação. Não há pretensão de transação distribuída com o provedor.
+
+Chave UUID obrigatória na rota operacional, combinada com identidade autenticada para o ID interno. Repetição compatível retorna estado existente sem novo disparo; conflito retorna 409. A interface conserva chave no rascunho durante a vida do componente e preserva texto pendente. Recarregar perde a chave em memória, conforme runbook; sem gravação privada em localStorage. Removido identificador externo inventado para novos envios. Auditoria recebe identidade/perfil da sessão.
+
+Validação local: 58 testes, tipagem, build Vite e diff-check passaram; cinco novos testes locais cobrem repetição/conflito, registro anterior à rede, ausência de lock no transporte, rollback inicial/final, identidade HTTP e preservação/reutilização da chave na UI. Dois testes PostgreSQL adicionados cobrem as mesmas fases com pool de uma conexão, concorrência e preservação de não lidas; execução depende da CI deste commit. Nenhuma mensagem externa ou migração nova. `compile_applet` indisponível; build Vite utilizado. Bundle JS 464,64 kB / 119,48 kB gzip.
+
+Pendências: reconciliação operacional de pendentes, captura do ID real/recibos, outbox/worker, política de leitura por perfil, S3/e-mail, provisionamento e homologação. Não garante entrega única se o cliente perder/trocar a chave. Nenhum deploy ou alteração de conta/banco operacional.
