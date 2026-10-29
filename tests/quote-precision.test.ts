@@ -150,3 +150,32 @@ test('replay recusa conversão parcial/divergente sem recriar vínculos e conser
     assert.deepEqual([db.quotes, db.orders, db.finance], before); assert.equal(calls, 0);
   } finally { sequenceService.nextOrderNumber = originalOrderNumber; sequenceService.nextFinanceNumber = originalFinanceNumber; }
 });
+
+
+test('personalizações malformadas são rejeitadas antes de reservar número ou salvar proposta', async () => {
+  const valid = { id: 'custom-1', type: 'bordado_peito', description: 'Logo', location: 'Peito', unitCost: 1.25 };
+  const before = structuredClone(db.quotes); const original = sequenceService.nextQuoteNumber; let calls = 0;
+  try {
+    sequenceService.nextQuoteNumber = async () => { calls++; throw new Error('Must not allocate'); };
+    const invalid = [null, {}, 'bordado', [null], [[]], ['texto'], [{}],
+      [{ ...valid, type: {} }], [{ ...valid, type: 'inventado' }], [{ ...valid, id: '' }],
+      [{ ...valid, description: { secret: 'not-text' } }], [{ ...valid, location: [] }],
+      [{ ...valid, partnerName: {} }], [{ ...valid, unitCost: '1.25' }], [{ ...valid, unitCost: -1 }],
+      [{ ...valid, description: 'Logo\u0000inválido' }]];
+    for (const customizations of invalid) {
+      assert.equal((await create(input([{ ...item(), customizations }]))).status, 400, JSON.stringify(customizations));
+    }
+  } finally { sequenceService.nextQuoteNumber = original; }
+  assert.equal(calls, 0); assert.deepEqual(db.quotes, before);
+});
+
+test('personalizações válidas seguem da proposta à OP sem alterar os custos calculados', async () => {
+  const customizations = [{ id: 'custom-1', type: 'bordado_peito', description: 'Logo São Luís 🧵', location: 'Peito', unitCost: 1.25, partnerName: 'Parceiro' }];
+  const created = await create({ ...input([{ ...item(), customizations }]), commercialStatus: 'aprovado' });
+  assert.equal(created.status, 201); assert.deepEqual(created.data.items[0].customizations, customizations);
+  assert.equal(created.data.items[0].customizationUnitCost, item().customizationUnitCost);
+  const response = await fetch(`${base}/quotes/${created.data.id}/convert-to-order`, { method: 'POST' });
+  assert.equal(response.status, 201); assert.deepEqual((await response.json()).orders[0].customizations, customizations);
+  const omitted = await create(input()); assert.equal(omitted.status, 201);
+  assert.deepEqual(omitted.data.items[0].customizations, []);
+});

@@ -99,3 +99,12 @@ Validação local passa a 103 testes; testes PostgreSQL novos cobrem trigger, co
 O validador compartilhado `text` recusa U+0000 com HTTP 400 antes da persistência, tanto em campos obrigatórios quanto opcionais. PostgreSQL não aceita esse caractere em text/varchar. O conteúdo não é truncado nem saneado silenciosamente; acentos, emoji, quebras de linha e tabulações continuam aceitos nos limites existentes. A regra alcança os campos que passam por esse validador; não constitui validação de todos os payloads JSON nem migração de histórico.
 
 Validação local: 106 testes, tipagem e build aprovados. Novo cenário PostgreSQL verifica rejeição de criação/edição sem alterar cadastro ou auditoria e persistência de Unicode válido; execução pela CI ainda pendente. Sem migração nova; bloqueios de produção anteriores permanecem.
+
+
+### Continuação: estrutura das personalizações da proposta
+
+A criação de propostas valida a lista de personalizações antes de reservar numeração. Cada entrada precisa ser um objeto com identificador não vazio, tipo previsto por CustomizationItem e custo numérico finito não negativo; descrição, posição e parceiro passam pelo validador textual. Campos textuais opcionais ausentes são normalizados para vazio; parceiro ausente permanece omitido. Lista ausente continua sendo vazia; null, objetos no lugar da lista e entradas malformadas recebem HTTP 400. Campos extras não são persistidos.
+
+A mudança impede novos registros que quebravam a impressão ao acessar type.replace ou renderizar objetos. Personalizações válidas são persistidas na proposta e copiadas para a OP. O detalhamento não substitui customizationUnitCost no motor de preços nem define nova regra de custeio. Dados históricos não são saneados automaticamente; armazenamento privado e aprovação de evidências continuam pendentes.
+
+Validação local: 108 testes, tipagem e build aprovados. Novo teste PostgreSQL cobre preservação de contador, proposta e auditoria na rejeição, além da recarga da personalização na proposta e na OP. CI desta continuação ainda pendente. Sem migração nova ou alteração em produção.
