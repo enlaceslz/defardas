@@ -170,3 +170,14 @@ Falhas tratadas pelo middleware da API registram JSON com `event`, `context`, `i
 O mesmo diagnóstico é usado no catch de inicialização, conexão com banco, erros do repositório de usuários, comparação de senha, limpeza de sessões e falhas inesperadas dos CLIs `admin:create`, `db:migrate` e `user:reset-password`. Falta de DATABASE_URL em produção gera código `DATABASE_URL_MISSING` e mantém início abortado. Erros conhecidos de entrada dos CLIs continuam exibindo apenas mensagens controladas, sem valores fornecidos pelo operador.
 
 Esses logs não substituem a trilha de auditoria transacional nem implementam monitoramento/retention. Ao investigar, usar o identificador, contexto e código; não reativar serialização completa de exceções em ambiente com dados reais. Revisar também logs do proxy, PostgreSQL, provedor e plataforma de hospedagem, que não são configurados por esta mudança. Nenhum histórico de log foi apagado ou analisado retroativamente.
+
+
+## Estoque: precisão e conflito de movimentação
+
+As rotas de cadastro/edição e movimentação usam a capacidade já definida pelo PostgreSQL `numeric(10,2)`: até 99.999.999,99 e duas casas decimais. Valores de entrada que exigiriam arredondamento ou excederiam essa capacidade são rejeitados. Ajuste aceita delta negativo dentro da capacidade, mantendo saldo final não negativo. Isso alinha o contrato ao schema existente; não define política comercial nem altera unidade/escala do banco.
+
+Resultados de somas/subtrações são normalizados em duas casas antes de persistir/responder, evitando resíduos binários como `0.30000000000000004`. Estouro de saldo final reverte a operação. Se o negócio exigir mais precisão, será necessária evolução formal do schema e dos contratos; não truncar dados silenciosamente.
+
+A gravação de movimentação é inserção estrita: colisão de UUID ou número comercial gera conflito e reverte saldo/evento/auditoria na transação existente. Não há mais `ON CONFLICT DO NOTHING` nesse histórico. Isso não implementa idempotência por requisição: cliques/reenvios com novos números ainda precisam de contrato próprio. Não tentar reparar colisão descartando histórico.
+
+Fornecedor/localização opcionais respeitam os limites SQL (120/80 caracteres), sem rótulos de homologação ou localização presumida no cadastro/leitura. Dados históricos já gravados não são reescritos. Motivo/documento da movimentação recebem validação de texto/limites; leitura do histórico preserva `operatorId`, antes omitido no mapeamento.

@@ -119,7 +119,12 @@ export class InventoryRepository {
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
       throw new Error('PostgreSQL indisponível.');
     }
-    if (!fallbackDb.isConnected()) fallbackDb.movements.set(mov.id, mov);
+    if (!fallbackDb.isConnected()) {
+      if (fallbackDb.movements.has(mov.id) || [...fallbackDb.movements.values()].some((existing) => existing.movementNumber === mov.movementNumber)) {
+        throw Object.assign(new Error('Movimentação já registrada.'), { code: '23505' });
+      }
+      fallbackDb.movements.set(mov.id, mov);
+    }
 
     if (fallbackDb.isConnected()) {
       try {
@@ -141,8 +146,7 @@ export class InventoryRepository {
 
         await drizzleDb
           .insert(movements)
-          .values(newRecord)
-          .onConflictDoNothing();
+          .values(newRecord);
       } catch (err) {
         throw err;
         console.error(`❌ [InventoryRepository] Falha ao persistir movimentação ${mov.id} via Drizzle:`, err);
@@ -170,8 +174,8 @@ export class InventoryRepository {
       inPartnersCustodyStock: parseFloat(row.inPartnersCustodyStock),
       minStock: parseFloat(row.minStock),
       unitCostPrice: parseFloat(row.unitCostPrice),
-      supplier: row.supplier || 'Fornecedor Homologado',
-      location: row.location || 'Almoxarifado Central',
+      supplier: row.supplier || '',
+      location: row.location || '',
       lastRestocked: row.lastRestocked || new Date().toISOString().split('T')[0],
       isDemo: row.isDemo,
       createdAt: row.createdAt.toISOString(),
@@ -191,6 +195,7 @@ export class InventoryRepository {
       date: row.date,
       reason: row.reason,
       referenceDoc: row.referenceDoc || undefined,
+      operatorId: row.operatorId || undefined,
       operatorName: row.operatorName,
       isDemo: row.isDemo,
       createdAt: row.createdAt.toISOString(),

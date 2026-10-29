@@ -599,3 +599,34 @@ test('PostgreSQL: atribuição comercial persiste, audita e reverte integralment
   assert.equal((await leadRepository.findById(id))?.assignedSellerId, undefined);
   assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE entity_id=$1 AND action='LEAD_UPDATED'", [id])).rows[0].count, '2');
 });
+
+test('PostgreSQL: estoque e histórico mantêm precisão da resposta sem fornecedor fictício', async () => {
+  const { inventoryRepository } = await import('../server/repositories/inventoryRepository');
+  const created = await request('/api/inventory/items', 'POST', { name: 'Precision SQL', category: 'tecido', unit: 'metros', physicalStock: 0.1, minStock: 0, unitCostPrice: 1.25 });
+  assert.equal(created.status, 201); const id = created.data.id;
+  assert.equal(created.data.supplier, '');
+  const moved = await request('/api/inventory/movements', 'POST', { itemId: id, type: 'entrada_compra', quantity: 0.2 });
+  assert.equal(moved.status, 201); assert.equal(moved.data.item.physicalStock, 0.3);
+  const stored = await inventoryRepository.findItemById(id); assert.equal(stored?.physicalStock, 0.3); assert.equal(stored?.supplier, ''); assert.equal(stored?.location, '');
+  const movement = (await inventoryRepository.findAllMovements()).find((row) => row.id === moved.data.movement.id)!;
+  assert.equal(movement.quantity, 0.2); assert.equal(movement.operatorId, moved.data.movement.operatorId);
+  assert.equal((await request('/api/inventory/movements', 'POST', { itemId: id, type: 'entrada_compra', quantity: 0.001 })).status, 400);
+  assert.equal((await inventoryRepository.findItemById(id))?.physicalStock, 0.3);
+});
+
+test('PostgreSQL: colisão de movimento não confirma saldo nem auditoria parcial', async () => {
+  const { sequenceService } = await import('../server/services/sequenceService');
+  const { inventoryRepository } = await import('../server/repositories/inventoryRepository');
+  const created = await request('/api/inventory/items', 'POST', { name: 'Conflict SQL', category: 'tecido', unit: 'metros', physicalStock: 2, minStock: 0, unitCostPrice: 1 });
+  assert.equal(created.status, 201); const id = created.data.id;
+  const previous = (await inventoryRepository.findAllMovements()).find((movement) => movement.itemId === id)!;
+  const beforeAudit = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows[0].count;
+  const original = sequenceService.nextMovementNumber;
+  sequenceService.nextMovementNumber = async () => previous.movementNumber;
+  try {
+    assert.equal((await request('/api/inventory/movements', 'POST', { itemId: id, type: 'entrada_compra', quantity: 1 })).status, 409);
+  } finally { sequenceService.nextMovementNumber = original; }
+  assert.equal((await inventoryRepository.findItemById(id))?.physicalStock, 2);
+  assert.equal((await pool.query('SELECT count(*) FROM estoque.movements WHERE item_id=$1', [id])).rows[0].count, '1');
+  assert.equal((await pool.query('SELECT count(*) FROM core.audit_logs')).rows[0].count, beforeAudit);
+});

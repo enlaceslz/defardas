@@ -10,6 +10,17 @@ import { InventoryItemEntity, StockMovementEntity } from '../types/db';
 
 export const inventoryRouter = Router();
 
+// Capacidade e escala do numeric(10,2) existente; não define regra comercial.
+function decimal(value: unknown, name: string, minimum = 0): number {
+  const result = number(value, name, minimum);
+  if (Math.abs(result) > 99999999.99 || money(result) !== result) throw new InputError(`${name} deve caber em 8 inteiros e 2 decimais.`);
+  return result;
+}
+function storedBalance(value: number, name: string): number {
+  return decimal(money(value), name);
+}
+
+
 // Exigir autenticação para todas as rotas de estoque
 inventoryRouter.use(requireAuth);
 
@@ -22,7 +33,7 @@ inventoryRouter.get('/items', async (_req: RequestWithUser, res: Response) => {
 // Cadastrar novo item de estoque
 inventoryRouter.post('/items', requirePermission('inventory:adjust'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const payload = req.body;
+  const payload = req.body || {};
 
   const code = await sequenceService.nextInventoryCode();
   const newItem: InventoryItemEntity = {
@@ -31,13 +42,13 @@ inventoryRouter.post('/items', requirePermission('inventory:adjust'), atomic(asy
     name: text(payload.name, 'Nome', 150),
     category: oneOf(payload.category, ['tecido', 'aviamento', 'insumo_personalizacao', 'pronta_entrega'], 'Categoria'),
     unit: oneOf(payload.unit, ['metros', 'kg', 'rolos', 'unidades', 'cones', 'pecas'], 'Unidade'),
-    physicalStock: number(payload.physicalStock ?? payload.currentStock ?? 0, 'Saldo inicial'),
+    physicalStock: decimal(payload.physicalStock ?? payload.currentStock ?? 0, 'Saldo inicial'),
     allocatedStock: 0,
     inPartnersCustodyStock: 0,
-    minStock: number(payload.minStock ?? 0, 'Estoque mínimo'),
-    unitCostPrice: number(payload.unitCostPrice ?? payload.costPrice ?? 0, 'Custo'),
-    supplier: payload.supplier || 'Fornecedor Homologado',
-    location: payload.location || 'Almoxarifado Central',
+    minStock: decimal(payload.minStock ?? 0, 'Estoque mínimo'),
+    unitCostPrice: decimal(payload.unitCostPrice ?? payload.costPrice ?? 0, 'Custo'),
+    supplier: text(payload.supplier, 'Fornecedor', 120, false),
+    location: text(payload.location, 'Localização', 80, false),
     lastRestocked: new Date().toISOString().split('T')[0],
     isDemo: false,
     createdAt: new Date().toISOString(),
@@ -74,14 +85,16 @@ inventoryRouter.get('/movements', async (_req: RequestWithUser, res: Response) =
 // Registrar movimentação de estoque por evento compensatório (Regra B.3.5)
 inventoryRouter.post('/movements', requirePermission('inventory:create_movement'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const { itemId, productionOrderId, type, quantity, reason, referenceDoc } = req.body;
+  const { itemId, productionOrderId, type, quantity, reason, referenceDoc } = req.body || {};
+  const movementReason = text(reason, 'Motivo', 1000, false);
+  const reference = text(referenceDoc, 'Documento de referência', 80, false) || undefined;
 
   const item = await inventoryRepository.findItemById(itemId);
   if (!item) {
     return res.status(404).json({ error: 'Item de estoque não encontrado' });
   }
 
-  const qty = quantity;
+  const qty = decimal(quantity, 'Quantidade', type === 'ajuste_inventario' ? -99999999.99 : 0);
   if (typeof qty !== 'number') throw new InputError('Quantidade inválida.');
   if (!Number.isFinite(qty) || (type === 'ajuste_inventario' ? qty === 0 : qty <= 0)) {
     return res.status(400).json({ error: 'Quantidade deve ser um número positivo' });
@@ -136,6 +149,9 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
       return res.status(400).json({ error: 'Tipo de movimentação inválido' });
   }
 
+  item.physicalStock = storedBalance(item.physicalStock, 'Saldo físico');
+  item.allocatedStock = storedBalance(item.allocatedStock, 'Saldo alocado');
+  item.inPartnersCustodyStock = storedBalance(item.inPartnersCustodyStock, 'Saldo em terceiros');
   item.updatedAt = new Date().toISOString();
   await inventoryRepository.saveItem(item);
 
@@ -149,8 +165,8 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
     quantity: qty,
     unit: item.unit,
     date: new Date().toISOString().split('T')[0],
-    reason: reason || 'Movimentação operacional',
-    referenceDoc: referenceDoc || undefined,
+    reason: movementReason || 'Movimentação operacional',
+    referenceDoc: reference,
     operatorId: actor.id,
     operatorName: actor.fullName,
     isDemo: item.isDemo,
@@ -188,20 +204,20 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
 inventoryRouter.put('/items/:id', requirePermission('inventory:manage_items'), atomic(async (req: RequestWithUser, res: Response) => {
   const item = await inventoryRepository.findItemById(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item não encontrado.' });
-  const body = req.body;
+  const body = req.body || {};
   item.name = text(body.name, 'Nome', 150);
   item.category = oneOf(body.category, ['tecido', 'aviamento', 'insumo_personalizacao', 'pronta_entrega'], 'Categoria');
   if (body.unit !== item.unit) throw new InputError('Unidade de item cadastrado não pode ser alterada.');
-  item.minStock = number(body.minStock, 'Estoque mínimo');
-  item.unitCostPrice = number(body.unitCostPrice ?? body.costPrice, 'Custo');
-  item.supplier = text(body.supplier, 'Fornecedor', 150, false);
-  item.location = text(body.location, 'Localização', 100, false);
+  item.minStock = decimal(body.minStock, 'Estoque mínimo');
+  item.unitCostPrice = decimal(body.unitCostPrice ?? body.costPrice, 'Custo');
+  item.supplier = text(body.supplier, 'Fornecedor', 120, false);
+  item.location = text(body.location, 'Localização', 80, false);
   if (body.currentStock !== undefined && body.currentStock !== item.physicalStock) {
-    const target = number(body.currentStock, 'Saldo desejado');
+    const target = decimal(body.currentStock, 'Saldo desejado');
     if (body.expectedPhysicalStock !== item.physicalStock) return res.status(409).json({ error: 'Estoque foi alterado por outra operação. Atualize a tela.' });
     const reason = text(body.adjustmentReason, 'Motivo do ajuste', 1000);
     await inventoryRepository.saveMovement({ id: crypto.randomUUID(), movementNumber: await sequenceService.nextMovementNumber(),
-      itemId: item.id, type: 'ajuste_inventario', quantity: target - item.physicalStock, unit: item.unit,
+      itemId: item.id, type: 'ajuste_inventario', quantity: money(target - item.physicalStock), unit: item.unit,
       date: new Date().toISOString().slice(0, 10), reason, operatorId: req.user!.id, operatorName: req.user!.fullName,
       isDemo: item.isDemo, createdAt: new Date().toISOString() });
     item.physicalStock = target;
