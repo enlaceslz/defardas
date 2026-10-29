@@ -801,3 +801,46 @@ test('PostgreSQL: exclusão de proposta não deixa lead ou financeiro sem víncu
   assert.ok((await pool.query('SELECT * FROM crm.quote_items WHERE quote_id=$1', [quote.id])).rowCount! > 0);
   assert.equal((await request(`/api/quotes/${quote.id}`, 'DELETE')).status, 200);
 });
+
+test('PostgreSQL: exclusão de OP preserva vínculos financeiros, estoque, custódia e proposta', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const id = crypto.randomUUID();
+  await pool.query(`INSERT INTO producao.production_orders(id,order_number,idempotency_key,client_id,client_name,item_title,category,fabric_name,fabric_color,sizes,total_pieces,creation_date,target_delivery_date)
+    VALUES($1,$2,$4,$3,'Test','History order','polos','Test','Test','{"p":1}',1,'2026-10-29','2027-01-01')`, [id, `HIST-${id.slice(0,8)}`, clientId, `history:${id}`]);
+  const titleId = crypto.randomUUID();
+  await pool.query(`INSERT INTO financeiro.transactions(id,transaction_number,production_order_id,type,sub_type,description,category,amount,due_date,payment_method)
+    VALUES($1,$2,$3,'receber','despesa_geral','Order history','Test',1,'2027-01-01','pix')`, [titleId, `HIST-${titleId.slice(0,8)}`, id]);
+  assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 409);
+  assert.equal((await pool.query('SELECT production_order_id FROM financeiro.transactions WHERE id=$1', [titleId])).rows[0].production_order_id, id);
+  await pool.query('DELETE FROM financeiro.transactions WHERE id=$1', [titleId]);
+  const itemId = crypto.randomUUID(); const movementId = crypto.randomUUID(); const partnerId = crypto.randomUUID(); const custodyId = crypto.randomUUID();
+  await pool.query("INSERT INTO estoque.items(id,code,name,category,unit) VALUES($1,$2,'Test','tecido','metros')", [itemId, `HIST-${itemId.slice(0,8)}`]);
+  await pool.query(`INSERT INTO estoque.movements(id,movement_number,item_id,production_order_id,type,quantity,unit,date,reason,operator_name)
+    VALUES($1,$2,$3,$4,'saida_corte',1,'metros','2026-10-29','Test','Test')`, [movementId, `HIST-${movementId.slice(0,8)}`, itemId, id]);
+  assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 409);
+  assert.equal((await pool.query('SELECT production_order_id FROM estoque.movements WHERE id=$1', [movementId])).rows[0].production_order_id, id);
+  await pool.query('DELETE FROM estoque.movements WHERE id=$1', [movementId]);
+  await pool.query("INSERT INTO producao.partners(id,code,name,trade_name,phone,partner_type) VALUES($1,$2,'Test','Test','000','costura')", [partnerId, `HIST-${partnerId.slice(0,8)}`]);
+  await pool.query(`INSERT INTO estoque.partner_custody(id,partner_id,item_id,production_order_id,sent_quantity,unit,sent_date)
+    VALUES($1,$2,$3,$4,1,'metros','2026-10-29')`, [custodyId, partnerId, itemId, id]);
+  assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 409);
+  assert.equal((await pool.query('SELECT production_order_id FROM estoque.partner_custody WHERE id=$1', [custodyId])).rows[0].production_order_id, id);
+  await pool.query('DELETE FROM estoque.partner_custody WHERE id=$1', [custodyId]);
+  const quote = await createQuote();
+  await pool.query('UPDATE crm.quotes SET converted_order_id=$1 WHERE id=$2', [id, quote.id]);
+  assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 409);
+  assert.equal((await pool.query('SELECT converted_order_id FROM crm.quotes WHERE id=$1', [quote.id])).rows[0].converted_order_id, id);
+  await pool.query('UPDATE crm.quotes SET converted_order_id=NULL WHERE id=$1', [quote.id]);
+  // Test-only cleanup of relationships lets each guard run independently.
+  await pool.query("UPDATE producao.production_orders SET art_approved=true,art_approved_by='Client' WHERE id=$1", [id]);
+  assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 409);
+  await pool.query('UPDATE producao.production_orders SET art_approved=false,art_approved_by=NULL WHERE id=$1', [id]);
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected order delete failure'); };
+    assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 500);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rowCount, 1);
+  assert.equal((await request(`/api/orders/${id}`, 'DELETE')).status, 200);
+  assert.equal((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [id])).rowCount, 0);
+});

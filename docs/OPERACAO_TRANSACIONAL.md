@@ -225,3 +225,10 @@ A API de exclusão de clientes retorna 409 quando houver proposta, OP ou convers
 As verificações usam EXISTS no PostgreSQL, dentro da mesma transação/lock das exclusões. Cliente não carrega mais coleções completas de propostas e OPs para verificar histórico. Registros sem esses vínculos continuam no fluxo de exclusão já existente, com auditoria na mesma transação; falha de auditoria reverte remoção e dependências em cascata.
 
 Não há remoção/desvinculação/anonimização automática nem alteração de FKs nesta entrega. SQL administrativo direto pode contornar a API e exige procedimento próprio. Definição de retenção/anonimização e eventual arquivamento permanecem pendentes; esta proteção preserva relações existentes, sem implementar política geral de eliminação de dados. O segmento do cliente é validado em até 60 caracteres, conforme schema; corpo ausente recebe validação de entrada em vez de falha interna.
+
+
+### Exclusão de ordens de produção
+
+OP só pode seguir o fluxo existente de exclusão quando estiver aguardando liberação, sem proposta/item vinculado, aprovação de arte, registros de confirmação/comprovante ou referências de financeiro, movimentos de estoque, custódias de facções e converted_order_id em propostas. Essas referências retornam 409 antes do DELETE, impedindo SET NULL e referências órfãs. Consulta EXISTS usa a mesma transação/lock; falha de auditoria reverte exclusão livre.
+
+Custódias são verificadas no PostgreSQL; não há módulo de custódia em memória. Sem mudança de schema/FKs ou limpeza de relações históricas. A proteção aplica-se à API, não a SQL administrativo direto. Não define cancelamento, estorno, arquivamento ou retenção.

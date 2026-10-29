@@ -3,12 +3,28 @@
  * Gerencia o ciclo fabril (PCP), portões de liberação (Gate A.3.2) e idempotência.
  */
 import { eq, desc } from 'drizzle-orm';
-import { db as drizzleDb } from '../db/index';
+import { query, db as drizzleDb } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
 import { productionOrders, ProductionOrder, NewProductionOrder } from '../db/schema/orders';
 import { ProductionOrderEntity } from '../types/db';
 
 export class OrderRepository {
+  public async hasHistory(orderId: string): Promise<boolean> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) {
+      const result = await query(`SELECT EXISTS(SELECT 1 FROM financeiro.transactions WHERE production_order_id=$1)
+        OR EXISTS(SELECT 1 FROM estoque.movements WHERE production_order_id=$1)
+        OR EXISTS(SELECT 1 FROM estoque.partner_custody WHERE production_order_id=$1)
+        OR EXISTS(SELECT 1 FROM crm.quotes WHERE converted_order_id=$1) AS found`, [orderId]);
+      return result.rows[0].found;
+    }
+    if (process.env.DATABASE_URL || process.env.NODE_ENV === 'production') throw new Error('PostgreSQL indisponível.');
+    // Custódias em facções ainda não têm repositório em memória; sua consulta é exclusiva do PostgreSQL.
+    return [...fallbackDb.finance.values()].some((row) => row.productionOrderId === orderId) ||
+      [...fallbackDb.movements.values()].some((row) => row.productionOrderId === orderId) ||
+      [...fallbackDb.quotes.values()].some((row) => row.convertedOrderId === orderId);
+  }
+
   public async findAll(): Promise<ProductionOrderEntity[]> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {
