@@ -1,3 +1,4 @@
+import { unitOfWork } from '../db/unitOfWork';
 /**
  * DE FARDAS ERP — WhatsApp Omnichannel Service
  * Suporta Provedor Oficial (Meta WhatsApp Cloud API) e Provedor QR Code (WA-AKG isolado).
@@ -157,71 +158,84 @@ export class WhatsAppService {
     mediaUrl?: string;
     mediaMimeType?: string;
   }): Promise<MessageEntity> {
-    const cleanPhone = payload.fromPhone.replace(/\D/g, '');
-    const remoteJid = `${cleanPhone}@s.whatsapp.net`;
+    const externalId = text(payload.externalId, 'Identificador externo', 100);
+    const fromPhone = text(payload.fromPhone, 'Telefone', 30);
+    const fromName = text(payload.fromName, 'Nome do contato', 100, false);
+    const body = text(payload.body, 'Mensagem recebida', 64000);
+    const mediaUrl = text(payload.mediaUrl, 'URL de mídia', 2000, false) || undefined;
+    const mediaMimeType = text(payload.mediaMimeType, 'Tipo de mídia', 80, false) || undefined;
+    const cleanPhone = fromPhone.replace(/\D/g, '');
+    if (!cleanPhone) throw new InputError('Telefone inválido.');
+    return unitOfWork(async () => {
+      const channel = await communicationRepository.findChannelById(payload.channelId);
+      if (!channel?.isActive) throw new CommunicationError('Canal de recepção indisponível.', 503);
+      const existing = await communicationRepository.findInboundByExternalId(payload.channelId, externalId);
+      if (existing) return existing;
+      const remoteJid = `${cleanPhone}@s.whatsapp.net`;
 
-    // Localiza ou cria a conversa
-    let conv = await communicationRepository.findConversationByRemoteJid(remoteJid);
-    if (!conv) {
-      // Tentar associar cliente existente por telefone
-      const allClients = await clientRepository.findAll();
-      const matchedClient = allClients.find((c) => c.phone.replace(/\D/g, '') === cleanPhone);
+      // Localiza ou cria a conversa
+      let conv = await communicationRepository.findConversationByRemoteJid(remoteJid, payload.channelId);
+      if (!conv) {
+        // Tentar associar cliente existente por telefone
+        const allClients = await clientRepository.findAll();
+        const matchedClient = allClients.find((c) => c.phone.replace(/\D/g, '') === cleanPhone);
 
-      // Tentar associar lead existente
-      const allLeads = await leadRepository.findAll();
-      const matchedLead = allLeads.find((l) => l.phone.replace(/\D/g, '') === cleanPhone);
+        // Tentar associar lead existente
+        const allLeads = await leadRepository.findAll();
+        const matchedLead = allLeads.find((l) => l.phone.replace(/\D/g, '') === cleanPhone);
 
-      conv = {
+        conv = {
+          id: crypto.randomUUID(),
+          channelId: payload.channelId,
+          clientId: matchedClient?.id,
+          leadId: matchedLead?.id,
+          remoteJid,
+          customerName: fromName || matchedClient?.tradeName || matchedLead?.clientName || cleanPhone,
+          customerPhone: fromPhone,
+          status: 'open',
+          unreadCount: 1,
+          lastMessageText: body,
+          lastMessageAt: new Date().toISOString(),
+          tags: matchedClient ? ['cliente_ativo'] : ['novo_contato'],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await communicationRepository.saveConversation(conv);
+      } else {
+        conv.unreadCount += 1;
+        conv.lastMessageText = body;
+        conv.lastMessageAt = new Date().toISOString();
+        conv.updatedAt = new Date().toISOString();
+        await communicationRepository.saveConversation(conv);
+      }
+
+      const newMsg: MessageEntity = {
         id: crypto.randomUUID(),
-        channelId: payload.channelId,
-        clientId: matchedClient?.id,
-        leadId: matchedLead?.id,
-        remoteJid,
-        customerName: payload.fromName || matchedClient?.tradeName || matchedLead?.clientName || cleanPhone,
-        customerPhone: payload.fromPhone,
-        status: 'open',
-        unreadCount: 1,
-        lastMessageText: payload.body,
-        lastMessageAt: new Date().toISOString(),
-        tags: matchedClient ? ['cliente_ativo'] : ['novo_contato'],
+        conversationId: conv.id,
+        externalId,
+        direction: 'inbound',
+        senderName: fromName || conv.customerName,
+        messageType: mediaUrl ? 'image' : 'text',
+        body,
+        mediaUrl,
+        mediaMimeType,
+        status: 'delivered',
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
-      await communicationRepository.saveConversation(conv);
-    } else {
-      conv.unreadCount += 1;
-      conv.lastMessageText = payload.body;
-      conv.lastMessageAt = new Date().toISOString();
-      conv.updatedAt = new Date().toISOString();
-      await communicationRepository.saveConversation(conv);
-    }
 
-    const newMsg: MessageEntity = {
-      id: crypto.randomUUID(),
-      conversationId: conv.id,
-      externalId: payload.externalId || `in_${Date.now()}`,
-      direction: 'inbound',
-      senderName: payload.fromName || conv.customerName,
-      messageType: payload.mediaUrl ? 'image' : 'text',
-      body: payload.body,
-      mediaUrl: payload.mediaUrl,
-      mediaMimeType: payload.mediaMimeType,
-      status: 'delivered',
-      createdAt: new Date().toISOString(),
-    };
+      await communicationRepository.saveMessage(newMsg);
 
-    await communicationRepository.saveMessage(newMsg);
+      await auditService.log({
+        actorName: fromName || cleanPhone,
+        actorRole: 'cliente_whatsapp',
+        entityName: 'communication.messages',
+        entityId: newMsg.id,
+        action: 'RECEIVE_WHATSAPP_MESSAGE',
+        notes: `Mensagem recebida de ${conv.customerName} (${conv.customerPhone}).`,
+      });
 
-    await auditService.log({
-      actorName: payload.fromName || cleanPhone,
-      actorRole: 'cliente_whatsapp',
-      entityName: 'communication.messages',
-      entityId: newMsg.id,
-      action: 'RECEIVE_WHATSAPP_MESSAGE',
-      notes: `Mensagem recebida de ${conv.customerName} (${conv.customerPhone}).`,
+      return newMsg;
     });
-
-    return newMsg;
   }
 
   /**

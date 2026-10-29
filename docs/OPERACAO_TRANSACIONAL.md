@@ -96,3 +96,24 @@ O fluxo manual suporta somente texto não vazio de até 4.000 caracteres (limite
 Canal precisa estar ativo e com estado `connected`; Meta exige token e identificador de telefone e WA-AKG exige chave de API não vazia. Falhas de configuração/conexão conhecida retornam 503 antes de transmitir ou criar mensagem. Conversa ausente retorna 404. Exceções internas não são devolvidas ao navegador. Erros de transporte ficam registrados com texto genérico, sem detalhes de URL/credencial, e não geram auditoria afirmando envio concluído.
 
 Timeout ou perda de resposta continuam podendo representar resultado incerto no provedor: conferir histórico antes de repetir. O estado `failed` indica ausência de confirmação neste fluxo, não comprovação de que o destinatário não recebeu. Recepção e envio ainda exigem transações/deduplicação e recibos autoritativos antes da homologação operacional completa.
+
+
+## Recepção WhatsApp transacional e deduplicação
+
+Configurar `META_WA_CHANNEL_ID` e `WA_AKG_CHANNEL_ID` com os UUIDs reais de `communication.channels` para cada webhook utilizado. O canal deve existir, estar ativo e ter o provedor correspondente. Não há escolha automática do primeiro canal. IDs demonstrativos só são usados sem banco na demonstração local. A assinatura/segredo de webhook continua obrigatória. Na Meta, `metadata.phone_number_id` precisa corresponder a `META_WA_PHONE_NUMBER_ID`; eventos de outro telefone são rejeitados.
+
+Cada mensagem recebida exige identificador externo não vazio (até 100 caracteres). Dentro da mesma transação, o serviço consulta duplicidade por canal/ID, localiza a conversa por canal/telefone, grava mensagem, atualiza não lidas/prévia e registra auditoria. Reentrega retorna a mensagem já gravada sem novo contador ou evento. Falha reverte todas essas escritas; lote parcialmente recebido pode ser repetido pois mensagens já confirmadas são deduplicadas. O lock transacional global existente serializa concorrência entre processos; medir antes de otimizar.
+
+A migração Drizzle `0005_conscious_jasper_sitwell` cria unicidade de conversa por `(channel_id, remote_jid)` e de mensagem por `(conversation_id, direction, external_id)`. Antes de aplicá-la, executar backup e ensaiar em cópia de homologação. Verificar duplicidades com:
+
+```sql
+SELECT channel_id, remote_jid, count(*) FROM communication.conversations
+GROUP BY channel_id, remote_jid HAVING count(*) > 1;
+SELECT conversation_id, direction, external_id, count(*) FROM communication.messages
+WHERE external_id IS NOT NULL
+GROUP BY conversation_id, direction, external_id HAVING count(*) > 1;
+```
+
+Se houver duplicidades, a criação de índices falha sem apagar/mesclar histórico. A reconciliação precisa preservar mensagens, vínculos e auditoria; não executar exclusão automática. A proteção do identificador por canal é aplicada pelo serviço sob lock; os índices fornecem proteção adicional por conversa. SQL administrativo direto não deve contornar esse procedimento.
+
+Esta entrega não implementa download de mídias, recibos de saída, fila/outbox, entrega única ao provedor ou provisionamento de canais. A marcação `delivered` da entrada significa mensagem recebida pelo ERP; não representa recibo de entrega de mensagem enviada.

@@ -370,3 +370,52 @@ test('PostgreSQL: CLI de equipe cria conta sem imprimir credenciais e rejeita at
   assert.equal(updated.status, 0, updated.stderr);
   assert.equal((await pool.query('SELECT is_active FROM core.users WHERE email=$1', [command.email])).rows[0].is_active, false);
 });
+
+test('PostgreSQL: recepção WhatsApp concorrente deduplica por canal e mantém não lidas/auditoria', async () => {
+  const { WhatsAppService } = await import('../server/services/whatsappService');
+  const channelId = crypto.randomUUID();
+  await pool.query(`INSERT INTO communication.channels(id,provider,channel_name,phone_number,status,is_active)
+    VALUES($1,'wa_akg','Integration','000','connected',true)`, [channelId]);
+  const payload = { channelId, fromPhone: '000123456', fromName: 'Integration Contact', body: 'Inbound', externalId: crypto.randomUUID() };
+  const responses = await Promise.all(Array.from({ length: 8 }, () => new WhatsAppService().handleInboundMessage(payload)));
+  assert.equal(new Set(responses.map((response) => response.id)).size, 1);
+  const conv = (await pool.query('SELECT * FROM communication.conversations WHERE channel_id=$1', [channelId])).rows;
+  assert.equal(conv.length, 1); assert.equal(conv[0].unread_count, 1);
+  assert.equal((await pool.query('SELECT * FROM communication.messages WHERE conversation_id=$1', [conv[0].id])).rowCount, 1);
+  assert.equal((await pool.query('SELECT * FROM core.audit_logs WHERE entity_id=$1', [responses[0].id])).rowCount, 1);
+  const channel2 = crypto.randomUUID();
+  await pool.query(`INSERT INTO communication.channels(id,provider,channel_name,phone_number,status,is_active)
+    VALUES($1,'wa_akg','Integration second','000','connected',true)`, [channel2]);
+  const other = await new WhatsAppService().handleInboundMessage({ ...payload, channelId: channel2 });
+  assert.notEqual(other.conversationId, responses[0].conversationId);
+  await assert.rejects(pool.query(`INSERT INTO communication.conversations(channel_id,remote_jid,customer_name,customer_phone)
+    VALUES($1,$2,'Duplicate','000')`, [channelId, conv[0].remote_jid]), (error: any) => error.code === '23505');
+  await assert.rejects(pool.query(`INSERT INTO communication.messages(conversation_id,external_id,direction,body)
+    VALUES($1,$2,'inbound','Duplicate')`, [conv[0].id, payload.externalId]), (error: any) => error.code === '23505');
+});
+
+test('PostgreSQL: falha na auditoria de recepção reverte tudo e permite reentrega', async () => {
+  const { WhatsAppService } = await import('../server/services/whatsappService');
+  const { auditService } = await import('../server/services/auditService');
+  const channelId = crypto.randomUUID();
+  await pool.query(`INSERT INTO communication.channels(id,provider,channel_name,phone_number,status,is_active)
+    VALUES($1,'wa_akg','Rollback','000','connected',true)`, [channelId]);
+  const payload = { channelId, fromPhone: '00098765', fromName: 'Rollback Contact', body: 'Inbound rollback', externalId: crypto.randomUUID() };
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected inbound audit failure'); };
+    await assert.rejects(new WhatsAppService().handleInboundMessage(payload), /Injected inbound/);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query('SELECT * FROM communication.conversations WHERE channel_id=$1', [channelId])).rowCount, 0);
+  assert.equal((await pool.query('SELECT * FROM communication.messages WHERE external_id=$1', [payload.externalId])).rowCount, 0);
+  const saved = await new WhatsAppService().handleInboundMessage(payload);
+  const secondPayload = { ...payload, externalId: crypto.randomUUID() };
+  try {
+    auditService.log = async () => { throw new Error('Injected inbound audit failure'); };
+    await assert.rejects(new WhatsAppService().handleInboundMessage(secondPayload), /Injected inbound/);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query('SELECT unread_count FROM communication.conversations WHERE id=$1', [saved.conversationId])).rows[0].unread_count, 1);
+  assert.equal((await pool.query('SELECT * FROM communication.messages WHERE external_id=$1', [secondPayload.externalId])).rowCount, 0);
+  await new WhatsAppService().handleInboundMessage(secondPayload);
+  assert.equal((await pool.query('SELECT unread_count FROM communication.conversations WHERE id=$1', [saved.conversationId])).rows[0].unread_count, 2);
+});
