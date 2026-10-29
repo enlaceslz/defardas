@@ -31,3 +31,5 @@ Continuação de privacidade: 94 testes locais, tipagem e build aprovados. Bloqu
 Continuação de prazos: 97 testes locais, tipagem e build aprovados. Cabeçalho é validado antes do número; prazo e data representável são conferidos também na conversão. Ano zero é recusado. Nenhuma regra de prazo comercial/calendário útil foi criada; ver operação transacional e CI do PR correspondente para evidências e limites.
 
 Continuação financeira: 99 testes locais, tipagem e build aprovados. Conversão exige duas parcelas positivas e coerentes com percentual/total dos itens antes de gravar; leitura não disfarça percentual histórico. Não altera preço comercial ou arredondamento existente. Evidência PostgreSQL/Docker deve ser conferida na CI do PR correspondente.
+
+Continuação do replay: 100 testes locais, tipagem e build aprovados. Histórico de conversão parcial não recebe falso sucesso; proposta, OPs e recebíveis precisam ter vínculos consistentes. Reenvio íntegro conserva pagamento e auditoria. Consultar o runbook e a CI do PR correspondente para limites e evidências; reconciliação histórica automática não foi implementada.

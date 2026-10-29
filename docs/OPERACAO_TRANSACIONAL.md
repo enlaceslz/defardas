@@ -283,7 +283,7 @@ A proteção é desses middlewares. Não apaga logs históricos, não anonimiza 
 
 Criação da proposta valida o cabeçalho antes de reservar número. Prazo deve ser inteiro positivo representável em integer e produzir data válida no formato AAAA-MM-DD suportado pela API (anos 0001 a 9999). O ano 0000 é recusado pelo validador de datas, pois PostgreSQL não o aceita nesse formato. Data explicitamente vazia não é substituída por hoje.
 
-A conversão refaz a validação usando o instante da conversão, antes de numerar/gravar OPs ou títulos. Proposta histórica com prazo inválido recebe 400 sem efeitos parciais; não é corrigida automaticamente. Conversão já concluída continua devolvendo as ordens existentes pelo fluxo idempotente, sem recalcular suas datas.
+A conversão refaz a validação usando o instante da conversão, antes de numerar/gravar OPs ou títulos. Proposta histórica com prazo inválido recebe 400 sem efeitos parciais; não é corrigida automaticamente. Conversão já concluída e com vínculos íntegros devolve as ordens existentes pelo fluxo idempotente, sem recalcular suas datas.
 
 O cálculo permanece dias corridos de 24h e usa o comportamento UTC existente. Não impõe máximo comercial de prazo, calendário de dias úteis, feriados, nova política de validade ou reabertura. O limite é técnico de representação, e datas históricas não são alteradas. A data de criação/prazo contratual definitivo e calendário fabril ainda dependem de homologação de negócio.
 
@@ -293,4 +293,12 @@ Antes de numerar/gravar OPs e títulos, a conversão exige total, sinal e saldo 
 
 A leitura conserva o percentual efetivamente armazenado; não o substitui silenciosamente por 50. O tipo da entidade permite representar histórico divergente, mas a criação continua exigindo 50 e a conversão bloqueia divergência. Não há saneamento automático de proposta histórica nem fluxo novo de revisão/estorno.
 
-Uma proposta zerada ou de um centavo não permite gerar os dois títulos positivos exigidos pela constraint existente e é bloqueada na conversão. Isso não cria preço mínimo comercial ou altera a aceitação de rascunhos. Totais ímpares em centavos mantêm o arredondamento anterior: três centavos geram dois de sinal e um de saldo. Não muda markup, comissão, percentual ou política de cobrança. Conversão já concluída continua no replay existente, sem recalcular títulos ou reconciliar histórico.
+Uma proposta zerada ou de um centavo não permite gerar os dois títulos positivos exigidos pela constraint existente e é bloqueada na conversão. Isso não cria preço mínimo comercial ou altera a aceitação de rascunhos. Totais ímpares em centavos mantêm o arredondamento anterior: três centavos geram dois de sinal e um de saldo. Não muda markup, comissão, percentual ou política de cobrança. Conversão já concluída e com vínculos íntegros continua no replay, sem recalcular títulos ou reconciliar histórico.
+
+### Integridade estrutural do replay de conversão
+
+A existência de uma OP isolada não confirma conversão completa. Ao encontrar OP, recebível de sinal/saldo ou metadado de conversão, a API confere proposta bloqueada/convertida, ponteiro principal válido, uma OP por item da versão atual com cliente/quantidade compatíveis e dois recebíveis únicos (entrada/saldo), positivos, vinculados às OPs e com valores iguais aos da proposta. Recebíveis são consultados por quote_id, sem carregar o financeiro inteiro. Outros tipos de lançamento não são tratados como títulos da conversão.
+
+Divergência retorna 409/QUOTE_CONVERSION_INCOMPLETE sem reservar números, reconstruir registros ou alterar estados/auditoria. Inclui OP antiga sem quote_item_id, título ausente/desvinculado, versão divergente ou títulos sem OPs. Exige reconciliação histórica específica; não tentar recriar silenciosamente parte de uma conversão.
+
+Replay íntegro retorna OP principal apontada pela proposta, conjunto de OPs e financeTransactions atuais. Título já pago conserva status/evidência; não volta a pendente e a auditoria de conversão não se repete. Etapas, datas, pagamentos e demais estados não são recalculados. Essa verificação estrutural não autentica evidências nem substitui reconciliação financeira/operacional completa, política de estorno ou correção de dados históricos.
