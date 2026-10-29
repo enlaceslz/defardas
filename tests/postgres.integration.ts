@@ -1,4 +1,5 @@
 import 'express-async-errors';
+import { atomic, rejectWithAudit } from '../server/db/unitOfWork';
 import { apiErrorHandler } from '../server/middleware/apiErrorHandler';
 import { manageUser } from '../server/auth/userManagementService';
 import assert from 'node:assert/strict';
@@ -65,6 +66,19 @@ before(async () => {
   app.use('/api/clients', clientsRouter); app.use('/api/quotes', quotesRouter); app.use('/api/orders', ordersRouter);
   app.use('/api/leads', leadsRouter);
   app.use('/api/finance', financeRouter); app.use('/api/inventory', inventoryRouter);
+  // Test-only endpoint proves a business write rolls back before rejection audit starts.
+  app.post('/api/test/audited-rejection', atomic(async (req, _res) => {
+    const { auditService } = await import('../server/services/auditService');
+    const { query } = await import('../server/db/index');
+    await query("UPDATE producao.production_orders SET technical_notes='Must roll back' WHERE id=$1", [req.body.id]);
+    rejectWithAudit(422, { error: 'Test rejection' }, async () => {
+      const state = await query('SELECT technical_notes FROM producao.production_orders WHERE id=$1', [req.body.id]);
+      assert.equal(state.rows[0].technical_notes, req.body.expectedNotes);
+      await auditService.log({ actorId: null as any, actorName: 'Test', actorRole: 'admin', entityName: 'test.rejection',
+        entityId: req.body.id, action: 'TEST_REJECTED', notes: 'Test-only audit after rollback' });
+      if (req.body.failAudit) throw new Error('Injected second transaction failure');
+    });
+  }));
   app.use(apiErrorHandler);
   server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => server.on('listening', resolve));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -963,4 +977,39 @@ test('PostgreSQL: etapa repetida em espera não altera OP e falha de auditoria r
   assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], approved);
   assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='ADVANCE_STAGE' AND entity_id=$1", [order.orderNumber])).rows[0].count, '0');
   assert.equal((await request(path, 'POST', { targetStage: 'corte' })).status, 200);
+});
+
+
+test('PostgreSQL: tentativa bloqueada permanece auditada sem avançar OP e falha de auditoria fecha operação', async () => {
+  const { auditService } = await import('../server/services/auditService');
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+  assert.equal(converted.status, 201); const order = converted.data.orders[0];
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  const path = `/api/orders/${order.id}/advance-stage`;
+  const responses = await Promise.all(Array.from({ length: 4 }, () => request(path, 'POST', { targetStage: 'corte' })));
+  assert.ok(responses.every((r) => r.status === 422));
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
+  const events = (await pool.query("SELECT * FROM core.audit_logs WHERE entity_id=$1 AND action='GATE_BYPASS_ATTEMPT'", [order.orderNumber])).rows;
+  assert.equal(events.length, 4); assert.deepEqual(events[0].new_data, { attemptedStage: 'corte' });
+  assert.deepEqual(events[0].old_data, { stage: 'aguardando_liberacao', artApproved: false, entryPaymentConfirmed: false });
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected gate audit failure'); };
+    assert.equal((await request(path, 'POST', { targetStage: 'corte' })).status, 500);
+  } finally { auditService.log = original; }
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE entity_id=$1 AND action='GATE_BYPASS_ATTEMPT'", [order.orderNumber])).rows[0].count, '4');
+});
+
+test('PostgreSQL: escrita rejeitada reverte antes da auditoria independente e falha desta também reverte', async () => {
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST');
+  assert.equal(converted.status, 201); const order = converted.data.orders[0];
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0];
+  const input = { id: order.id, expectedNotes: before.technical_notes };
+  assert.equal((await request('/api/test/audited-rejection', 'POST', input)).status, 422);
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='TEST_REJECTED' AND entity_id=$1", [order.id])).rows[0].count, '1');
+  assert.equal((await request('/api/test/audited-rejection', 'POST', { ...input, failAudit: true })).status, 500);
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows[0], before);
+  assert.equal((await pool.query("SELECT count(*) FROM core.audit_logs WHERE action='TEST_REJECTED' AND entity_id=$1", [order.id])).rows[0].count, '1');
 });

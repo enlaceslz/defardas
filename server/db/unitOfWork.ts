@@ -26,6 +26,16 @@ export async function unitOfWork<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 class RejectedResponse extends Error {}
+class AuditedRejection extends Error {
+  constructor(readonly status: number, readonly body: unknown, readonly audit: () => Promise<unknown>) {
+    super('Operação rejeitada com auditoria após rollback.');
+  }
+}
+// O callback interno deve somente registrar a tentativa, nunca reaplicar a operação rejeitada.
+export function rejectWithAudit(status: number, body: unknown, audit: () => Promise<unknown>): never {
+  if (!Number.isInteger(status) || status < 400 || status >= 500) throw new Error('Status de rejeição inválido.');
+  throw new AuditedRejection(status, body, audit);
+}
 // Bufferiza somente a resposta JSON; nenhum sucesso sai antes do COMMIT.
 export function atomic(handler: RequestHandler): RequestHandler {
   return async (req, res, next) => {
@@ -49,7 +59,13 @@ export function atomic(handler: RequestHandler): RequestHandler {
       });
       res.status(status).json(body);
     } catch (error) {
-      if (error instanceof RejectedResponse) res.status(status).json(body);
+      if (error instanceof AuditedRejection) {
+        try {
+          // A UoW anterior já fez rollback e liberou cliente/lock antes de iniciar esta.
+          await unitOfWork(error.audit);
+          res.status(error.status).json(error.body);
+        } catch (auditError) { next(auditError); }
+      } else if (error instanceof RejectedResponse) res.status(status).json(body);
       else next(error);
     }
   };
