@@ -99,3 +99,18 @@ Chave UUID obrigatória na rota operacional, combinada com identidade autenticad
 Validação local: 58 testes, tipagem, build Vite e diff-check passaram; cinco novos testes locais cobrem repetição/conflito, registro anterior à rede, ausência de lock no transporte, rollback inicial/final, identidade HTTP e preservação/reutilização da chave na UI. Dois testes PostgreSQL adicionados cobrem as mesmas fases com pool de uma conexão, concorrência e preservação de não lidas; execução depende da CI deste commit. Nenhuma mensagem externa ou migração nova. `compile_applet` indisponível; build Vite utilizado. Bundle JS 464,64 kB / 119,48 kB gzip.
 
 Pendências: reconciliação operacional de pendentes, captura do ID real/recibos, outbox/worker, política de leitura por perfil, S3/e-mail, provisionamento e homologação. Não garante entrega única se o cliente perder/trocar a chave. Nenhum deploy ou alteração de conta/banco operacional.
+
+
+## Continuação: reconciliação administrativa sem retransmissão
+
+Base: PR #9, commit `78c8f3c0`; CI 40808530472 e 40808544472 aprovadas.
+
+Pendentes não tinham procedimento de resolução. Adicionado `npm run whatsapp:reconcile`, exclusivo do host/PostgreSQL: exige operador, motivo, referência de evidência, UUID interno e resultado `sent`/`failed`. Aceitação exige identificador real do provedor; falha não aceita ID de aceitação. O procedimento registra declaração operacional e não comprova evidência externamente. Não transmite mensagens, não automatiza consulta ao provedor e não altera estados delivered/read.
+
+Estado, ID externo, prévia elegível e auditoria confirmam na mesma transação. Repetição idêntica não duplica evento; alteração de estado final/inbound é rejeitada. Preserva mensagem mais recente/não lidas. Finalização tardia do envio original consulta o estado sob o mesmo lock e não sobrescreve reconciliação.
+
+Validação local: 60 testes, tipagem, build Vite e diff-check aprovados. Dois novos testes locais validam contrato e exigência de banco. Três testes PostgreSQL adicionados exercitam CLI/saída sem conteúdo, idempotência, conflito, rejeição de entrada, rollback por auditoria, prévia mais recente e corrida com transporte em andamento. PostgreSQL/Docker dependem da CI deste commit. Sem migração nova, mensagem externa, deploy ou alteração operacional. `compile_applet` indisponível; build Vite utilizado. Bundle permanece 464,64 kB / 119,48 kB gzip.
+
+Recibos e consulta real ao provedor, reenvio autorizado, worker/outbox, RBAC de leitura, S3/e-mail, provisão e homologação continuam pendentes. Evidência de timeout sozinha não autoriza classificar falha.
+
+Ajuste final do mesmo escopo: erro de rede/timeout e HTTP 5xx mantêm pending para reconciliação, com auditoria WHATSAPP_SEND_UNCONFIRMED; HTTP 4xx mantém failed. Testes de transporte atualizados para distinguir resultado incerto de rejeição.

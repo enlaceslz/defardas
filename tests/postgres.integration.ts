@@ -484,3 +484,77 @@ test('PostgreSQL: auditoria inicial impede envio e falha final mantém pendente 
     if (oldKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = oldKey;
   }
 });
+
+async function pendingWhatsAppFixture() {
+  const channelId = crypto.randomUUID(); const conversationId = crypto.randomUUID(); const messageId = crypto.randomUUID();
+  await pool.query(`INSERT INTO communication.channels(id,provider,channel_name,phone_number,status,is_active)
+    VALUES($1,'wa_akg','Reconciliation','000','connected',true)`, [channelId]);
+  await pool.query(`INSERT INTO communication.conversations(id,channel_id,remote_jid,customer_name,customer_phone)
+    VALUES($1,$2,'reconcile@test','Test','000123')`, [conversationId, channelId]);
+  await pool.query(`INSERT INTO communication.messages(id,conversation_id,direction,body,status,created_at)
+    VALUES($1,$2,'outbound','Private reconciliation fixture','pending',NOW()-INTERVAL '2 minutes')`, [messageId, conversationId]);
+  return { channelId, conversationId, messageId };
+}
+
+test('PostgreSQL: reconciliação CLI confirma resultado com auditoria, sem expor mensagem; repetição é idempotente', async () => {
+  const { reconcileWhatsAppMessage } = await import('../server/services/whatsappReconciliationService');
+  const { messageId, conversationId } = await pendingWhatsAppFixture();
+  const externalId = crypto.randomUUID();
+  const result = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/reconcile-whatsapp.ts'], { encoding: 'utf8',
+    env: { ...process.env, ERP_WA_MESSAGE_ID: messageId, ERP_WA_STATUS: 'sent', ERP_WA_EXTERNAL_ID: externalId,
+      ERP_WA_OPERATOR: 'Integration Operator', ERP_WA_REASON: 'Integration reason', ERP_WA_EVIDENCE: 'Integration ticket' } });
+  assert.equal(result.status, 0, result.stderr); assert.doesNotMatch(result.stdout + result.stderr, /Private reconciliation fixture/);
+  const row = (await pool.query('SELECT status,external_id FROM communication.messages WHERE id=$1', [messageId])).rows[0];
+  assert.equal(row.status, 'sent'); assert.equal(row.external_id, externalId);
+  assert.equal((await pool.query('SELECT last_message_text FROM communication.conversations WHERE id=$1', [conversationId])).rows[0].last_message_text, 'Private reconciliation fixture');
+  const repeat = await reconcileWhatsAppMessage({ messageId, status: 'sent', externalId, operator: 'Other operator', reason: 'Repeat', evidence: 'Ticket' });
+  assert.equal(repeat.changed, false);
+  const logs = (await pool.query("SELECT * FROM core.audit_logs WHERE entity_id=$1 AND action='WHATSAPP_RECONCILED'", [messageId])).rows;
+  assert.equal(logs.length, 1); assert.equal(logs[0].actor_name, 'Integration Operator');
+  assert.match(logs[0].notes, /Integration ticket/);
+  await assert.rejects(reconcileWhatsAppMessage({ messageId, status: 'failed', operator: 'Operator', reason: 'Conflict', evidence: 'Ticket' }), /Somente envio pendente/);
+});
+
+test('PostgreSQL: reconciliação reverte por falha de auditoria e preserva prévia mais recente', async () => {
+  const { reconcileWhatsAppMessage } = await import('../server/services/whatsappReconciliationService');
+  const { auditService } = await import('../server/services/auditService');
+  const { messageId, conversationId } = await pendingWhatsAppFixture();
+  await pool.query("UPDATE communication.conversations SET last_message_text='Newer inbound',last_message_at=NOW(),unread_count=7 WHERE id=$1", [conversationId]);
+  const input = { messageId, status: 'sent', externalId: crypto.randomUUID(), operator: 'Operator', reason: 'Test', evidence: 'Ticket' };
+  const original = auditService.log;
+  try {
+    auditService.log = async () => { throw new Error('Injected reconciliation failure'); };
+    await assert.rejects(reconcileWhatsAppMessage(input), /Injected/);
+  } finally { auditService.log = original; }
+  assert.equal((await pool.query('SELECT status FROM communication.messages WHERE id=$1', [messageId])).rows[0].status, 'pending');
+  await reconcileWhatsAppMessage(input);
+  const conversation = (await pool.query('SELECT * FROM communication.conversations WHERE id=$1', [conversationId])).rows[0];
+  assert.equal(conversation.last_message_text, 'Newer inbound'); assert.equal(conversation.unread_count, 7);
+  const other = await pendingWhatsAppFixture();
+  await pool.query("UPDATE communication.messages SET direction='inbound' WHERE id=$1", [other.messageId]);
+  await assert.rejects(reconcileWhatsAppMessage({ ...input, messageId: other.messageId }), /Envio não encontrado/);
+});
+
+test('PostgreSQL: resposta tardia do transporte não sobrescreve reconciliação operacional', async () => {
+  const { reconcileWhatsAppMessage } = await import('../server/services/whatsappReconciliationService');
+  const { WhatsAppService } = await import('../server/services/whatsappService');
+  const { conversationId } = await pendingWhatsAppFixture();
+  const previousKey = process.env.WA_AKG_API_KEY; const originalFetch = globalThis.fetch;
+  process.env.WA_AKG_API_KEY = crypto.randomBytes(24).toString('hex');
+  let started!: () => void; let finish!: () => void;
+  const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+  globalThis.fetch = async () => { started(); return new Promise<Response>((resolve) => { finish = () => resolve(new Response('{}')); }); };
+  try {
+    const service = new WhatsAppService();
+    const options = { conversationId, body: 'In flight', idempotencyKey: crypto.randomUUID() };
+    const request = service.sendMessage(options); await startedPromise;
+    const pending = await service.sendMessage(options);
+    await reconcileWhatsAppMessage({ messageId: pending.id, status: 'failed', operator: 'Operator', reason: 'Verified rejection', evidence: 'Provider test ticket' });
+    finish(); assert.equal((await request).status, 'failed');
+    const saved = (await pool.query('SELECT * FROM communication.messages WHERE id=$1', [pending.id])).rows[0];
+    assert.equal(saved.status, 'failed'); assert.match(saved.error_message, /reconciliação/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.WA_AKG_API_KEY; else process.env.WA_AKG_API_KEY = previousKey;
+  }
+});
