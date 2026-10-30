@@ -223,6 +223,7 @@ export interface InventoryMovement {
 export type InventoryCategory = 'tecido' | 'aviamento' | 'insumo_personalizacao' | 'pronta_entrega';
 
 export interface InventoryItem {
+  expectedPhysicalStock?: number; // Saldo observado ao iniciar a intenção de ajuste.
   backendId?: string;
   id: string;
   code: string;

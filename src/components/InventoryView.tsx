@@ -85,6 +85,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       category,
       unit,
       currentStock,
+      expectedPhysicalStock: editingItem?.currentStock,
       allocatedStock: editingItem?.allocatedStock || 0,
       inPartnersCustodyStock: editingItem?.inPartnersCustodyStock || 0,
       minStock,
@@ -101,6 +102,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const handleQuickStockAdjustment = async (item: InventoryItem, delta: number) => {
     const updated: InventoryItem = {
       ...item,
+      expectedPhysicalStock: item.currentStock,
       currentStock: Math.max(0, item.currentStock + delta),
       lastRestocked: new Date().toISOString().split('T')[0],
     };
