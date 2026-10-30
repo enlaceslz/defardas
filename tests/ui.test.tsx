@@ -499,3 +499,29 @@ test('proposta aceita centavos e percentuais decimais sem truncar grade ou prazo
     await act(async () => {});
   } finally { api.getMe = oldMe; api.getHealth = oldHealth; }
 });
+
+test('prévia enviada pela proposta usa margem e parcelas iguais ao motor do servidor', async () => {
+  const { AuthProvider } = await import('../src/api/authContext');
+  const { NewQuoteModal } = await import('../src/components/NewQuoteModal');
+  const { PricingEngine } = await import('../server/services/pricingEngine');
+  const oldMe = api.getMe; const oldHealth = api.getHealth;
+  api.getMe = async () => ({ status: 401 }); api.getHealth = async () => ({ status: 200 });
+  try {
+    for (const [cost, price, entry, balance, margin] of [[1, 1.5, 0.75, 0.75, 33.33], [0.01, 0.03, 0.02, 0.01, 66.67]]) {
+      const saved: any[] = [];
+      const view = render(<AuthProvider><NewQuoteModal clients={[{ id: 'client-test', companyName: 'Test', tradeName: 'Test', phone: '000', segment: '', cnpj: 'TEST' } as any]} onClose={() => {}} onSaveQuote={async value => { saved.push(value); return false; }} /></AuthProvider>);
+      fireEvent.change(view.getByLabelText('Custo de material'), { target: { value: String(cost) } });
+      fireEvent.change(view.getByLabelText('Preço negociado'), { target: { value: String(price) } });
+      fireEvent.change(view.getByLabelText('Quantidade p'), { target: { value: '1' } });
+      fireEvent.change(view.getByLabelText('Prazo de fabricação'), { target: { value: '1' } });
+      fireEvent.change(view.getByLabelText('Validade da proposta (dias)'), { target: { value: '1' } });
+      fireEvent.submit(view.container.querySelector('form')!);
+      await waitFor(() => assert.equal(saved.length, 1));
+      const expected = PricingEngine.calculateItemPricing({ materialUnitCost: cost, outsourcedSewingUnitCost: 0, customizationUnitCost: 0, freightUnitCost: 0, technicalLossPercentage: 0, markupPercentage: 0, negotiatedUnitPrice: price });
+      assert.equal(saved[0].items[0].costBreakdown.estimatedMarginPercentage, expected.estimatedMarginPercentage);
+      assert.equal(saved[0].items[0].costBreakdown.estimatedMarginPercentage, margin);
+      assert.equal(saved[0].totalAmount, price); assert.equal(saved[0].entryAmount, entry); assert.equal(saved[0].balanceDueAtDelivery, balance);
+      view.unmount();
+    }
+  } finally { api.getMe = oldMe; api.getHealth = oldHealth; }
+});

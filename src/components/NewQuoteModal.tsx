@@ -1,3 +1,4 @@
+import { PricingEngine, roundCurrency } from '../../shared/pricingEngine';
 import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Calculator, FileText, CheckCircle, AlertTriangle, ShieldCheck, Lock } from 'lucide-react';
@@ -64,7 +65,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
           ...item,
           sizes: newSizes,
           totalQuantity: newTotalQty,
-          totalPrice: item.unitFinalPrice * newTotalQty,
+          totalPrice: roundCurrency(item.unitFinalPrice * newTotalQty),
         };
       })
     );
@@ -81,50 +82,40 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
         if (i !== itemIndex) return item;
         const cb = { ...item.costBreakdown, [field]: value };
 
-        // Recalculate base cost: (Materials + Sewing + Customization + Freight) * (1 + Loss/100)
-        const directSum = Number(cb.materialUnitCost || 0) + 
-                          Number(cb.outsourcedSewingUnitCost || 0) + 
-                          Number(cb.customizationUnitCost || 0) + 
-                          Number(cb.freightPerUnit || 0);
-        const lossFactor = 1 + (Number(cb.technicalLossPercentage || 0) / 100);
-        const calculatedBaseCost = Math.round(directSum * lossFactor * 100) / 100;
-
-        // Formula-base do PRD: Preço sugerido = Custo-base * (1 + Markup/100)
-        const markupFactor = 1 + (Number(cb.markupPercentage || 0) / 100);
-        const suggestedUnitPrice = Math.round(calculatedBaseCost * markupFactor * 100) / 100;
-
-        // Negotiated price
-        const negotiatedPrice = field === 'negotiatedUnitPrice' ? Number(value) : (cb.negotiatedUnitPrice || suggestedUnitPrice);
-        
-        // Authorization check if below suggested
-        const isBelow = negotiatedPrice < suggestedUnitPrice;
-
-        // Margem estimada calculada separadamente: (Preço - Custo) / Preço * 100
-        const estimatedMargin = negotiatedPrice > 0 ? Math.round(((negotiatedPrice - calculatedBaseCost) / negotiatedPrice) * 1000) / 10 : 0;
+        const pricing = PricingEngine.calculateItemPricing({
+          materialUnitCost: Number(cb.materialUnitCost), outsourcedSewingUnitCost: Number(cb.outsourcedSewingUnitCost),
+          customizationUnitCost: Number(cb.customizationUnitCost), freightUnitCost: Number(cb.freightPerUnit),
+          technicalLossPercentage: Number(cb.technicalLossPercentage), markupPercentage: Number(cb.markupPercentage),
+          negotiatedUnitPrice: Number(cb.negotiatedUnitPrice) || undefined,
+        });
+        // Preservar entrada inválida no campo para a validação nativa/API, sem saneamento silencioso.
+        const negotiatedPrice = field === 'negotiatedUnitPrice' ? Number(value) : (cb.negotiatedUnitPrice || pricing.suggestedUnitPrice);
+        const isBelow = negotiatedPrice < pricing.suggestedUnitPrice;
 
         const updatedBreakdown: CostBreakdown = {
           ...cb,
-          calculatedBaseCost,
-          suggestedUnitPrice,
+          calculatedBaseCost: pricing.calculatedBaseUnitCost,
+          suggestedUnitPrice: pricing.suggestedUnitPrice,
+          discountPercentage: pricing.discountPercentage,
           negotiatedUnitPrice: negotiatedPrice,
           belowSuggestedAuthorized: isBelow ? cb.belowSuggestedAuthorized : false,
-          estimatedMarginPercentage: estimatedMargin,
+          estimatedMarginPercentage: pricing.estimatedMarginPercentage,
         };
 
         return {
           ...item,
           costBreakdown: updatedBreakdown,
           unitFinalPrice: negotiatedPrice,
-          totalPrice: negotiatedPrice * item.totalQuantity,
+          totalPrice: roundCurrency(negotiatedPrice * item.totalQuantity),
         };
       })
     );
   };
 
-  const subtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
+  const subtotal = roundCurrency(items.reduce((sum, item) => sum + item.totalPrice, 0));
   const totalAmount = subtotal;
-  const entryAmount = (totalAmount * entryPercentage) / 100;
-  const balanceDue = totalAmount - entryAmount;
+  const entryAmount = roundCurrency((totalAmount * entryPercentage) / 100);
+  const balanceDue = roundCurrency(totalAmount - entryAmount);
 
   const { submit, isSaving } = useSubmission();
   const handleSubmit = async (e: React.FormEvent) => {
@@ -528,6 +519,12 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                     />
                     <Lock className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3" />
                   </div>
+                </div>
+                <div>
+                  <label htmlFor="quote-validity" className="block font-semibold text-slate-700 mb-1">Validade da proposta (dias)</label>
+                  <input id="quote-validity" type="number" required min="1" max="2147483647" step="1"
+                    value={validUntilDays} onChange={(e) => setValidUntilDays(parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-mono" />
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
