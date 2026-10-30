@@ -429,3 +429,12 @@ Novo material na SPA inicia saldo, mínimo e custo em zero, fornecedor/localiza�
 Saldo, mínimo e custo usam step=0.01, min=0, max=99999999.99 e required; descrição, fornecedor e localização respeitam limites 150/120/80. Labels dos campos estão associados aos inputs. Isso alinha a validação nativa à API sem criar mínimo comercial; backend continua autoritativo. Não altera itens existentes ou numeração do servidor.
 
 Validação local: 122 testes, tipagem, build e diff-check aprovados. Teste de interface verifica valores iniciais, código somente leitura, campos opcionais vazios e validade decimal/negativa/overflow no navegador simulado. CI desta continuação pendente. CI anterior: PR #44, https://github.com/enlaceslz/defardas/actions/runs/41035938245. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: cadastro de clientes sem localização presumida
+
+Novo cliente inicia cidade, UF e segmento vazios. Cidade e UF são inputs separados; apagar um campo não reinsere São Paulo/SP nem altera o outro. Edição conserva os valores carregados. Não se infere localização pela sede da empresa nem se corrige cadastro histórico automaticamente.
+
+Campos textuais respeitam maxLength da API (razão/fantasia/e-mail 150, documento 20, inscrição 30, contato 100, telefone 30, endereço 200, cidade 80, UF 2, segmento 60, observações 10000). Contato e telefone passam a ser obrigatórios no formulário como já eram no servidor. Labels dos inputs associados; não são criadas novas regras de CPF/CNPJ, validação de UF ou segmento comercial.
+
+Validação local: 123 testes, tipagem, build e diff-check aprovados. Teste de UI confere campos opcionais vazios, limites e obrigatoriedade, sem presumir valores no envio. CI desta continuação pendente. CI anterior: PR #45, https://github.com/enlaceslz/defardas/actions/runs/41036642989. Sem migração nova, merge ou deploy.

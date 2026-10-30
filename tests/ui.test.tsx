@@ -285,3 +285,18 @@ test('cadastro de material inicia sem dados fictícios e usa código gerado pelo
   assert.equal(saved[0].currentStock, 0); assert.equal(saved[0].costPrice, 0);
   assert.equal(saved[0].supplier, ''); assert.equal(saved[0].location, ''); assert.equal(saved[0].code, '');
 });
+
+test('cadastro de cliente não presume cidade, UF ou segmento e mantém contrato de campos', async () => {
+  const { ClientsView } = await import('../src/components/ClientsView'); const saved: any[] = [];
+  const view = render(<ClientsView clients={[]} onSaveClient={async value => { saved.push(value); return false; }} onDeleteClient={() => {}} />);
+  fireEvent.click(view.getByRole('button', { name: /Cadastrar Novo Cliente/ }));
+  for (const label of ['Cidade', 'UF', 'Segmento']) assert.equal((view.getByLabelText(label) as HTMLInputElement).value, '');
+  for (const [label, limit] of [['Cidade',80], ['UF',2], ['Segmento',60], ['Nome Fantasia',150], ['CNPJ *',20]] as const) {
+    assert.equal((view.getByLabelText(label) as HTMLInputElement).maxLength, limit);
+  }
+  assert.equal((view.getByLabelText('Nome do Contato / Cargo') as HTMLInputElement).required, true);
+  assert.equal((view.getByLabelText('Telefone / WhatsApp') as HTMLInputElement).required, true);
+  fireEvent.submit(view.container.querySelector('form')!);
+  await waitFor(() => assert.equal(saved.length, 1));
+  assert.equal(saved[0].city, ''); assert.equal(saved[0].state, ''); assert.equal(saved[0].segment, '');
+});
