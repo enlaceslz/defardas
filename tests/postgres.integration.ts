@@ -50,6 +50,10 @@ async function request(path: string, method = 'GET', body?: any) {
     const current = await fetch(base + path, { headers });
     body = { ...body, expectedRevision: (await current.json()).revision };
   }
+  if (path.endsWith('/approve-art') && method === 'POST' && body && !Object.hasOwn(body, 'expectedRevision')) {
+    const current = await fetch(base + path.replace('/approve-art', ''), { headers });
+    body = { ...body, expectedRevision: (await current.json()).revision };
+  }
   if (path.endsWith('/advance-stage') && method === 'POST' && body && body.expectedRevision === undefined) {
     const current = await fetch(base + path.replace('/advance-stage', ''), { headers });
     body = { ...body, expectedRevision: (await current.json()).revision };
@@ -1415,4 +1419,21 @@ test('PostgreSQL: baixa não libera OPs quando a estrutura de conversão está d
     if (scenario === 'version') await pool.query('UPDATE producao.production_orders SET quote_version=$1 WHERE id=$2', [quote.version, other.id]);
     else await pool.query("UPDATE financeiro.transactions SET sub_type='saldo_entrega' WHERE id=$1", [balance.id]);
   }
+});
+
+
+test('PostgreSQL: aprovação de arte antiga não altera OP, revisão ou auditoria', async () => {
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  const order = converted.data.orders[0];
+  await pool.query("UPDATE producao.production_orders SET technical_notes='Ficha atual' WHERE id=$1", [order.id]);
+  const before = (await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows;
+  const logs = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows;
+  const path = `/api/orders/${order.id}/approve-art`;
+  const rejected = await request(path, 'POST', { approverName: 'Cliente', expectedRevision: order.revision });
+  assert.equal(rejected.status, 409); assert.equal(rejected.data.code, 'ORDER_REVISION_CONFLICT');
+  assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE id=$1', [order.id])).rows, before);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, logs);
+  const results = await Promise.all(Array.from({ length: 4 }, () => request(path, 'POST', { approverName: 'Cliente', expectedRevision: before[0].revision })));
+  assert.ok(results.every((row) => row.status === 200)); assert.equal(results.filter((row) => row.data.alreadyApproved).length, 3);
+  assert.equal((await pool.query('SELECT revision FROM producao.production_orders WHERE id=$1', [order.id])).rows[0].revision, before[0].revision + 1);
 });

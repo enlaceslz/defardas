@@ -135,8 +135,18 @@ export default function App() {
     alert('Localize o título de sinal da proposta e confirme a liquidação com a autenticação bancária e o comprovante real.');
   };
   const handleApproveArt = async (id: string) => {
+    const order = state.orders.find((item) => item.id === id);
+    if (!order || !Number.isSafeInteger(order.revision) || order.revision! < 1) {
+      await refreshServerState();
+      alert('Dados da OP foram atualizados. Confira a ficha antes de aprovar a arte.');
+      return;
+    }
     const approver = prompt('Nome do cliente que aprovou formalmente a arte:');
-    if (approver?.trim()) await mutate(() => api.approveOrderArt(databaseId(state.orders, id), approver.trim()));
+    if (approver?.trim()) await mutate(async () => {
+      const response = await api.approveOrderArt(databaseId(state.orders, id), approver.trim(), order.revision!);
+      if (response.code === 'ORDER_REVISION_CONFLICT') await refreshServerState();
+      return response;
+    });
   };
   const handleSaveQuote = async (quote: Quote) => mutate(() => api.createQuote({ ...quote,
     clientId: databaseId(state.clients, quote.clientId), commercialStatus: quote.status }));

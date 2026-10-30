@@ -203,10 +203,10 @@ class ApiClient {
     });
   }
 
-  public async approveOrderArt(orderId: string, approverName: string, notes?: string) {
+  public async approveOrderArt(orderId: string, approverName: string, expectedRevision: number, notes?: string) {
     return this.request<any>(`/orders/${orderId}/approve-art`, {
       method: 'POST',
-      body: JSON.stringify({ approverName, notes }),
+      body: JSON.stringify({ approverName, expectedRevision, notes }),
     });
   }
 
