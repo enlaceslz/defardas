@@ -167,3 +167,12 @@ Novas baixas de entrada_pedido/saldo_entrega reutilizam o critério estrutural d
 Replay de título já pago permanece leitura da confirmação anterior. A validação não repara histórico, autentica comprovante ou redefine política de estorno; estados operacionais e financeiros além desses vínculos não são reconciliados automaticamente. Fixtures históricas incompletas exigem análise antes de nova baixa.
 
 Validação local: 116 testes, tipagem, build e diff-check aprovados. Testes HTTP cobrem quatro divergências; PostgreSQL cobre versão de OP e saldo ausente do conjunto, com preservação integral de títulos/OPs/auditoria. CI desta continuação pendente. CI anterior: PR #40, https://github.com/enlaceslz/defardas/actions/runs/40970984858. Sem migração nova ou deploy; bloqueios operacionais permanecem.
+
+
+### Continuação 30/10: revisão na primeira aprovação de arte
+
+POST /api/orders/:id/approve-art exige expectedRevision inteiro positivo da leitura quando ainda não há aprovação. Lock de linha mantém comparação e gravação na mesma transação. Revisão antiga recebe 409/ORDER_REVISION_CONFLICT antes de alterar aprovação, notas, revisão ou auditoria. A SPA envia a revisão exibida e recarrega conflito sem repetir a aprovação. Clientes próprios precisam enviar o campo; usa a migração 0006 existente.
+
+Aprovação já registrada continua retornando alreadyApproved com os dados originais, inclusive com revisão antiga ou corpo ausente. Não se trata de nova aprovação ou substituição do responsável. Isso protege a leitura da ficha, mas não cria versionamento de arquivos, revogação de arte ou prova de autorização do cliente; armazenamento privado e evidência permanecem pendentes.
+
+Validação local: 117 testes, tipagem, build e diff-check aprovados. Cenário PostgreSQL cobre conflito sem gravações e aprovações concorrentes com único incremento de revisão. CI desta continuação pendente. CI anterior: PR #41, https://github.com/enlaceslz/defardas/actions/runs/41032493651. Sem migração nova, merge ou deploy.

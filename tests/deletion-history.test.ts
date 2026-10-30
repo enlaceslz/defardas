@@ -117,6 +117,7 @@ test('edição de OP preserva centavos e equipe vazia, sem mutações em entrada
 
 
 async function approveArt(id: string, body?: any) {
+  if (body && !Object.hasOwn(body, 'expectedRevision')) body = { ...body, expectedRevision: db.orders.get(id)?.revision ?? 1 };
   const response = await fetch(`${base}/orders/${id}/approve-art`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: response.status, data: await response.json() };
@@ -290,4 +291,20 @@ test('texto com U+0000 recebe 400 sem criar ou sobrescrever cliente', async () =
     body: JSON.stringify({ ...input, standardUniformNotes: 'Alteração\u0000inválida' }) });
   assert.equal(response.status, 400);
   assert.deepEqual(db.clients.get(created.data.id), saved);
+});
+
+
+test('primeira aprovação exige revisão atual e conflito não altera ficha nem auditoria', async () => {
+  const id = crypto.randomUUID(); const orderNumber = `ART-${id.slice(0,8)}`;
+  db.orders.set(id, { id, orderNumber, revision: 2, artApproved: false, technicalNotes: 'Ficha atual' } as any);
+  const before = structuredClone(db.orders.get(id));
+  for (const expectedRevision of [undefined, null, 0, 1.5]) assert.equal((await approveArt(id, { approverName: 'Cliente', expectedRevision })).status, 400);
+  const rejected = await approveArt(id, { approverName: 'Cliente', expectedRevision: 1 });
+  assert.equal(rejected.status, 409); assert.equal(rejected.data.code, 'ORDER_REVISION_CONFLICT');
+  assert.deepEqual(db.orders.get(id), before);
+  assert.equal((await auditService.getRecentLogs(500, 'producao.production_orders', orderNumber)).length, 0);
+  const accepted = await approveArt(id, { approverName: 'Cliente', expectedRevision: 2 }); assert.equal(accepted.status, 200);
+  const saved = structuredClone(db.orders.get(id));
+  assert.equal((await approveArt(id, { approverName: 'Outro', expectedRevision: 1 })).data.alreadyApproved, true);
+  assert.deepEqual(db.orders.get(id), saved);
 });

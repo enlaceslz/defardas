@@ -110,7 +110,7 @@ ordersRouter.post('/:id/advance-stage', requirePermission('orders:advance_stage'
 // Aprovação Formal de Arte (Gate da Arte)
 ordersRouter.post('/:id/approve-art', requirePermission('orders:approve_art'), atomic(async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
-  const order = await orderRepository.findById(req.params.id);
+  const order = await orderRepository.findByIdForUpdate(req.params.id);
   if (!order) {
     return res.status(404).json({ error: 'Ordem de Produção não encontrada' });
   }
@@ -118,6 +118,10 @@ ordersRouter.post('/:id/approve-art', requirePermission('orders:approve_art'), a
   // Aprovação já registrada não pode ser substituída por um retry da mesma ação.
   if (order.artApproved) {
     return res.json({ success: true, alreadyApproved: true, message: 'Arte já aprovada anteriormente.', order });
+  }
+  const expectedRevision = number(req.body?.expectedRevision, 'Revisão esperada da OP', 1, true);
+  if (expectedRevision !== (order.revision ?? 1)) {
+    return res.status(409).json({ error: 'A OP foi alterada. Atualize a ficha antes de aprovar a arte.', code: 'ORDER_REVISION_CONFLICT' });
   }
   const { approverName, fileUrl } = req.body || {};
   const approvedBy = text(approverName, 'Nome do cliente que aprovou a arte', 100);
