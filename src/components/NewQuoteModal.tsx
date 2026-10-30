@@ -58,7 +58,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
     setItems((prev) =>
       prev.map((item, i) => {
         if (i !== itemIndex) return item;
-        const newSizes = { ...item.sizes, [sizeKey]: Math.max(0, value) };
+        const newSizes = { ...item.sizes, [sizeKey]: value };
         const newTotalQty = getTotalFromSizeGrid(newSizes);
         return {
           ...item,
@@ -335,8 +335,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                             <input
                               type="number"
                               min="0"
-                              value={item.sizes[sz]}
-                              onChange={(e) => handleItemSizeChange(index, sz, parseInt(e.target.value) || 0)}
+                              aria-label={`Quantidade ${sz}`} step="1" max="2147483647" required value={item.sizes[sz]}
+                              onChange={(e) => handleItemSizeChange(index, sz, parseFloat(e.target.value) || 0)}
                               className="w-full px-1.5 py-1 text-center font-mono font-semibold border border-slate-200 rounded text-xs"
                             />
                           </div>
@@ -352,8 +352,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                         </label>
                         <input
                           type="number"
-                          step="0.5"
-                          value={cb.materialUnitCost}
+                          step="0.01"
+                          aria-label="Custo de material" required min="0" max="99999999.99" value={cb.materialUnitCost}
                           onChange={(e) => updateItemCostComponent(index, 'materialUnitCost', parseFloat(e.target.value) || 0)}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
@@ -365,8 +365,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                         </label>
                         <input
                           type="number"
-                          step="0.5"
-                          value={cb.outsourcedSewingUnitCost}
+                          step="0.01"
+                          aria-label="Custo de costura" required min="0" max="99999999.99" value={cb.outsourcedSewingUnitCost}
                           onChange={(e) => updateItemCostComponent(index, 'outsourcedSewingUnitCost', parseFloat(e.target.value) || 0)}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
@@ -378,8 +378,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                         </label>
                         <input
                           type="number"
-                          step="0.5"
-                          value={cb.customizationUnitCost}
+                          step="0.01"
+                          aria-label="Custo de personalização" required min="0" max="99999999.99" value={cb.customizationUnitCost}
                           onChange={(e) => updateItemCostComponent(index, 'customizationUnitCost', parseFloat(e.target.value) || 0)}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
@@ -391,8 +391,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                         </label>
                         <input
                           type="number"
-                          step="0.5"
-                          value={cb.technicalLossPercentage}
+                          step="0.01"
+                          aria-label="Perda técnica percentual" required min="0" max="999.99" value={cb.technicalLossPercentage}
                           onChange={(e) => updateItemCostComponent(index, 'technicalLossPercentage', parseFloat(e.target.value) || 0)}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
@@ -415,8 +415,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                         <div className="flex items-center gap-1.5 mt-1">
                           <input
                             type="number"
-                            step="1"
-                            value={cb.markupPercentage}
+                            step="0.01"
+                            aria-label="Markup percentual" required min="0" max="9999.99" value={cb.markupPercentage}
                             onChange={(e) => updateItemCostComponent(index, 'markupPercentage', parseFloat(e.target.value) || 0)}
                             className="w-20 px-2 py-1 border border-blue-300 rounded bg-white font-mono font-bold text-xs"
                           />
@@ -439,8 +439,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                         </label>
                         <input
                           type="number"
-                          step="0.5"
-                          value={cb.negotiatedUnitPrice}
+                          step="0.01"
+                          aria-label="Preço negociado" required min="0.01" max="99999999.99" value={cb.negotiatedUnitPrice}
                           onChange={(e) => updateItemCostComponent(index, 'negotiatedUnitPrice', parseFloat(e.target.value) || 0)}
                           className="w-full px-2 py-1 border border-blue-300 rounded bg-white font-mono font-bold text-xs mt-1"
                         />
@@ -535,8 +535,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                   </label>
                   <input
                     type="number"
-                    value={productionLeadDays}
-                    onChange={(e) => setProductionLeadDays(parseInt(e.target.value) || 0)}
+                    aria-label="Prazo de fabricação" required min="1" max="2147483647" step="1" value={productionLeadDays}
+                    onChange={(e) => setProductionLeadDays(parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-mono"
                   />
                 </div>

@@ -476,3 +476,26 @@ test('QR recebido depois de fechar modal não reaparece', async () => {
     assert.equal(Boolean(view.queryByRole('button', { name: 'Reconectar Canal' })), false);
   });
 });
+
+test('proposta aceita centavos e percentuais decimais sem truncar grade ou prazo inválido', async () => {
+  const { AuthProvider } = await import('../src/api/authContext');
+  const { NewQuoteModal } = await import('../src/components/NewQuoteModal');
+  const oldMe = api.getMe; const oldHealth = api.getHealth;
+  api.getMe = async () => ({ status: 401 }); api.getHealth = async () => ({ status: 200, data: { status: 'healthy' } });
+  try {
+    const view = render(<AuthProvider><NewQuoteModal clients={[]} onClose={() => {}} onSaveQuote={async () => false} /></AuthProvider>);
+    for (const label of ['Custo de material', 'Custo de costura', 'Custo de personalização', 'Perda técnica percentual', 'Markup percentual', 'Preço negociado']) {
+      const field = view.getByLabelText(label) as HTMLInputElement;
+      assert.equal(field.step, '0.01'); field.value = '1.25'; assert.equal(field.checkValidity(), true);
+      field.value = '1.005'; assert.equal(field.checkValidity(), false);
+    }
+    for (const label of ['Quantidade p', 'Prazo de fabricação']) {
+      const field = view.getByLabelText(label) as HTMLInputElement;
+      fireEvent.change(field, { target: { value: '1.5' } });
+      assert.equal(field.value, '1.5'); assert.equal(field.checkValidity(), false);
+      fireEvent.change(field, { target: { value: '-1' } });
+      assert.equal(field.value, '-1'); assert.equal(field.checkValidity(), false);
+    }
+    await act(async () => {});
+  } finally { api.getMe = oldMe; api.getHealth = oldHealth; }
+});

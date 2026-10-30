@@ -492,3 +492,12 @@ Consulta de QR e reconexão tratam rejeições inesperadas com erro genérico e 
 Não cancela chamadas no provedor nem implementa pareamento, autenticação ou expiração real do QR. Respostas normais de erro mantêm mensagem da API; exceções não expõem detalhes internos. Homologação do provedor continua pendente.
 
 Validação local: 134 testes, tipagem, build e diff-check aprovados. Testes UI cobrem rejeição de consulta, rejeição da reconexão após QR exibido, liberação do botão e resposta recebida depois de fechar o modal. CI desta continuação pendente. CI anterior: PR #51, https://github.com/enlaceslz/defardas/actions/runs/41063638206. Sem migração nova, mensagens externas, merge ou deploy.
+
+
+### Continuação 30/10: precisão nos campos da proposta
+
+Custos e preço negociado da SPA usam step=0.01, limites numeric(10,2) e obrigatoriedade; perda técnica e markup usam duas casas decimais e máximos técnicos 999.99/9999.99. Isso remove restrições nativas indevidas de passos 0.5 e markup inteiro. Preço negociado exige ao menos 0.01, conforme contrato existente da API.
+
+Grade e prazo usam step=1 e preservam frações/negativos no input como inválidos, em vez de parseInt/clamp silencioso. Grade mantém mínimo zero por tamanho e prazo mínimo um. API continua validando soma da grade, capacidade da data, totais derivados e precisão, sem nova regra comercial ou mudança da fórmula de markup. Limites nativos não substituem validação do servidor.
+
+Validação local: 135 testes, tipagem, build e diff-check aprovados. Teste UI cobre centavos, percentuais e preservação de entrada fracionária/negativa em grade/prazo. CI desta continuação pendente. CI anterior: PR #52, https://github.com/enlaceslz/defardas/actions/runs/41077130598. Sem migração nova, merge ou deploy.
