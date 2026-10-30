@@ -447,3 +447,12 @@ A tela de configurações reutiliza useSubmission para bloquear envios simultân
 Proteção é por instância da tela; não constitui idempotência persistida nem revisão contra formulários de outras abas. Não altera transação do backend, conteúdo público ou regras do perfil.
 
 Validação local: 125 testes, tipagem, build e diff-check aprovados. Novos testes UI cobrem envio simultâneo, confirmação, falha após sucesso e exceção com liberação do formulário. CI desta continuação pendente. CI anterior: PR #46, https://github.com/enlaceslz/defardas/actions/runs/41057295276. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: chaves de mensagens ao alternar textos
+
+A SPA mantém tentativas não confirmadas por conversa e texto normalizado (trim), em vez de substituir pela última tentativa. Alternar A→B→A após falhas reutiliza a chave original de A. Sucesso confirmado encerra somente a tentativa daquele texto; B continua com sua chave, e um novo envio intencional de A após sucesso recebe outra chave.
+
+Estado permanece apenas em memória durante a montagem da tela. Recarregar/desmontar perde as chaves; conferir histórico/reconciliar antes de repetir envio incerto. Não persiste rascunhos, envia automaticamente mensagens, resolve entrega do provedor ou deduplica textos parecidos. A proteção do servidor continua baseada na chave, não no corpo.
+
+Validação local: 126 testes, tipagem, build e diff-check aprovados. Novo teste UI cobre alternância, normalização de espaços, sucesso seletivo e nova intenção após confirmação; testes de idempotência backend existentes continuam aplicáveis. CI desta continuação pendente. CI anterior: PR #47, https://github.com/enlaceslz/defardas/actions/runs/41058340780. Sem migração nova, mensagens externas, merge ou deploy.
