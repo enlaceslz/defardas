@@ -101,3 +101,21 @@ test('movimentação rejeita identificadores inválidos e OP ausente antes de sa
   const replay = await request('/movements', payload, 'POST', key); assert.equal(replay.status, 200);
   assert.equal(replay.data.replayed, true); assert.equal(replay.data.item.physicalStock, 1.1);
 });
+
+test('exclusão consulta somente existência de histórico e mantém rollback para item livre', async () => {
+  const created = await request('/items', { ...item(), physicalStock: 0 }); assert.equal(created.status, 201);
+  const id = created.data.id; const originalList = inventoryRepository.findAllMovements;
+  const originalAudit = auditService.log;
+  const movementId = crypto.randomUUID();
+  const remove = () => fetch(`${base}/items/${id}`, { method: 'DELETE' });
+  try {
+    inventoryRepository.findAllMovements = async () => { throw new Error('Must not load history'); };
+    db.movements.set(movementId, { id: movementId, itemId: id } as any);
+    assert.equal((await remove()).status, 409); assert.ok(db.inventory.has(id)); assert.ok(db.movements.has(movementId));
+    db.movements.delete(movementId);
+    auditService.log = async () => { throw new Error('Injected delete failure'); };
+    assert.equal((await remove()).status, 500); assert.ok(db.inventory.has(id));
+    auditService.log = originalAudit;
+    assert.equal((await remove()).status, 200); assert.equal(db.inventory.has(id), false);
+  } finally { inventoryRepository.findAllMovements = originalList; auditService.log = originalAudit; }
+});

@@ -252,7 +252,7 @@ inventoryRouter.put('/items/:id', requirePermission('inventory:manage_items'), a
 inventoryRouter.delete('/items/:id', requirePermission('inventory:manage_items'), atomic(async (req: RequestWithUser, res: Response) => {
   const item = await inventoryRepository.findItemById(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item não encontrado.' });
-  if (item.physicalStock || item.allocatedStock || item.inPartnersCustodyStock || (await inventoryRepository.findAllMovements()).some((m) => m.itemId === item.id)) {
+  if (item.physicalStock || item.allocatedStock || item.inPartnersCustodyStock || await inventoryRepository.hasHistory(item.id)) {
     return res.status(409).json({ error: 'Item com saldo ou histórico não pode ser excluído.' });
   }
   await inventoryRepository.deleteItem(item.id);

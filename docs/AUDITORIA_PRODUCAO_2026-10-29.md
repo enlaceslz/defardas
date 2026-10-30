@@ -176,3 +176,12 @@ POST /api/orders/:id/approve-art exige expectedRevision inteiro positivo da leit
 Aprovação já registrada continua retornando alreadyApproved com os dados originais, inclusive com revisão antiga ou corpo ausente. Não se trata de nova aprovação ou substituição do responsável. Isso protege a leitura da ficha, mas não cria versionamento de arquivos, revogação de arte ou prova de autorização do cliente; armazenamento privado e evidência permanecem pendentes.
 
 Validação local: 117 testes, tipagem, build e diff-check aprovados. Cenário PostgreSQL cobre conflito sem gravações e aprovações concorrentes com único incremento de revisão. CI desta continuação pendente. CI anterior: PR #41, https://github.com/enlaceslz/defardas/actions/runs/41032493651. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: histórico na exclusão de material
+
+Exclusão de item verifica existência de movimentos e custódias por item_id com EXISTS, sem carregar/ordenar todo o histórico de movimentações. Custódias encerradas também impedem remoção, mesmo sem saldo atual. A FK PostgreSQL já preservava esses vínculos; a API agora responde explicitamente 409 com a regra de saldo/histórico antes da tentativa de DELETE.
+
+No modo local, a consulta percorre movimentos até encontrar o vínculo; custódias continuam disponíveis apenas no PostgreSQL, sem criar módulo fictício local. Item livre mantém exclusão auditada e rollback se a auditoria falhar. Não apaga histórico, altera saldos ou cria regra de descarte. Não há alegação de capacidade sem ensaio de carga.
+
+Validação local: 118 testes, tipagem, build e diff-check aprovados. Teste PostgreSQL cobre custódia devolvida_total com saldo zero, preservação do item/vínculo/auditoria e exclusão de fixture livre, sem listar todos os movimentos. CI desta continuação pendente. CI anterior: PR #42, https://github.com/enlaceslz/defardas/actions/runs/41033356198. Sem migração nova, merge ou deploy.
