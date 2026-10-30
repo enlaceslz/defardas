@@ -3,12 +3,25 @@
  * Gerencia o controle de tecidoteca, saldo próprio, alocado e em poder de facções parceiras.
  */
 import { eq, desc } from 'drizzle-orm';
-import { db as drizzleDb } from '../db/index';
+import { db as drizzleDb, query } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
 import { items, movements, InventoryItem, StockMovement, NewInventoryItem, NewStockMovement } from '../db/schema/inventory';
 import { InventoryItemEntity, StockMovementEntity } from '../types/db';
 
 export class InventoryRepository {
+  public async hasHistory(itemId: string): Promise<boolean> {
+    await fallbackDb.ready;
+    if (fallbackDb.isConnected()) {
+      const result = await query(`SELECT EXISTS(SELECT 1 FROM estoque.movements WHERE item_id=$1)
+        OR EXISTS(SELECT 1 FROM estoque.partner_custody WHERE item_id=$1) AS found`, [itemId]);
+      return result.rows[0].found;
+    }
+    if (process.env.DATABASE_URL || process.env.NODE_ENV === 'production') throw new Error('PostgreSQL indisponível.');
+    // Custódias ainda não têm repositório local; existem apenas no PostgreSQL.
+    for (const movement of fallbackDb.movements.values()) if (movement.itemId === itemId) return true;
+    return false;
+  }
+
   public async findAllItems(): Promise<InventoryItemEntity[]> {
     await fallbackDb.ready;
     if (process.env.NODE_ENV === 'production' && !fallbackDb.isConnected()) {

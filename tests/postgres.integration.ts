@@ -1437,3 +1437,25 @@ test('PostgreSQL: aprovação de arte antiga não altera OP, revisão ou auditor
   assert.ok(results.every((row) => row.status === 200)); assert.equal(results.filter((row) => row.data.alreadyApproved).length, 3);
   assert.equal((await pool.query('SELECT revision FROM producao.production_orders WHERE id=$1', [order.id])).rows[0].revision, before[0].revision + 1);
 });
+
+
+test('PostgreSQL: item sem saldo com custódia encerrada não é excluído nem carrega todo o histórico', async () => {
+  const { inventoryRepository } = await import('../server/repositories/inventoryRepository');
+  const created = await request('/api/inventory/items', 'POST', { name: 'Custody history', category: 'tecido', unit: 'metros', physicalStock: 0, minStock: 0, unitCostPrice: 1 });
+  assert.equal(created.status, 201); const id = created.data.id;
+  const partnerId = crypto.randomUUID(); const custodyId = crypto.randomUUID();
+  await pool.query("INSERT INTO producao.partners(id,code,name,trade_name,phone,partner_type) VALUES($1,$2,'Test','Test','000','costura')", [partnerId, `HIST-${partnerId.slice(0,8)}`]);
+  await pool.query("INSERT INTO estoque.partner_custody(id,partner_id,item_id,sent_quantity,returned_quantity,unit,sent_date,status) VALUES($1,$2,$3,1,1,'metros','2026-10-30','devolvido_total')", [custodyId, partnerId, id]);
+  const original = inventoryRepository.findAllMovements;
+  const logs = (await pool.query('SELECT count(*) FROM core.audit_logs')).rows;
+  try {
+    inventoryRepository.findAllMovements = async () => { throw new Error('Must not load history'); };
+    const response = await request(`/api/inventory/items/${id}`, 'DELETE'); assert.equal(response.status, 409);
+    assert.match(response.data.error, /saldo ou histórico/);
+    assert.equal((await pool.query('SELECT id FROM estoque.items WHERE id=$1', [id])).rowCount, 1);
+    assert.equal((await pool.query('SELECT id FROM estoque.partner_custody WHERE id=$1', [custodyId])).rowCount, 1);
+    assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, logs);
+    await pool.query('DELETE FROM estoque.partner_custody WHERE id=$1', [custodyId]);
+    assert.equal((await request(`/api/inventory/items/${id}`, 'DELETE')).status, 200);
+  } finally { inventoryRepository.findAllMovements = original; }
+});
