@@ -150,16 +150,19 @@ export const WhatsAppOmnichannelView: React.FC = () => {
       conversationAttempts.set(normalizedBody, key);
       attempts.current.set(conversationId, conversationAttempts);
       const res = await api.sendConversationMessage(conversationId, body.trim(), undefined, key);
-      if (activeId.current !== conversationId) return false;
+      if (!mounted.current) return false;
       if (res.status !== 201 || !res.data?.id || !['sent', 'delivered', 'read'].includes(res.data.status)) {
-        setSendError(res.error || 'Envio não confirmado. Confira o histórico antes de tentar novamente.');
-        if (res.data?.id) setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
+        if (activeId.current === conversationId) {
+          setSendError(res.error || 'Envio não confirmado. Confira o histórico antes de tentar novamente.');
+          if (res.data?.id) setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
+        }
         return false;
       }
       conversationAttempts.delete(normalizedBody);
       if (!conversationAttempts.size) attempts.current.delete(conversationId);
-      setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
-      if (clearDraft) setInputMessage((current) => current.trim() === body.trim() ? '' : current);
+      if (activeId.current === conversationId) setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
+      if (clearDraft) setDrafts((previous) => (previous[conversationId] || '').trim() === normalizedBody
+        ? { ...previous, [conversationId]: '' } : previous);
       setConversations((prev) => prev.map((c) => c.id === conversationId
         ? { ...c, lastMessageText: body, lastMessageAt: res.data.createdAt } : c));
       return true;

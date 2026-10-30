@@ -404,3 +404,40 @@ test('consulta de lista invalidada na desmontagem não inicia carregamento de co
     assert.equal(historyCalls, 0);
   });
 });
+
+test('confirmação após trocar conversa limpa somente rascunho de origem e encerra sua chave', async () => {
+  await withCommunication(async () => {
+    api.getConversations = async () => ({ status: 200, data: [conversationFixture, { ...conversationFixture, id: 'second', customerName: 'Segundo Contato' }] });
+    const keys: string[] = []; let finish!: (value: any) => void;
+    api.sendConversationMessage = async (_id, _body, _media, key) => { keys.push(key!); return new Promise(resolve => { finish = resolve; }); };
+    const view = render(<WhatsAppOmnichannelView />);
+    const input = await view.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Enviado na origem' } }); fireEvent.submit(input.closest('form')!);
+    fireEvent.click(view.getByText('Segundo Contato'));
+    fireEvent.change(input, { target: { value: 'Rascunho segundo' } });
+    await act(async () => finish({ status: 201, data: { id: 'confirmed-first', body: 'Enviado na origem', direction: 'outbound', status: 'sent', createdAt: new Date().toISOString() } }));
+    assert.equal(input.value, 'Rascunho segundo'); assert.equal(view.queryAllByLabelText('Status: sent').length, 0);
+    fireEvent.click(view.getByText('Contato Teste'));
+    assert.equal(input.value, '');
+    fireEvent.change(input, { target: { value: 'Enviado na origem' } }); fireEvent.submit(input.closest('form')!);
+    assert.equal(keys.length, 2); assert.notEqual(keys[0], keys[1]);
+    await act(async () => finish({ status: 503, error: 'Não confirmado' }));
+  });
+});
+
+test('falha após trocar conversa não contamina erro atual e preserva rascunho e chave de origem', async () => {
+  await withCommunication(async () => {
+    api.getConversations = async () => ({ status: 200, data: [conversationFixture, { ...conversationFixture, id: 'second', customerName: 'Segundo Contato' }] });
+    const keys: string[] = []; let finish!: (value: any) => void;
+    api.sendConversationMessage = async (_id, _body, _media, key) => { keys.push(key!); return new Promise(resolve => { finish = resolve; }); };
+    const view = render(<WhatsAppOmnichannelView />);
+    const input = await view.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Tentativa incerta' } }); fireEvent.submit(input.closest('form')!);
+    fireEvent.click(view.getByText('Segundo Contato'));
+    await act(async () => finish({ status: 503, error: 'Falha na origem' }));
+    assert.equal(Boolean(view.queryByRole('alert')), false);
+    fireEvent.click(view.getByText('Contato Teste')); assert.equal(input.value, 'Tentativa incerta');
+    fireEvent.submit(input.closest('form')!); assert.equal(keys.length, 2); assert.equal(keys[0], keys[1]);
+    await act(async () => finish({ status: 503, error: 'Não confirmado' }));
+  });
+});
