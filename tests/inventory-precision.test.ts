@@ -119,3 +119,15 @@ test('exclusão consulta somente existência de histórico e mantém rollback pa
     assert.equal((await remove()).status, 200); assert.equal(db.inventory.has(id), false);
   } finally { inventoryRepository.findAllMovements = originalList; auditService.log = originalAudit; }
 });
+
+test('ajuste com saldo esperado antigo não grava metadados nem movimento', async () => {
+  const created = await request('/items', { ...item(), physicalStock: 10 }); assert.equal(created.status, 201);
+  const id = created.data.id;
+  assert.equal((await request('/movements', { itemId: id, type: 'entrada_compra', quantity: 2 })).status, 201);
+  const before = structuredClone([db.inventory, db.movements]);
+  const payload = { ...item(), name: 'Não sobrescrever', currentStock: 15, expectedPhysicalStock: 10, adjustmentReason: 'Test' };
+  assert.equal((await request(`/items/${id}`, payload, 'PUT')).status, 409);
+  assert.deepEqual([db.inventory, db.movements], before);
+  assert.equal((await request(`/items/${id}`, { ...payload, expectedPhysicalStock: 12 }, 'PUT')).status, 200);
+  assert.equal(db.inventory.get(id)?.physicalStock, 15);
+});

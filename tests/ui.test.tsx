@@ -239,3 +239,27 @@ test('cliente envia revisão da leitura para etapa e preserva código de conflit
     assert.equal(requests.length, 1); assert.deepEqual(JSON.parse(requests[0].body), { targetStage: 'corte', expectedRevision: 7 });
   } finally { globalThis.fetch = originalFetch; api.setCsrfToken(oldCsrf); }
 });
+
+test('edição de estoque preserva saldo observado ao abrir formulário mesmo após recarga da lista', async () => {
+  const { InventoryView } = await import('../src/components/InventoryView');
+  const item: any = { id: 'stock-test', code: 'TEC-TEST', name: 'Tecido', category: 'tecido', unit: 'metros', currentStock: 10,
+    allocatedStock: 0, inPartnersCustodyStock: 0, minStock: 0, costPrice: 1, supplier: '', location: '', lastRestocked: '2026-10-30' };
+  const saved: any[] = []; const props = { onSaveItem: async (value: any) => { saved.push(value); return false; }, onDeleteItem: () => {} };
+  const view = render(<InventoryView inventory={[item]} {...props} />);
+  fireEvent.click(view.getByTitle('Editar item'));
+  view.rerender(<InventoryView inventory={[{ ...item, currentStock: 12 }]} {...props} />);
+  fireEvent.submit(view.container.querySelector('form')!);
+  await waitFor(() => assert.equal(saved.length, 1));
+  assert.equal(saved[0].currentStock, 10); assert.equal(saved[0].expectedPhysicalStock, 10);
+  assert.ok(view.container.querySelector('form'));
+});
+
+test('atalho de estoque envia saldo observado antes do ajuste', async () => {
+  const { InventoryView } = await import('../src/components/InventoryView'); const saved: any[] = [];
+  const item: any = { id: 'stock-quick', code: 'TEC-QUICK', name: 'Tecido', category: 'tecido', unit: 'metros', currentStock: 10,
+    allocatedStock: 0, inPartnersCustodyStock: 0, minStock: 0, costPrice: 1, supplier: '', location: '', lastRestocked: '2026-10-30' };
+  const view = render(<InventoryView inventory={[item]} onSaveItem={async value => { saved.push(value); return true; }} onDeleteItem={() => {}} />);
+  fireEvent.click(view.getByTitle('Adicionar 50 unidades (Entrada de Rolo)'));
+  await waitFor(() => assert.equal(saved.length, 1));
+  assert.equal(saved[0].currentStock, 60); assert.equal(saved[0].expectedPhysicalStock, 10);
+});

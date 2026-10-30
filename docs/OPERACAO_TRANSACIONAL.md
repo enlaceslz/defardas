@@ -411,3 +411,12 @@ Exclusão de item verifica existência de movimentos e custódias por item_id co
 No modo local, a consulta percorre movimentos até encontrar o vínculo; custódias continuam disponíveis apenas no PostgreSQL, sem criar módulo fictício local. Item livre mantém exclusão auditada e rollback se a auditoria falhar. Não apaga histórico, altera saldos ou cria regra de descarte. Não há alegação de capacidade sem ensaio de carga.
 
 Validação local: 118 testes, tipagem, build e diff-check aprovados. Teste PostgreSQL cobre custódia devolvida_total com saldo zero, preservação do item/vínculo/auditoria e exclusão de fixture livre, sem listar todos os movimentos. CI desta continuação pendente. CI anterior: PR #42, https://github.com/enlaceslz/defardas/actions/runs/41033356198. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: saldo observado no ajuste pela SPA
+
+O formulário de estoque envia expectedPhysicalStock capturado ao abrir a ficha; atalhos capturam o saldo exibido ao iniciar a ação. App não substitui essa precondição pelo saldo mais recente do estado global durante o salvamento. Uma recarga da lista enquanto o formulário está aberto não autoriza silenciosamente um ajuste antigo. Em 409, recarrega dados sem repetir automaticamente a alteração.
+
+O contrato e a comparação do backend permanecem: quando saldo desejado difere do saldo atual, expectedPhysicalStock precisa coincidir com o observado no banco. Não é uma revisão completa do item e não resolve mudanças de metadados ou saldo que sai e volta ao mesmo valor (ABA). Formulário que recebe falha permanece aberto; fechar/reabrir permite revisar os dados atuais. Sem chave durável para esse comando ou alteração das regras de ajuste compensatório.
+
+Validação local: 121 testes, tipagem, build e diff-check aprovados. Testes de interface cobrem recarga com formulário aberto e atalho; HTTP/PostgreSQL conferem conflito sem alterar metadados, saldo, movimentos e auditoria, seguido de gravação com precondição atual. CI desta continuação pendente. CI anterior: PR #43, https://github.com/enlaceslz/defardas/actions/runs/41035146812. Sem migração nova, merge ou deploy.

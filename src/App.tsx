@@ -174,7 +174,11 @@ export default function App() {
     if (!existing?.backendId) return mutate(() => api.createInventoryItem(item));
     const reason = item.currentStock !== existing.currentStock ? prompt('Motivo do ajuste de estoque:') : '';
     if (item.currentStock !== existing.currentStock && !reason?.trim()) return false;
-    return mutate(() => api.updateInventoryItem(existing.backendId!, { ...item, expectedPhysicalStock: existing.currentStock, adjustmentReason: reason }));
+    return mutate(async () => {
+      const response = await api.updateInventoryItem(existing.backendId!, { ...item, adjustmentReason: reason });
+      if (response.status === 409) await refreshServerState();
+      return response;
+    });
   };
   const handleDeleteInventoryItem = async (id: string) => {
     if (confirm('Excluir item sem saldo e sem histórico?')) await mutate(() => api.deleteInventoryItem(databaseId(state.inventory, id)));

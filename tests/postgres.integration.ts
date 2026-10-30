@@ -1459,3 +1459,19 @@ test('PostgreSQL: item sem saldo com custódia encerrada não é excluído nem c
     assert.equal((await request(`/api/inventory/items/${id}`, 'DELETE')).status, 200);
   } finally { inventoryRepository.findAllMovements = original; }
 });
+
+
+test('PostgreSQL: ajuste com leitura antiga preserva item, movimento e auditoria', async () => {
+  const input = { name: 'Stock revision', category: 'tecido', unit: 'metros', physicalStock: 10, minStock: 0, unitCostPrice: 1 };
+  const created = await request('/api/inventory/items', 'POST', input); assert.equal(created.status, 201); const id = created.data.id;
+  assert.equal((await request('/api/inventory/movements', 'POST', { itemId: id, type: 'entrada_compra', quantity: 2 })).status, 201);
+  const before = { item: (await pool.query('SELECT * FROM estoque.items WHERE id=$1', [id])).rows,
+    movements: (await pool.query('SELECT count(*) FROM estoque.movements')).rows,
+    audit: (await pool.query('SELECT count(*) FROM core.audit_logs')).rows };
+  const payload = { ...input, name: 'Must not overwrite', currentStock: 15, expectedPhysicalStock: 10, adjustmentReason: 'Test' };
+  assert.equal((await request(`/api/inventory/items/${id}`, 'PUT', payload)).status, 409);
+  assert.deepEqual((await pool.query('SELECT * FROM estoque.items WHERE id=$1', [id])).rows, before.item);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM estoque.movements')).rows, before.movements);
+  assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, before.audit);
+  assert.equal((await request(`/api/inventory/items/${id}`, 'PUT', { ...payload, expectedPhysicalStock: 12 })).status, 200);
+});
