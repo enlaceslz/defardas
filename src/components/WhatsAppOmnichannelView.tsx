@@ -118,10 +118,19 @@ export const WhatsAppOmnichannelView: React.FC = () => {
     setIsLoadingMessages(true);
     void api.getConversationMessages(activeConversationId).then((res) => {
       if (cancelled) return;
-      if (res.status === 200 && Array.isArray(res.data)) setMessages(res.data);
+      if (res.status === 200 && Array.isArray(res.data)) {
+        const history = res.data as Message[];
+        setMessages((current) => {
+          const merged = new Map(history.map((message) => [message.id, message]));
+          // Confirmações recebidas enquanto a consulta aguardava não podem desaparecer.
+          for (const message of current) merged.set(message.id, message);
+          return [...merged.values()];
+        });
+      }
       else setSendError(res.error || 'Não foi possível carregar o histórico.');
-      setIsLoadingMessages(false);
-    });
+    }).catch(() => {
+      if (!cancelled) setSendError('Não foi possível carregar o histórico.');
+    }).finally(() => { if (!cancelled) setIsLoadingMessages(false); });
     return () => { cancelled = true; };
   }, [activeConversationId]);
 

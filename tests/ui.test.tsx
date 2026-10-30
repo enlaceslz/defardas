@@ -347,3 +347,33 @@ test('alternar textos sem confirmação preserva cada chave e sucesso encerra so
     assert.equal(calls[2].body, 'A');
   });
 });
+
+test('histórico atrasado da mesma conversa preserva envio confirmado e não duplica ID', async () => {
+  for (const includesSent of [false, true]) await withCommunication(async () => {
+    let finishHistory!: (value: any) => void;
+    const sent = { id: 'sent-during-history', body: 'Mensagem confirmada', direction: 'outbound', status: 'sent', createdAt: new Date().toISOString() };
+    api.getConversationMessages = async () => new Promise(resolve => { finishHistory = resolve; });
+    api.sendConversationMessage = async () => ({ status: 201, data: sent });
+    const view = render(<WhatsAppOmnichannelView />);
+    const input = await view.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: sent.body } }); fireEvent.submit(input.closest('form')!);
+    await waitFor(() => assert.equal(input.value, ''));
+    await act(async () => finishHistory({ status: 200, data: [
+      { id: 'older', body: 'Histórico anterior', direction: 'inbound', status: 'read', createdAt: sent.createdAt },
+      ...(includesSent ? [sent] : []),
+    ] }));
+    await view.findByText('Histórico anterior');
+    assert.equal(view.getAllByLabelText('Status: sent').length, 1);
+    assert.ok(view.getAllByText(sent.body).length > 0);
+  });
+});
+
+test('falha inesperada ao carregar histórico encerra espera e informa erro seguro', async () => {
+  await withCommunication(async () => {
+    api.getConversationMessages = async () => { throw new Error('private-provider-detail'); };
+    const view = render(<WhatsAppOmnichannelView />);
+    await view.findByRole('alert');
+    assert.equal(view.getByRole('alert').textContent, 'Não foi possível carregar o histórico.');
+    assert.equal(view.container.textContent?.includes('private-provider-detail'), false);
+  });
+});
