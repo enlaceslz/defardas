@@ -158,3 +158,12 @@ Nova baixa de entrada_pedido/saldo_entrega exige quoteId com proposta existente 
 Títulos manuais continuam com fluxo independente. Replay de título já pago permanece leitura da confirmação anterior, sem nova baixa. A checagem não substitui a reconciliação integral da conversão (todos os itens e títulos), nem valida autenticidade do comprovante. Dados históricos não são reparados automaticamente.
 
 Validação local: 115 testes, tipagem, build e diff-check aprovados. Cenário PostgreSQL remove separadamente os vínculos e confere título, OPs e auditoria intactos, depois valida baixa com vínculos restaurados. CI desta continuação pendente. CI anterior: PR #39, https://github.com/enlaceslz/defardas/actions/runs/40970398395. Sem migração nova, merge ou deploy; bloqueios operacionais permanecem.
+
+
+### Continuação: integridade estrutural antes da baixa
+
+Novas baixas de entrada_pedido/saldo_entrega reutilizam o critério estrutural do replay de conversão: proposta convertida/bloqueada, vínculo principal, uma OP por item e versão/cliente/quantidade compatíveis, mais os dois recebíveis únicos com vínculos e valores coerentes. Divergência retorna 409/QUOTE_CONVERSION_INCOMPLETE antes de pagar ou liberar OP. O helper compartilhado evita divergência entre os fluxos. Consultas financeiras passam a usar quote_id, sem carregar o financeiro inteiro.
+
+Replay de título já pago permanece leitura da confirmação anterior. A validação não repara histórico, autentica comprovante ou redefine política de estorno; estados operacionais e financeiros além desses vínculos não são reconciliados automaticamente. Fixtures históricas incompletas exigem análise antes de nova baixa.
+
+Validação local: 116 testes, tipagem, build e diff-check aprovados. Testes HTTP cobrem quatro divergências; PostgreSQL cobre versão de OP e saldo ausente do conjunto, com preservação integral de títulos/OPs/auditoria. CI desta continuação pendente. CI anterior: PR #40, https://github.com/enlaceslz/defardas/actions/runs/40970984858. Sem migração nova ou deploy; bloqueios operacionais permanecem.

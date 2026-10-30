@@ -1394,3 +1394,25 @@ test('PostgreSQL: baixa de pedido sem vínculo não marca título pago nem liber
   }
   assert.equal((await request(`/api/finance/transactions/${title.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' })).status, 200);
 });
+
+
+test('PostgreSQL: baixa não libera OPs quando a estrutura de conversão está divergente', async () => {
+  const quote = await createQuote(); const converted = await request(`/api/quotes/${quote.id}/convert-to-order`, 'POST'); assert.equal(converted.status, 201);
+  const entry = converted.data.financeTransactions.find((row: any) => row.subType === 'entrada_pedido');
+  const balance = converted.data.financeTransactions.find((row: any) => row.subType === 'saldo_entrega');
+  const other = converted.data.orders[1];
+  for (const scenario of ['version', 'balance']) {
+    if (scenario === 'version') await pool.query('UPDATE producao.production_orders SET quote_version=quote_version+1 WHERE id=$1', [other.id]);
+    else await pool.query("UPDATE financeiro.transactions SET sub_type='despesa_geral' WHERE id=$1", [balance.id]);
+    const before = { orders: (await pool.query('SELECT * FROM producao.production_orders WHERE quote_id=$1 ORDER BY id', [quote.id])).rows,
+      titles: (await pool.query('SELECT * FROM financeiro.transactions WHERE quote_id=$1 ORDER BY id', [quote.id])).rows,
+      audit: (await pool.query('SELECT count(*) FROM core.audit_logs')).rows };
+    const rejected = await request(`/api/finance/transactions/${entry.id}/confirm-payment`, 'POST', { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' });
+    assert.equal(rejected.status, 409); assert.equal(rejected.data.code, 'QUOTE_CONVERSION_INCOMPLETE');
+    assert.deepEqual((await pool.query('SELECT * FROM producao.production_orders WHERE quote_id=$1 ORDER BY id', [quote.id])).rows, before.orders);
+    assert.deepEqual((await pool.query('SELECT * FROM financeiro.transactions WHERE quote_id=$1 ORDER BY id', [quote.id])).rows, before.titles);
+    assert.deepEqual((await pool.query('SELECT count(*) FROM core.audit_logs')).rows, before.audit);
+    if (scenario === 'version') await pool.query('UPDATE producao.production_orders SET quote_version=$1 WHERE id=$2', [quote.version, other.id]);
+    else await pool.query("UPDATE financeiro.transactions SET sub_type='saldo_entrega' WHERE id=$1", [balance.id]);
+  }
+});

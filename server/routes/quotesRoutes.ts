@@ -1,3 +1,4 @@
+import { completeQuoteConversion } from '../validation/quoteConversion';
 import { Router, Response } from 'express';
 import crypto from 'node:crypto';
 import { atomic } from '../db/unitOfWork';
@@ -120,17 +121,7 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
   const existing = await orderRepository.findByQuoteId(quote.id);
   const receivables = (await financeRepository.findByQuoteId(quote.id)).filter((title) => title.type === 'receber' && ['entrada_pedido', 'saldo_entrega'].includes(title.subType));
   if (existing.length || receivables.length || quote.convertedOrderId || quote.commercialStatus === 'convertido_em_pedido') {
-    const orderIds = new Set(existing.map((order) => order.id));
-    const complete = quote.isLocked && quote.commercialStatus === 'convertido_em_pedido' &&
-      orderIds.has(quote.convertedOrderId || '') && quote.items.length > 0 && existing.length === quote.items.length &&
-      new Set(existing.map((order) => order.quoteItemId)).size === quote.items.length &&
-      existing.every((order) => order.quoteVersion === quote.version && order.clientId === quote.clientId &&
-        quote.items.some((item) => item.id === order.quoteItemId && item.totalQuantity === order.totalPieces)) &&
-      receivables.length === 2 && ['entrada_pedido', 'saldo_entrega'].every((kind) => {
-        const matches = receivables.filter((title) => title.subType === kind);
-        return matches.length === 1 && orderIds.has(matches[0].productionOrderId || '') && Number.isFinite(matches[0].amount) && matches[0].amount > 0 &&
-          matches[0].amount === (kind === 'entrada_pedido' ? quote.entryAmount : quote.balanceAmount);
-      });
+    const complete = completeQuoteConversion(quote, existing, receivables);
     if (!complete) return res.status(409).json({ error: 'Histórico de conversão incompleto ou divergente. Reconcilie os vínculos da proposta, OPs e títulos antes de continuar.', code: 'QUOTE_CONVERSION_INCOMPLETE' });
     return res.json({ success: true, alreadyConverted: true, order: existing.find((order) => order.id === quote.convertedOrderId), orders: existing, financeTransactions: receivables });
   }

@@ -80,8 +80,8 @@ test('rollback libera chave, exclusão não permite que retry antigo recrie tít
 
 test('baixa de título de pedido rejeita vínculo ausente/divergente e valor inexato sem efeitos', async () => {
   const id = crypto.randomUUID(); const quoteId = crypto.randomUUID(); const orderId = crypto.randomUUID();
-  db.quotes.set(quoteId, { id: quoteId, entryAmount: 2.35, balanceAmount: 2.35 } as any);
-  db.orders.set(orderId, { id: orderId, quoteId, financialStatus: 'entrada_pendente' } as any);
+  db.quotes.set(quoteId, { id: quoteId, entryAmount: 2.35, balanceAmount: 2.35, isLocked: true, commercialStatus: 'convertido_em_pedido', convertedOrderId: orderId, version: 1, clientId: 'test-client', items: [{ id: 'item-1', totalQuantity: 1 }] } as any);
+  db.orders.set(orderId, { id: orderId, quoteId, quoteItemId: 'item-1', quoteVersion: 1, clientId: 'test-client', totalPieces: 1, financialStatus: 'entrada_pendente' } as any);
   const valid = { id, transactionNumber: 'TEST-LINK', quoteId, productionOrderId: orderId, type: 'receber', subType: 'entrada_pedido', amount: 2.35, status: 'pendente' };
   const receipt = { receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' };
   for (const update of [{ quoteId: undefined }, { productionOrderId: undefined }, { productionOrderId: crypto.randomUUID() }, { amount: 2.351 }]) {
@@ -90,6 +90,7 @@ test('baixa de título de pedido rejeita vínculo ausente/divergente e valor ine
     assert.equal((await request(`/transactions/${id}/confirm-payment`, receipt)).status, 409);
     assert.deepEqual([db.finance, db.orders], before);
   }
+  db.finance.set(crypto.randomUUID(), { ...valid, id: crypto.randomUUID(), subType: 'saldo_entrega' } as any);
   db.finance.set(id, valid as any);
   assert.equal((await request(`/transactions/${id}/confirm-payment`, receipt)).status, 200);
   assert.equal(db.orders.get(orderId)?.entryPaymentConfirmed, true);

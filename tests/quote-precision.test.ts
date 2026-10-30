@@ -1,3 +1,4 @@
+import { financeRouter } from '../server/routes/financeRoutes';
 import 'express-async-errors';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
@@ -12,7 +13,7 @@ const clientId = crypto.randomUUID();
 db.clients.set(clientId, { id: clientId, companyName: 'Test', cnpj: 'TEST' } as any);
 const app = express(); app.use(express.json());
 app.use((req: any, _res, next) => { req.user = { id: crypto.randomUUID(), fullName: 'Test', role: 'admin' }; next(); });
-app.use('/quotes', quotesRouter); app.use(apiErrorHandler);
+app.use('/quotes', quotesRouter); app.use('/finance', financeRouter); app.use(apiErrorHandler);
 const server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => server.on('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as any).port}`;
 after(() => { server.closeAllConnections(); server.close(); });
@@ -178,4 +179,25 @@ test('personalizações válidas seguem da proposta à OP sem alterar os custos 
   assert.equal(response.status, 201); assert.deepEqual((await response.json()).orders[0].customizations, customizations);
   const omitted = await create(input()); assert.equal(omitted.status, 201);
   assert.deepEqual(omitted.data.items[0].customizations, []);
+});
+
+
+test('baixa rejeita conversão incompleta antes de pagar título ou liberar OPs', async () => {
+  const created = await create({ ...input([item(), item()]), commercialStatus: 'aprovado' }); assert.equal(created.status, 201);
+  const converted = await (await fetch(`${base}/quotes/${created.data.id}/convert-to-order`, { method: 'POST' })).json();
+  const title = converted.financeTransactions.find((row: any) => row.subType === 'entrada_pedido');
+  const initial = structuredClone([db.quotes, db.orders, db.finance]);
+  const reset = () => { [db.quotes, db.orders, db.finance].forEach((map, i) => { map.clear(); for (const [id, row] of initial[i]) map.set(id, structuredClone(row) as any); }); };
+  for (const corrupt of [
+    () => db.orders.delete(converted.orders[1].id),
+    () => { db.orders.get(converted.orders[1].id)!.quoteVersion++; },
+    () => { db.quotes.get(created.data.id)!.convertedOrderId = undefined; },
+    () => db.finance.delete(converted.financeTransactions.find((row: any) => row.subType === 'saldo_entrega').id),
+  ]) {
+    reset(); corrupt(); const before = structuredClone([db.quotes, db.orders, db.finance]);
+    const response = await fetch(`${base}/finance/transactions/${title.id}/confirm-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receiptVoucherNumber: 'TEST', receiptEvidenceUrl: 'https://example.invalid/private' }) });
+    assert.equal(response.status, 409); assert.equal((await response.json()).code, 'QUOTE_CONVERSION_INCOMPLETE');
+    assert.deepEqual([db.quotes, db.orders, db.finance], before);
+  }
+  reset();
 });

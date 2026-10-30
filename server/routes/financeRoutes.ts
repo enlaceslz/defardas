@@ -1,3 +1,4 @@
+import { completeQuoteConversion } from '../validation/quoteConversion';
 import { financeRequestRepository } from '../repositories/financeRequestRepository';
 import { isLocalDemoEnvironment } from '../auth/demoEnvironment';
 import { quoteRepository } from '../repositories/quoteRepository';
@@ -103,6 +104,10 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
   let relatedOrders = trx.quoteId ? await orderRepository.findByQuoteId(trx.quoteId) : [];
   if (['entrada_pedido', 'saldo_entrega'].includes(trx.subType)) {
     const quote = trx.quoteId ? await quoteRepository.findById(trx.quoteId) : null;
+    const receivables = trx.quoteId ? (await financeRepository.findByQuoteId(trx.quoteId)).filter((title) => title.type === 'receber' && ['entrada_pedido', 'saldo_entrega'].includes(title.subType)) : [];
+    if (quote && !completeQuoteConversion(quote, relatedOrders, receivables)) {
+      return res.status(409).json({ error: 'Histórico de conversão incompleto ou divergente. Reconcilie os vínculos antes da baixa.', code: 'QUOTE_CONVERSION_INCOMPLETE' });
+    }
     const expected = trx.subType === 'entrada_pedido' ? quote?.entryAmount : quote?.balanceAmount;
     if (!quote || !trx.productionOrderId || !relatedOrders.some((order) => order.id === trx.productionOrderId) ||
         !Number.isFinite(trx.amount) || trx.amount <= 0 || money(trx.amount) !== trx.amount || trx.amount !== expected || trx.type !== 'receber') {
@@ -116,7 +121,7 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
   trx.updatedAt = new Date().toISOString();
   await financeRepository.save(trx);
   if (['entrada_pedido', 'saldo_entrega'].includes(trx.subType)) {
-    const titles = (await financeRepository.findAll()).filter((t) => t.quoteId === trx.quoteId && t.type === 'receber');
+    const titles = (await financeRepository.findByQuoteId(trx.quoteId!)).filter((t) => t.type === 'receber');
     const entryPaid = titles.some((t) => t.subType === 'entrada_pedido' && t.status === 'pago');
     const fullyPaid = titles.some((t) => t.subType === 'saldo_entrega' && t.status === 'pago') && entryPaid;
     for (const order of relatedOrders) {
