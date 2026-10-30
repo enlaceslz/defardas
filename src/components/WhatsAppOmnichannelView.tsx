@@ -60,7 +60,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
   const [sendError, setSendError] = useState('');
   const [qrError, setQrError] = useState('');
   const [isQrLoading, setIsQrLoading] = useState(false);
-  const attempts = useRef<Record<string, { body: string; key: string }>>({});
+  const attempts = useRef(new Map<string, Map<string, string>>());
   const qrRequest = useRef(0);
   const activeId = useRef<string | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -130,9 +130,11 @@ export const WhatsAppOmnichannelView: React.FC = () => {
     if (!conversationId || !body.trim()) return;
     await submit(async () => {
       setSendError('');
-      const attempt = attempts.current[conversationId];
-      const key = attempt?.body === body.trim() ? attempt.key : crypto.randomUUID();
-      attempts.current[conversationId] = { body: body.trim(), key };
+      const normalizedBody = body.trim();
+      const conversationAttempts = attempts.current.get(conversationId) ?? new Map<string, string>();
+      const key = conversationAttempts.get(normalizedBody) ?? crypto.randomUUID();
+      conversationAttempts.set(normalizedBody, key);
+      attempts.current.set(conversationId, conversationAttempts);
       const res = await api.sendConversationMessage(conversationId, body.trim(), undefined, key);
       if (activeId.current !== conversationId) return false;
       if (res.status !== 201 || !res.data?.id || !['sent', 'delivered', 'read'].includes(res.data.status)) {
@@ -140,7 +142,8 @@ export const WhatsAppOmnichannelView: React.FC = () => {
         if (res.data?.id) setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
         return false;
       }
-      delete attempts.current[conversationId];
+      conversationAttempts.delete(normalizedBody);
+      if (!conversationAttempts.size) attempts.current.delete(conversationId);
       setMessages((prev) => [...prev.filter((m) => m.id !== res.data.id), res.data]);
       if (clearDraft) setInputMessage((current) => current.trim() === body.trim() ? '' : current);
       setConversations((prev) => prev.map((c) => c.id === conversationId

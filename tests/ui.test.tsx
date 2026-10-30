@@ -323,3 +323,27 @@ test('exceção no salvamento do perfil libera formulário sem anunciar sucesso'
   await waitFor(() => assert.equal(view.getByRole('button', { name: 'Salvar Informações Cadastrais' }).hasAttribute('disabled'), false));
   assert.equal(Boolean(view.queryByText('Dados cadastrais da empresa atualizados com sucesso!')), false);
 });
+
+test('alternar textos sem confirmação preserva cada chave e sucesso encerra somente a tentativa correspondente', async () => {
+  await withCommunication(async () => {
+    const calls: { body: string; key: string }[] = [];
+    api.sendConversationMessage = async (_id, body, _media, key) => {
+      calls.push({ body, key: key! });
+      return calls.length === 3 ? { status: 201, data: { id: 'confirmed-a', body, direction: 'outbound', status: 'sent', createdAt: new Date().toISOString() } }
+        : { status: 503, error: 'Envio sem confirmação' };
+    };
+    const view = render(<WhatsAppOmnichannelView />);
+    const input = await view.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...') as HTMLInputElement;
+    for (const [index, body] of ['A', 'B', ' A ', 'B', 'A'].entries()) {
+      fireEvent.change(input, { target: { value: body } }); fireEvent.submit(input.closest('form')!);
+      await waitFor(() => assert.equal(calls.length, index + 1));
+      if (index === 2) await waitFor(() => assert.equal(input.value, ''));
+      else await waitFor(() => assert.equal(view.getByRole('button', { name: 'Enviar' }).hasAttribute('disabled'), false));
+    }
+    assert.equal(calls[0].key, calls[2].key);
+    assert.equal(calls[1].key, calls[3].key);
+    assert.notEqual(calls[0].key, calls[1].key);
+    assert.notEqual(calls[0].key, calls[4].key);
+    assert.equal(calls[2].body, 'A');
+  });
+});
