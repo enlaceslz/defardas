@@ -248,3 +248,12 @@ Recarga manual, polling e recarga após reconexão usam sequência de consultas.
 Não cancela requisições de rede nem deduplica chamadas em trânsito. Se a consulta mais nova falhar, conserva o estado exibido em vez de aplicar resposta antiga. Não é versionamento do servidor e não cobre alterações locais de envio concorrentes com a listagem.
 
 Validação local: 130 testes, tipagem, build e diff-check aprovados. Testes UI cobrem duas consultas com respostas invertidas e resposta depois de desmontar. CI desta continuação pendente. CI anterior: PR #49, https://github.com/enlaceslz/defardas/actions/runs/41062013486. Sem migração nova, mensagens externas, merge ou deploy.
+
+
+### Continuação 30/10: confirmação de envio após trocar conversa
+
+Sucesso recebido enquanto outra conversa está aberta encerra a chave e limpa o rascunho da conversa de origem somente se seu texto ainda corresponder ao enviado (trim). Atualiza a prévia dessa conversa, sem inserir mensagem no histórico atualmente aberto ou alterar outro rascunho. Falha mantém tentativa/rascunho de origem e não exibe erro na conversa errada. Resposta após desmontagem é ignorada.
+
+Não cria cache de histórico por conversa, reenvio automático ou confirmação de entrega do provedor. Ao retornar à conversa, histórico continua sendo consultado pela API. As chaves permanecem apenas em memória durante a montagem.
+
+Validação local: 132 testes, tipagem, build e diff-check aprovados. Novos testes UI cobrem sucesso/falha após troca, isolamento do rascunho/histórico, descarte da chave confirmada e reutilização da chave incerta. CI desta continuação pendente. CI anterior: PR #50, https://github.com/enlaceslz/defardas/actions/runs/41063031868. Sem migração nova, mensagens externas, merge ou deploy.
