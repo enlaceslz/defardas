@@ -300,3 +300,26 @@ test('cadastro de cliente não presume cidade, UF ou segmento e mantém contrato
   await waitFor(() => assert.equal(saved.length, 1));
   assert.equal(saved[0].city, ''); assert.equal(saved[0].state, ''); assert.equal(saved[0].segment, '');
 });
+
+test('perfil institucional bloqueia envio simultâneo e remove sucesso antigo na próxima tentativa', async () => {
+  const { SettingsView } = await import('../src/components/SettingsView'); let calls = 0; let finish!: (result: boolean) => void;
+  const view = render(<SettingsView profile={initialCompanyProfile} fullState={{} as any} onSaveProfile={async () => { calls++; return new Promise<boolean>(resolve => { finish = resolve; }); }} onRestoreState={async () => false} onResetToDefaults={() => {}} />);
+  const form = view.container.querySelector('form')!;
+  const button = () => view.getByRole('button', { name: 'Salvar Informações Cadastrais' });
+  const success = 'Dados cadastrais da empresa atualizados com sucesso!';
+  fireEvent.submit(form); fireEvent.submit(form); assert.equal(calls, 1); assert.equal(button().hasAttribute('disabled'), true);
+  await act(async () => finish(true));
+  await waitFor(() => assert.equal(Boolean(view.queryByText(success)), true));
+  fireEvent.submit(form); assert.equal(calls, 2); assert.equal(Boolean(view.queryByText(success)), false);
+  await act(async () => finish(false));
+  await waitFor(() => assert.equal(button().hasAttribute('disabled'), false));
+  assert.equal(Boolean(view.queryByText(success)), false);
+});
+
+test('exceção no salvamento do perfil libera formulário sem anunciar sucesso', async () => {
+  const { SettingsView } = await import('../src/components/SettingsView');
+  const view = render(<SettingsView profile={initialCompanyProfile} fullState={{} as any} onSaveProfile={async () => { throw new Error('Falha de rede'); }} onRestoreState={async () => false} onResetToDefaults={() => {}} />);
+  fireEvent.submit(view.container.querySelector('form')!);
+  await waitFor(() => assert.equal(view.getByRole('button', { name: 'Salvar Informações Cadastrais' }).hasAttribute('disabled'), false));
+  assert.equal(Boolean(view.queryByText('Dados cadastrais da empresa atualizados com sucesso!')), false);
+});

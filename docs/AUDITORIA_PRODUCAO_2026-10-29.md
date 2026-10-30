@@ -212,3 +212,12 @@ Novo cliente inicia cidade, UF e segmento vazios. Cidade e UF são inputs separa
 Campos textuais respeitam maxLength da API (razão/fantasia/e-mail 150, documento 20, inscrição 30, contato 100, telefone 30, endereço 200, cidade 80, UF 2, segmento 60, observações 10000). Contato e telefone passam a ser obrigatórios no formulário como já eram no servidor. Labels dos inputs associados; não são criadas novas regras de CPF/CNPJ, validação de UF ou segmento comercial.
 
 Validação local: 123 testes, tipagem, build e diff-check aprovados. Teste de UI confere campos opcionais vazios, limites e obrigatoriedade, sem presumir valores no envio. CI desta continuação pendente. CI anterior: PR #45, https://github.com/enlaceslz/defardas/actions/runs/41036642989. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: envio e confirmação do perfil institucional
+
+A tela de configurações reutiliza useSubmission para bloquear envios simultâneos do perfil e tratar exceção sem anunciar sucesso. Botão fica desabilitado durante a tentativa. A mensagem de sucesso anterior é removida ao iniciar novo envio e só reaparece após confirmação positiva. Timeout é cancelado na desmontagem/limpeza do efeito.
+
+Proteção é por instância da tela; não constitui idempotência persistida nem revisão contra formulários de outras abas. Não altera transação do backend, conteúdo público ou regras do perfil.
+
+Validação local: 125 testes, tipagem, build e diff-check aprovados. Novos testes UI cobrem envio simultâneo, confirmação, falha após sucesso e exceção com liberação do formulário. CI desta continuação pendente. CI anterior: PR #46, https://github.com/enlaceslz/defardas/actions/runs/41057295276. Sem migração nova, merge ou deploy.

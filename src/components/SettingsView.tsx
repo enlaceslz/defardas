@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSubmission } from '../api/useSubmission';
 import { 
   Building2, 
   Save, 
@@ -30,13 +31,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [formData, setFormData] = useState<CompanyProfile>(profile);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const { submit, isSaving } = useSubmission();
+
+  useEffect(() => {
+    if (!savedSuccess) return;
+    const timer = setTimeout(() => setSavedSuccess(false), 3000);
+    return () => clearTimeout(timer);
+  }, [savedSuccess]);
 
   useEffect(() => setFormData(profile), [profile]);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(await onSaveProfile(formData))) return;
+    setSavedSuccess(false);
+    if (!(await submit(() => onSaveProfile(formData)))) return;
     setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -222,6 +230,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="pt-2 flex justify-end">
           <button
             type="submit"
+            disabled={isSaving}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 transition-colors shadow-sm cursor-pointer"
           >
             <Save className="w-4 h-4" />
