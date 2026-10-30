@@ -1,3 +1,4 @@
+import { QUOTE_PAYMENT_TERMS } from '../../shared/quoteTerms';
 import { completeQuoteConversion } from '../validation/quoteConversion';
 import { Router, Response } from 'express';
 import crypto from 'node:crypto';
@@ -96,7 +97,7 @@ quotesRouter.post('/', requirePermission('quotes:create'), atomic(async (req: Re
     belowSuggestedAuthorized: discounted, authorizedById: discounted ? actor.id : undefined,
     authorizedByName: discounted ? actor.fullName : undefined, authorizationDate: discounted ? now : undefined,
     entryPercentage: 50, entryAmount, balanceAmount: money(negotiatedTotalAmount - entryAmount),
-    paymentTerms: '50% Sinal (Liberação de Corte) + 50% na Entrega',
+    paymentTerms: QUOTE_PAYMENT_TERMS,
     artApproved: false, isLocked: false, isDemo: false, createdAt: now, updatedAt: now, items };
   await quoteRepository.save(quote);
   await auditService.log({ actorId: actor.id, actorName: actor.fullName, actorRole: actor.role, entityName: 'crm.quotes',

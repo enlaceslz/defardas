@@ -1,3 +1,4 @@
+import { QUOTE_PAYMENT_TERMS } from '../../shared/quoteTerms';
 import { PricingEngine, roundCurrency } from '../../shared/pricingEngine';
 import { useSubmission } from '../api/useSubmission';
 import React, { useState } from 'react';
@@ -25,10 +26,10 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
   
   // Regra do PRD: Entrada percentual fixa em 50% (Adendo A.3.2)
   const entryPercentage = 50;
-  const [paymentTerms, setPaymentTerms] = useState('50% Sinal (Liberação de Corte) + 50% na Entrega das Peças');
+  const paymentTerms = QUOTE_PAYMENT_TERMS;
   const [productionLeadDays, setProductionLeadDays] = useState(0);
   const artApproved = false;
-  const [whatsAppContact, setWhatsAppContact] = useState(clients[0]?.phone || '');
+  const whatsAppContact = selectedClient?.phone || '';
   const [notes, setNotes] = useState('');
 
   const makeItem = (): QuoteItem => ({
@@ -44,9 +45,6 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
   const handleClientSelect = (cId: string) => {
     const found = clients.find((c) => c.id === cId) || null;
     setSelectedClient(found);
-    if (found) {
-      setWhatsAppContact(found.phone);
-    }
   };
 
   const handleAddItem = () => setItems((previous) => [...previous, makeItem()]);
@@ -231,8 +229,9 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
               <input
                 type="text"
                 required
+                aria-label="WhatsApp do cliente cadastrado"
+                readOnly
                 value={whatsAppContact}
-                onChange={(e) => setWhatsAppContact(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 font-mono"
                 placeholder="(98) 98135-4130"
               />
@@ -545,8 +544,9 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  aria-label="Condição de pagamento"
+                  readOnly
                   value={paymentTerms}
-                  onChange={(e) => setPaymentTerms(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
                 />
               </div>
