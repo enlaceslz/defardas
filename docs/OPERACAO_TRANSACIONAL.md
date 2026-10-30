@@ -465,3 +465,12 @@ Carregamento inicial do histórico é mesclado por ID com mensagens já observad
 Exceção inesperada da consulta informa erro genérico e encerra o indicador de carregamento, sem detalhes do provedor. Não altera banco, mensagens externas, recibos do provedor ou implementa sincronização contínua/paginação/ordenação causal. Não constitui reconciliação de estados entregue/lido fora desse carregamento.
 
 Validação local: 128 testes, tipagem, build e diff-check aprovados. Testes UI cobrem resposta atrasada com e sem ID recém-confirmado e rejeição inesperada sem exposição de detalhes. CI desta continuação pendente. CI anterior: PR #48, https://github.com/enlaceslz/defardas/actions/runs/41061332440. Sem migração nova, mensagens externas, merge ou deploy.
+
+
+### Continuação 30/10: respostas sobrepostas na lista de conversas
+
+Recarga manual, polling e recarga após reconexão usam sequência de consultas. Somente a consulta iniciada mais recentemente pode aplicar canais/conversas; resposta anterior é descartada mesmo se terminar depois. Na desmontagem, consultas pendentes são invalidadas e o intervalo é cancelado. Falha inesperada da consulta atual gera aviso fixo sem serializar detalhes do erro; falhas obsoletas são ignoradas.
+
+Não cancela requisições de rede nem deduplica chamadas em trânsito. Se a consulta mais nova falhar, conserva o estado exibido em vez de aplicar resposta antiga. Não é versionamento do servidor e não cobre alterações locais de envio concorrentes com a listagem.
+
+Validação local: 130 testes, tipagem, build e diff-check aprovados. Testes UI cobrem duas consultas com respostas invertidas e resposta depois de desmontar. CI desta continuação pendente. CI anterior: PR #49, https://github.com/enlaceslz/defardas/actions/runs/41062013486. Sem migração nova, mensagens externas, merge ou deploy.

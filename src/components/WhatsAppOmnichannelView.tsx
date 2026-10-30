@@ -62,6 +62,8 @@ export const WhatsAppOmnichannelView: React.FC = () => {
   const [isQrLoading, setIsQrLoading] = useState(false);
   const attempts = useRef(new Map<string, Map<string, string>>());
   const qrRequest = useRef(0);
+  const listRequest = useRef(0);
+  const mounted = useRef(false);
   const activeId = useRef<string | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -83,11 +85,13 @@ export const WhatsAppOmnichannelView: React.FC = () => {
 
   // Carregar canais e conversas
   const loadData = async () => {
+    const request = ++listRequest.current;
     try {
       const [channelsRes, convsRes] = await Promise.all([
         api.getChannels(),
         api.getConversations(),
       ]);
+      if (!mounted.current || request !== listRequest.current) return;
 
       if (channelsRes.status === 200 && Array.isArray(channelsRes.data)) {
         setChannels(channelsRes.data);
@@ -98,15 +102,16 @@ export const WhatsAppOmnichannelView: React.FC = () => {
           setActiveConversationId(convsRes.data[0].id);
         }
       }
-    } catch (err) {
-      console.warn('Erro ao carregar dados do WhatsApp:', err);
+    } catch {
+      if (mounted.current && request === listRequest.current) console.warn('Não foi possível atualizar as conversas.');
     }
   };
 
   useEffect(() => {
+    mounted.current = true;
     loadData();
     const interval = setInterval(loadData, 10000); // Polling a cada 10s
-    return () => clearInterval(interval);
+    return () => { mounted.current = false; ++listRequest.current; clearInterval(interval); };
   }, []);
 
   // Uma resposta atrasada nunca substitui o histórico de outra conversa.
