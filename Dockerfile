@@ -49,6 +49,7 @@ RUN addgroup -S -g 1001 defardas && \
 COPY --from=builder --chown=defardas:defardas /app/package.json ./
 COPY --from=builder --chown=defardas:defardas /app/node_modules ./node_modules
 COPY --from=builder --chown=defardas:defardas /app/dist ./dist
+COPY --from=builder --chown=defardas:defardas /app/shared ./shared
 COPY --from=builder --chown=defardas:defardas /app/scripts ./scripts
 COPY --from=builder --chown=defardas:defardas /app/server ./server
 COPY --from=builder --chown=defardas:defardas /app/server.ts ./server.ts

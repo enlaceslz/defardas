@@ -21,7 +21,7 @@ export function date(value: unknown, name: string): string {
   if (!/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(result) || !Number.isFinite(Date.parse(result)) || new Date(result).toISOString().slice(0, 10) !== result) throw new InputError(`${name} inválida.`);
   return result;
 }
-export const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+export { roundCurrency as money } from '../../shared/pricingEngine';
 export function customizations(value: unknown) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new InputError('Personalizações devem ser uma lista.');

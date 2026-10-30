@@ -275,3 +275,12 @@ Custos e preço negociado da SPA usam step=0.01, limites numeric(10,2) e obrigat
 Grade e prazo usam step=1 e preservam frações/negativos no input como inválidos, em vez de parseInt/clamp silencioso. Grade mantém mínimo zero por tamanho e prazo mínimo um. API continua validando soma da grade, capacidade da data, totais derivados e precisão, sem nova regra comercial ou mudança da fórmula de markup. Limites nativos não substituem validação do servidor.
 
 Validação local: 135 testes, tipagem, build e diff-check aprovados. Teste UI cobre centavos, percentuais e preservação de entrada fracionária/negativa em grade/prazo. CI desta continuação pendente. CI anterior: PR #52, https://github.com/enlaceslz/defardas/actions/runs/41077130598. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: motor de preços compartilhado e parcelas da prévia
+
+Motor puro existente foi movido para shared/pricingEngine.ts e reexportado pelo caminho do backend. SPA passa a usar o mesmo cálculo de custo-base, sugestão, desconto e margem (duas casas). Totais de item, soma e parcelas usam a mesma função de centavos da validação. Exemplo: R$ 0,03 gera R$ 0,02 de sinal e R$ 0,01 de saldo, sem duas parcelas exibidas como R$ 0,02. Fórmula de markup e algoritmo do servidor foram preservados; entrada inválida de preço continua no campo para rejeição, sem saneamento silencioso.
+
+Formulário também passa a expor validade em dias: a variável era exigida no submit mas não havia input para preenchê-la. Inicia zero para exigir informação do usuário, sem presumir prazo comercial. Docker copia shared para o runtime, mantendo imports do backend disponíveis. API continua validando valores, prazo/data e totais antes da gravação; não altera propostas históricas.
+
+Validação local: 136 testes, tipagem, build e diff-check aprovados. Teste UI confere margem 33.33 e parcelas de três centavos contra o motor do servidor, preenchendo prazo e validade. CI desta continuação pendente, incluindo inicialização da imagem Docker. CI anterior: PR #53, https://github.com/enlaceslz/defardas/actions/runs/41078667140. Sem migração nova, merge ou deploy.
