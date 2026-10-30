@@ -377,3 +377,30 @@ test('falha inesperada ao carregar histórico encerra espera e informa erro segu
     assert.equal(view.container.textContent?.includes('private-provider-detail'), false);
   });
 });
+
+test('lista de conversas aceita somente a consulta mais nova diante de respostas invertidas', async () => {
+  await withCommunication(async () => {
+    let calls = 0; let finishOld!: (value: any) => void;
+    api.getConversations = async () => ++calls === 1 ? new Promise(resolve => { finishOld = resolve; })
+      : { status: 200, data: [{ ...conversationFixture, id: 'newest', customerName: 'Contato atualizado' }] };
+    const view = render(<WhatsAppOmnichannelView />);
+    await waitFor(() => assert.equal(calls, 1));
+    fireEvent.click(view.getByTitle('Atualizar conversas'));
+    await view.findAllByText('Contato atualizado');
+    await act(async () => finishOld({ status: 200, data: [{ ...conversationFixture, customerName: 'Contato obsoleto' }] }));
+    assert.equal(Boolean(view.queryByText('Contato obsoleto')), false);
+    assert.ok(view.getAllByText('Contato atualizado').length > 0);
+  });
+});
+
+test('consulta de lista invalidada na desmontagem não inicia carregamento de conversa', async () => {
+  await withCommunication(async () => {
+    let finish!: (value: any) => void; let historyCalls = 0;
+    api.getConversations = async () => new Promise(resolve => { finish = resolve; });
+    api.getConversationMessages = async () => { historyCalls++; return { status: 200, data: [] }; };
+    const view = render(<WhatsAppOmnichannelView />);
+    view.unmount();
+    await act(async () => finish({ status: 200, data: [conversationFixture] }));
+    assert.equal(historyCalls, 0);
+  });
+});
