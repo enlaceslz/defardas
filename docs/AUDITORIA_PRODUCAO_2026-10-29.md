@@ -194,3 +194,12 @@ O formulário de estoque envia expectedPhysicalStock capturado ao abrir a ficha;
 O contrato e a comparação do backend permanecem: quando saldo desejado difere do saldo atual, expectedPhysicalStock precisa coincidir com o observado no banco. Não é uma revisão completa do item e não resolve mudanças de metadados ou saldo que sai e volta ao mesmo valor (ABA). Formulário que recebe falha permanece aberto; fechar/reabrir permite revisar os dados atuais. Sem chave durável para esse comando ou alteração das regras de ajuste compensatório.
 
 Validação local: 121 testes, tipagem, build e diff-check aprovados. Testes de interface cobrem recarga com formulário aberto e atalho; HTTP/PostgreSQL conferem conflito sem alterar metadados, saldo, movimentos e auditoria, seguido de gravação com precondição atual. CI desta continuação pendente. CI anterior: PR #43, https://github.com/enlaceslz/defardas/actions/runs/41035146812. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: cadastro de material sem valores demonstrativos
+
+Novo material na SPA inicia saldo, mínimo e custo em zero, fornecedor/localização vazios. Removidos os valores demonstrativos 200/100/25 e os textos de fornecedor/prateleira que podiam ser enviados como reais. Código não é editável e informa geração ao salvar, conforme numeração já atribuída pela API. Edição conserva os dados existentes.
+
+Saldo, mínimo e custo usam step=0.01, min=0, max=99999999.99 e required; descrição, fornecedor e localização respeitam limites 150/120/80. Labels dos campos estão associados aos inputs. Isso alinha a validação nativa à API sem criar mínimo comercial; backend continua autoritativo. Não altera itens existentes ou numeração do servidor.
+
+Validação local: 122 testes, tipagem, build e diff-check aprovados. Teste de interface verifica valores iniciais, código somente leitura, campos opcionais vazios e validade decimal/negativa/overflow no navegador simulado. CI desta continuação pendente. CI anterior: PR #44, https://github.com/enlaceslz/defardas/actions/runs/41035938245. Sem migração nova, merge ou deploy.

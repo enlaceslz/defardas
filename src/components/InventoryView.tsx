@@ -41,23 +41,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [name, setName] = useState('');
   const [category, setCategory] = useState<InventoryCategory>('tecido');
   const [unit, setUnit] = useState<InventoryItem['unit']>('metros');
-  const [currentStock, setCurrentStock] = useState(100);
-  const [minStock, setMinStock] = useState(50);
-  const [costPrice, setCostPrice] = useState(20);
+  const [currentStock, setCurrentStock] = useState(0);
+  const [minStock, setMinStock] = useState(0);
+  const [costPrice, setCostPrice] = useState(0);
   const [supplier, setSupplier] = useState('');
-  const [location, setLocation] = useState('Almoxarifado Central');
+  const [location, setLocation] = useState('');
 
   const openNewModal = () => {
     setEditingItem(null);
-    setCode(`TEC-${Math.floor(100 + Math.random() * 900)}`);
+    setCode('');
     setName('');
     setCategory('tecido');
     setUnit('metros');
-    setCurrentStock(200);
-    setMinStock(100);
-    setCostPrice(25.00);
-    setSupplier('Santanense / Cedro Têxtil');
-    setLocation('Prateleira A-01');
+    setCurrentStock(0);
+    setMinStock(0);
+    setCostPrice(0);
+    setSupplier('');
+    setLocation('');
     setIsModalOpen(true);
   };
 
@@ -359,12 +359,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             <form onSubmit={handleFormSubmit} className="p-6 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Código do Insumo</label>
+                  <label htmlFor="inventory-code" className="block font-semibold text-slate-700 mb-1">Código do Insumo</label>
                   <input
+                    id="inventory-code"
                     type="text"
-                    required
+                    readOnly
+                    placeholder="Gerado ao salvar"
                     value={code}
-                    onChange={(e) => setCode(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
                   />
                 </div>
@@ -384,10 +385,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Descrição Completa</label>
+                <label htmlFor="inventory-name" className="block font-semibold text-slate-700 mb-1">Descrição Completa</label>
                 <input
                   type="text"
                   required
+                  id="inventory-name"
+                  maxLength={150}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
@@ -413,9 +416,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Saldo Atual</label>
+                  <label htmlFor="inventory-stock" className="block font-semibold text-slate-700 mb-1">Saldo Atual</label>
                   <input
                     type="number"
+                    id="inventory-stock"
+                    required
+                    min="0"
+                    max="99999999.99"
+                    step="0.01"
                     value={currentStock}
                     onChange={(e) => setCurrentStock(parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
@@ -423,9 +431,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Estoque Mínimo</label>
+                  <label htmlFor="inventory-minimum" className="block font-semibold text-slate-700 mb-1">Estoque Mínimo</label>
                   <input
                     type="number"
+                    id="inventory-minimum"
+                    required
+                    min="0"
+                    max="99999999.99"
+                    step="0.01"
                     value={minStock}
                     onChange={(e) => setMinStock(parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
@@ -435,10 +448,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Custo Unitário (R$)</label>
+                  <label htmlFor="inventory-cost" className="block font-semibold text-slate-700 mb-1">Custo Unitário (R$)</label>
                   <input
                     type="number"
                     step="0.01"
+                    id="inventory-cost"
+                    required
+                    min="0"
+                    max="99999999.99"
                     value={costPrice}
                     onChange={(e) => setCostPrice(parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
@@ -446,9 +463,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Fornecedor Principal</label>
+                  <label htmlFor="inventory-supplier" className="block font-semibold text-slate-700 mb-1">Fornecedor Principal</label>
                   <input
                     type="text"
+                    id="inventory-supplier"
+                    maxLength={120}
                     value={supplier}
                     onChange={(e) => setSupplier(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
@@ -458,9 +477,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Localização no Galpão</label>
+                <label htmlFor="inventory-location" className="block font-semibold text-slate-700 mb-1">Localização no Galpão</label>
                 <input
                   type="text"
+                  id="inventory-location"
+                  maxLength={80}
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"

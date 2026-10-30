@@ -263,3 +263,25 @@ test('atalho de estoque envia saldo observado antes do ajuste', async () => {
   await waitFor(() => assert.equal(saved.length, 1));
   assert.equal(saved[0].currentStock, 60); assert.equal(saved[0].expectedPhysicalStock, 10);
 });
+
+test('cadastro de material inicia sem dados fictícios e usa código gerado pelo servidor', async () => {
+  const { InventoryView } = await import('../src/components/InventoryView'); const saved: any[] = [];
+  const view = render(<InventoryView inventory={[]} onSaveItem={async value => { saved.push(value); return false; }} onDeleteItem={() => {}} />);
+  fireEvent.click(view.getByRole('button', { name: /Cadastrar Tecido/ }));
+  const code = view.getByLabelText('Código do Insumo') as HTMLInputElement;
+  assert.equal(code.value, ''); assert.equal(code.readOnly, true); assert.equal(code.required, false);
+  for (const label of ['Saldo Atual', 'Estoque Mínimo', 'Custo Unitário (R$)']) {
+    const field = view.getByLabelText(label) as HTMLInputElement;
+    assert.equal(field.value, '0'); assert.equal(field.step, '0.01');
+    field.value = '1.25'; assert.equal(field.checkValidity(), true);
+    field.value = '-1'; assert.equal(field.checkValidity(), false);
+    field.value = '1.001'; assert.equal(field.checkValidity(), false);
+    field.value = '100000000'; assert.equal(field.checkValidity(), false);
+  }
+  assert.equal((view.getByLabelText('Fornecedor Principal') as HTMLInputElement).value, '');
+  assert.equal((view.getByLabelText('Localização no Galpão') as HTMLInputElement).value, '');
+  fireEvent.submit(view.container.querySelector('form')!);
+  await waitFor(() => assert.equal(saved.length, 1));
+  assert.equal(saved[0].currentStock, 0); assert.equal(saved[0].costPrice, 0);
+  assert.equal(saved[0].supplier, ''); assert.equal(saved[0].location, ''); assert.equal(saved[0].code, '');
+});
