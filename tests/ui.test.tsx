@@ -520,8 +520,29 @@ test('prévia enviada pela proposta usa margem e parcelas iguais ao motor do ser
       const expected = PricingEngine.calculateItemPricing({ materialUnitCost: cost, outsourcedSewingUnitCost: 0, customizationUnitCost: 0, freightUnitCost: 0, technicalLossPercentage: 0, markupPercentage: 0, negotiatedUnitPrice: price });
       assert.equal(saved[0].items[0].costBreakdown.estimatedMarginPercentage, expected.estimatedMarginPercentage);
       assert.equal(saved[0].items[0].costBreakdown.estimatedMarginPercentage, margin);
+      assert.equal(saved[0].paymentTerms, (await import('../shared/quoteTerms')).QUOTE_PAYMENT_TERMS);
       assert.equal(saved[0].totalAmount, price); assert.equal(saved[0].entryAmount, entry); assert.equal(saved[0].balanceDueAtDelivery, balance);
       view.unmount();
     }
+  } finally { api.getMe = oldMe; api.getHealth = oldHealth; }
+});
+
+
+test('proposta exibe telefone do cadastro e condição vigente sem oferecer edição descartada', async () => {
+  const { AuthProvider } = await import('../src/api/authContext'); const { NewQuoteModal } = await import('../src/components/NewQuoteModal');
+  const { QUOTE_PAYMENT_TERMS } = await import('../shared/quoteTerms');
+  const oldMe = api.getMe; const oldHealth = api.getHealth;
+  api.getMe = async () => ({ status: 401 }); api.getHealth = async () => ({ status: 200 });
+  try {
+    const clients: any[] = [{ id: 'first', companyName: 'First', tradeName: 'First', phone: '111', segment: '', cnpj: 'TEST1' },
+      { id: 'second', companyName: 'Second', tradeName: 'Second', phone: '222', segment: '', cnpj: 'TEST2' }];
+    const view = render(<AuthProvider><NewQuoteModal clients={clients} onClose={() => {}} onSaveQuote={async () => false} /></AuthProvider>);
+    const phone = view.getByLabelText('WhatsApp do cliente cadastrado') as HTMLInputElement;
+    const terms = view.getByLabelText('Condição de pagamento') as HTMLInputElement;
+    assert.equal(phone.readOnly, true); assert.equal(phone.value, '111');
+    assert.equal(terms.readOnly, true); assert.equal(terms.value, QUOTE_PAYMENT_TERMS);
+    fireEvent.change(view.container.querySelector('select')!, { target: { value: 'second' } });
+    assert.equal(phone.value, '222'); assert.equal(terms.value, QUOTE_PAYMENT_TERMS);
+    await act(async () => {});
   } finally { api.getMe = oldMe; api.getHealth = oldHealth; }
 });

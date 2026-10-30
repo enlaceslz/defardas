@@ -284,3 +284,12 @@ Motor puro existente foi movido para shared/pricingEngine.ts e reexportado pelo 
 Formulário também passa a expor validade em dias: a variável era exigida no submit mas não havia input para preenchê-la. Inicia zero para exigir informação do usuário, sem presumir prazo comercial. Docker copia shared para o runtime, mantendo imports do backend disponíveis. API continua validando valores, prazo/data e totais antes da gravação; não altera propostas históricas.
 
 Validação local: 136 testes, tipagem, build e diff-check aprovados. Teste UI confere margem 33.33 e parcelas de três centavos contra o motor do servidor, preenchendo prazo e validade. CI desta continuação pendente, incluindo inicialização da imagem Docker. CI anterior: PR #53, https://github.com/enlaceslz/defardas/actions/runs/41078667140. Sem migração nova, merge ou deploy.
+
+
+### Continuação 30/10: campos informativos da proposta
+
+Telefone apresentado no formulário deriva do cliente selecionado e é somente leitura: editar esse input não atualizava cadastro nem era persistido na proposta pela API. Correção do telefone deve ocorrer no cadastro do cliente. Condição de pagamento também é somente leitura e usa QUOTE_PAYMENT_TERMS compartilhada com a criação no servidor, eliminando divergência textual e edição descartada.
+
+Não adiciona configuração de condição comercial, novas parcelas, alteração de contato pela proposta ou atualização de documentos históricos. A API mantém a condição fixa já vigente e a geração de duas parcelas de 50%.
+
+Validação local: 137 testes, tipagem, build e diff-check aprovados. Teste UI verifica telefone ao trocar cliente e condição vigente somente leitura; teste de envio da proposta confere texto compartilhado no payload. CI desta continuação pendente. CI anterior: PR #54, https://github.com/enlaceslz/defardas/actions/runs/41079814589. Sem migração nova, merge ou deploy.
