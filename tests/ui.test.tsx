@@ -441,3 +441,38 @@ test('falha após trocar conversa não contamina erro atual e preserva rascunho 
     await act(async () => finish({ status: 503, error: 'Não confirmado' }));
   });
 });
+
+test('QR trata exceções sem expor detalhes e reconexão falha remove imagem anterior', async () => {
+  await withCommunication(async () => {
+    api.getChannelQr = async () => { throw new Error('private-qr-detail'); };
+    const view = render(<WhatsAppOmnichannelView />);
+    await view.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...');
+    const open = view.container.querySelector('button svg.lucide-qr-code')!.closest('button')!;
+    fireEvent.click(open);
+    await view.findByText('Não foi possível consultar o QR Code.');
+    assert.equal(view.getByRole('button', { name: 'Reconectar Canal' }).hasAttribute('disabled'), false);
+    fireEvent.click(view.getByRole('button', { name: 'Fechar' }));
+    api.getChannelQr = async () => ({ status: 200, data: { qrCode: 'data:image/png;base64,fixture' } });
+    fireEvent.click(open); await view.findByAltText('QR Code WhatsApp');
+    api.reconnectChannel = async () => { throw new Error('private-reconnect-detail'); };
+    fireEvent.click(view.getByRole('button', { name: 'Reconectar Canal' }));
+    await view.findByText('Não foi possível reconectar o canal.');
+    assert.equal(Boolean(view.queryByAltText('QR Code WhatsApp')), false);
+    assert.equal(view.container.textContent?.includes('private-'), false);
+    assert.equal(view.getByRole('button', { name: 'Reconectar Canal' }).hasAttribute('disabled'), false);
+  });
+});
+
+test('QR recebido depois de fechar modal não reaparece', async () => {
+  await withCommunication(async () => {
+    let finish!: (value: any) => void;
+    api.getChannelQr = async () => new Promise(resolve => { finish = resolve; });
+    const view = render(<WhatsAppOmnichannelView />);
+    await view.findByPlaceholderText('Escreva uma mensagem no WhatsApp do cliente...');
+    fireEvent.click(view.container.querySelector('button svg.lucide-qr-code')!.closest('button')!);
+    fireEvent.click(view.getByRole('button', { name: 'Fechar' }));
+    await act(async () => finish({ status: 200, data: { qrCode: 'data:image/png;base64,fixture' } }));
+    assert.equal(Boolean(view.queryByAltText('QR Code WhatsApp')), false);
+    assert.equal(Boolean(view.queryByRole('button', { name: 'Reconectar Canal' })), false);
+  });
+});
