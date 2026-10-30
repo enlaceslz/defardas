@@ -230,3 +230,12 @@ A SPA mantém tentativas não confirmadas por conversa e texto normalizado (trim
 Estado permanece apenas em memória durante a montagem da tela. Recarregar/desmontar perde as chaves; conferir histórico/reconciliar antes de repetir envio incerto. Não persiste rascunhos, envia automaticamente mensagens, resolve entrega do provedor ou deduplica textos parecidos. A proteção do servidor continua baseada na chave, não no corpo.
 
 Validação local: 126 testes, tipagem, build e diff-check aprovados. Novo teste UI cobre alternância, normalização de espaços, sucesso seletivo e nova intenção após confirmação; testes de idempotência backend existentes continuam aplicáveis. CI desta continuação pendente. CI anterior: PR #47, https://github.com/enlaceslz/defardas/actions/runs/41058340780. Sem migração nova, mensagens externas, merge ou deploy.
+
+
+### Continuação 30/10: histórico atrasado na conversa ativa
+
+Carregamento inicial do histórico é mesclado por ID com mensagens já observadas na conversa durante a espera. Uma resposta iniciada antes do envio não remove a confirmação recebida nesse intervalo nem duplica o ID se ele também vier na consulta. Na colisão, conserva o estado local observado durante a espera. Cancelamento ao trocar conversa permanece ativo.
+
+Exceção inesperada da consulta informa erro genérico e encerra o indicador de carregamento, sem detalhes do provedor. Não altera banco, mensagens externas, recibos do provedor ou implementa sincronização contínua/paginação/ordenação causal. Não constitui reconciliação de estados entregue/lido fora desse carregamento.
+
+Validação local: 128 testes, tipagem, build e diff-check aprovados. Testes UI cobrem resposta atrasada com e sem ID recém-confirmado e rejeição inesperada sem exposição de detalhes. CI desta continuação pendente. CI anterior: PR #48, https://github.com/enlaceslz/defardas/actions/runs/41061332440. Sem migração nova, mensagens externas, merge ou deploy.
