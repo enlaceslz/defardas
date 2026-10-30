@@ -42,9 +42,9 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
-  const [city, setCity] = useState('São Paulo');
-  const [state, setState] = useState('SP');
-  const [segment, setSegment] = useState('Indústria');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [segment, setSegment] = useState('');
   const [standardUniformNotes, setStandardUniformNotes] = useState('');
 
   const openNewModal = () => {
@@ -57,9 +57,9 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     setPhone('');
     setEmail('');
     setAddress('');
-    setCity('São Paulo');
-    setState('SP');
-    setSegment('Indústria');
+    setCity('');
+    setState('');
+    setSegment('');
     setStandardUniformNotes('');
     setIsModalOpen(true);
   };
@@ -270,11 +270,11 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
             <form onSubmit={handleFormSubmit} className="p-6 space-y-4 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Razão Social Completa *</label>
+                <label htmlFor="client-companyName" className="block font-semibold text-slate-700 mb-1">Razão Social Completa *</label>
                 <input
                   type="text"
                   required
-                  value={companyName}
+                  id="client-companyName" maxLength={150} value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                   placeholder="Ex: METALÚRGICA VALE DO AÇO S/A"
@@ -283,20 +283,20 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Nome Fantasia</label>
+                  <label htmlFor="client-tradeName" className="block font-semibold text-slate-700 mb-1">Nome Fantasia</label>
                   <input
                     type="text"
-                    value={tradeName}
+                    id="client-tradeName" maxLength={150} value={tradeName}
                     onChange={(e) => setTradeName(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                     placeholder="Ex: Vale do Aço"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Segmento</label>
+                  <label htmlFor="client-segment" className="block font-semibold text-slate-700 mb-1">Segmento</label>
                   <input
                     type="text"
-                    value={segment}
+                    id="client-segment" maxLength={60} value={segment}
                     onChange={(e) => setSegment(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                     placeholder="Ex: Indústria, Hospital, Logística"
@@ -306,21 +306,21 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">CNPJ *</label>
+                  <label htmlFor="client-cnpj" className="block font-semibold text-slate-700 mb-1">CNPJ *</label>
                   <input
                     type="text"
                     required
-                    value={cnpj}
+                    id="client-cnpj" maxLength={20} value={cnpj}
                     onChange={(e) => setCnpj(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
                     placeholder="00.000.000/0000-00"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Inscrição Estadual</label>
+                  <label htmlFor="client-stateRegistration" className="block font-semibold text-slate-700 mb-1">Inscrição Estadual</label>
                   <input
                     type="text"
-                    value={stateRegistration}
+                    id="client-stateRegistration" maxLength={30} value={stateRegistration}
                     onChange={(e) => setStateRegistration(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
                   />
@@ -329,20 +329,20 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Nome do Contato / Cargo</label>
+                  <label htmlFor="client-contactName" className="block font-semibold text-slate-700 mb-1">Nome do Contato / Cargo</label>
                   <input
                     type="text"
-                    value={contactName}
+                    id="client-contactName" maxLength={100} required value={contactName}
                     onChange={(e) => setContactName(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                     placeholder="Ex: Carlos (Gerente de RH)"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Telefone / WhatsApp</label>
+                  <label htmlFor="client-phone" className="block font-semibold text-slate-700 mb-1">Telefone / WhatsApp</label>
                   <input
                     type="text"
-                    value={phone}
+                    id="client-phone" maxLength={30} required value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
                     placeholder="(11) 98765-4321"
@@ -351,10 +351,10 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">E-mail para Orçamentos e Faturamento</label>
+                <label htmlFor="client-email" className="block font-semibold text-slate-700 mb-1">E-mail para Orçamentos e Faturamento</label>
                 <input
                   type="email"
-                  value={email}
+                  id="client-email" maxLength={150} value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                   placeholder="compras@empresa.com.br"
@@ -363,26 +363,23 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">Endereço</label>
+                  <label htmlFor="client-address" className="block font-semibold text-slate-700 mb-1">Endereço</label>
                   <input
                     type="text"
-                    value={address}
+                    id="client-address" maxLength={200} value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Cidade / UF</label>
-                  <input
-                    type="text"
-                    value={`${city}/${state}`}
-                    onChange={(e) => {
-                      const parts = e.target.value.split('/');
-                      setCity(parts[0] || 'São Paulo');
-                      setState(parts[1] || 'SP');
-                    }}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-                  />
+                  <label htmlFor="client-city" className="block font-semibold text-slate-700 mb-1">Cidade</label>
+                  <input id="client-city" type="text" maxLength={80} value={city} onChange={(e) => setCity(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900" />
+                </div>
+                <div>
+                  <label htmlFor="client-state" className="block font-semibold text-slate-700 mb-1">UF</label>
+                  <input id="client-state" type="text" maxLength={2} value={state} onChange={(e) => setState(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900" />
                 </div>
               </div>
 
@@ -392,7 +389,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                 </label>
                 <textarea
                   rows={2}
-                  value={standardUniformNotes}
+                  maxLength={10000} value={standardUniformNotes}
                   onChange={(e) => setStandardUniformNotes(e.target.value)}
                   className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-slate-900"
                   placeholder="Cores institucionais, modelo padrão, local do bordado do logo, tecido homologado"
