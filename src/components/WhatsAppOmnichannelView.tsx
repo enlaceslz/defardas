@@ -111,7 +111,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
     mounted.current = true;
     loadData();
     const interval = setInterval(loadData, 10000); // Polling a cada 10s
-    return () => { mounted.current = false; ++listRequest.current; clearInterval(interval); };
+    return () => { mounted.current = false; ++listRequest.current; ++qrRequest.current; clearInterval(interval); };
   }, []);
 
   // Uma resposta atrasada nunca substitui o histórico de outra conversa.
@@ -186,12 +186,35 @@ export const WhatsAppOmnichannelView: React.FC = () => {
     const request = ++qrRequest.current;
     setQrChannel({ ...channel, qrCode: undefined });
     setQrError(''); setIsQrLoading(true); setIsQrModalOpen(true);
-    const res = await api.getChannelQr(channel.id);
-    if (request !== qrRequest.current) return;
-    if (res.status === 200 && typeof res.data?.qrCode === 'string' && res.data.qrCode) {
-      setQrChannel({ ...channel, qrCode: res.data.qrCode });
-    } else setQrError(res.error || 'QR Code indisponível no provedor.');
-    setIsQrLoading(false);
+    try {
+      const res = await api.getChannelQr(channel.id);
+      if (!mounted.current || request !== qrRequest.current) return;
+      if (res.status === 200 && typeof res.data?.qrCode === 'string' && res.data.qrCode) {
+        setQrChannel({ ...channel, qrCode: res.data.qrCode });
+      } else setQrError(res.error || 'QR Code indisponível no provedor.');
+    } catch {
+      if (mounted.current && request === qrRequest.current) setQrError('Não foi possível consultar o QR Code.');
+    } finally { if (mounted.current && request === qrRequest.current) setIsQrLoading(false); }
+  };
+
+  const reconnectQrChannel = async () => {
+    if (!qrChannel) return;
+    const channel = qrChannel;
+    const request = ++qrRequest.current;
+    setQrChannel({ ...channel, qrCode: undefined });
+    setIsQrLoading(true); setQrError('');
+    try {
+      const res = await api.reconnectChannel(channel.id);
+      if (!mounted.current || request !== qrRequest.current) return;
+      if (res.status < 200 || res.status >= 300) {
+        setQrError(res.error || 'Reconexão não confirmada.');
+        return;
+      }
+      await loadQr(channel);
+      if (mounted.current) void loadData();
+    } catch {
+      if (mounted.current && request === qrRequest.current) setQrError('Não foi possível reconectar o canal.');
+    } finally { if (mounted.current && request === qrRequest.current) setIsQrLoading(false); }
   };
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId);
@@ -537,20 +560,7 @@ export const WhatsAppOmnichannelView: React.FC = () => {
             <div className="flex gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
-                onClick={async () => {
-                  const channel = qrChannel;
-                  const request = ++qrRequest.current;
-                  setIsQrLoading(true); setQrError('');
-                  const res = await api.reconnectChannel(channel.id);
-                  if (request !== qrRequest.current) return;
-                  setIsQrLoading(false);
-                  if (res.status < 200 || res.status >= 300) {
-                    setQrError(res.error || 'Reconexão não confirmada.');
-                    return;
-                  }
-                  await loadQr(channel);
-                  void loadData();
-                }}
+                onClick={reconnectQrChannel}
                 disabled={isQrLoading}
                 className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition-colors"
               >

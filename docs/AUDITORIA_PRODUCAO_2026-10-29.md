@@ -257,3 +257,12 @@ Sucesso recebido enquanto outra conversa está aberta encerra a chave e limpa o 
 Não cria cache de histórico por conversa, reenvio automático ou confirmação de entrega do provedor. Ao retornar à conversa, histórico continua sendo consultado pela API. As chaves permanecem apenas em memória durante a montagem.
 
 Validação local: 132 testes, tipagem, build e diff-check aprovados. Novos testes UI cobrem sucesso/falha após troca, isolamento do rascunho/histórico, descarte da chave confirmada e reutilização da chave incerta. CI desta continuação pendente. CI anterior: PR #50, https://github.com/enlaceslz/defardas/actions/runs/41063031868. Sem migração nova, mensagens externas, merge ou deploy.
+
+
+### Continuação 30/10: falhas e ciclo do QR de pareamento
+
+Consulta de QR e reconexão tratam rejeições inesperadas com erro genérico e encerram o indicador de espera somente se a operação ainda for atual. Reconexão limpa imagem anterior antes de iniciar, evitando reexibir QR antigo após falha. Desmontagem invalida a sequência de QR, além do fechamento já protegido.
+
+Não cancela chamadas no provedor nem implementa pareamento, autenticação ou expiração real do QR. Respostas normais de erro mantêm mensagem da API; exceções não expõem detalhes internos. Homologação do provedor continua pendente.
+
+Validação local: 134 testes, tipagem, build e diff-check aprovados. Testes UI cobrem rejeição de consulta, rejeição da reconexão após QR exibido, liberação do botão e resposta recebida depois de fechar o modal. CI desta continuação pendente. CI anterior: PR #51, https://github.com/enlaceslz/defardas/actions/runs/41063638206. Sem migração nova, mensagens externas, merge ou deploy.
