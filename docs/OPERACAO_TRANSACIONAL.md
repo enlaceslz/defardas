@@ -519,3 +519,8 @@ Telefone apresentado no formulário deriva do cliente selecionado e é somente l
 Não adiciona configuração de condição comercial, novas parcelas, alteração de contato pela proposta ou atualização de documentos históricos. A API mantém a condição fixa já vigente e a geração de duas parcelas de 50%.
 
 Validação local: 137 testes, tipagem, build e diff-check aprovados. Teste UI verifica telefone ao trocar cliente e condição vigente somente leitura; teste de envio da proposta confere texto compartilhado no payload. CI desta continuação pendente. CI anterior: PR #54, https://github.com/enlaceslz/defardas/actions/runs/41079814589. Sem migração nova, merge ou deploy.
+
+
+### Continuação 31/10: validade representável na interface
+
+Validade em dias exige inteiro positivo e data resultante entre 0001 e 9999 antes de montar o payload. Erro apresenta validação e interrompe o envio, sem exceção de toISOString. Mantém dias corridos de 24h, sem prazo comercial novo. Testes cobrem bissexto, virada de ano, último dia representável, overflow e referência inválida. Validação local: 138 testes, tipagem e build aprovados. CI pendente; sem migração ou deploy.

@@ -1,3 +1,4 @@
+import { quoteValidity } from '../utils/quoteValidity';
 import { QUOTE_PAYMENT_TERMS } from '../../shared/quoteTerms';
 import { PricingEngine, roundCurrency } from '../../shared/pricingEngine';
 import { useSubmission } from '../api/useSubmission';
@@ -141,7 +142,9 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
 
     if (productionLeadDays < 1 || validUntilDays < 1) { alert('Informe o prazo de produção e a validade da proposta.'); return; }
     const today = new Date();
-    const validUntilDate = new Date(today.getTime() + validUntilDays * 86400000);
+    let validUntil: string;
+    try { validUntil = quoteValidity(validUntilDays, today); }
+    catch (error) { alert(error instanceof Error ? error.message : 'Validade inválida.'); return; }
     const seqNum = crypto.randomUUID();
 
     const newQuote: Quote = {
@@ -155,7 +158,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
       clientEmail: selectedClient.email,
       sellerName,
       date: today.toISOString().split('T')[0],
-      validUntil: validUntilDate.toISOString().split('T')[0],
+      validUntil,
       items,
       subtotal,
       discountPercentage: 0,
