@@ -1,3 +1,4 @@
+import { trustedProxy } from './server/validation/trustedProxy';
 import { httpPort } from './server/validation/httpPort';
 import 'dotenv/config';
 import 'express-async-errors';
@@ -35,6 +36,7 @@ const PORT = httpPort(process.env.PORT);
 const isProd = process.env.NODE_ENV === 'production';
 
 async function bootstrap() {
+  const proxyTrust = trustedProxy(process.env.TRUST_PROXY_CIDRS);
   await db.ready;
   if (isProd) {
     await pool.query('SELECT key FROM core.public_settings LIMIT 0');
@@ -44,6 +46,7 @@ async function bootstrap() {
   }
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', proxyTrust);
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     res.set('X-Content-Type-Options', 'nosniff');

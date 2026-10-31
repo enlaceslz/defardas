@@ -8,7 +8,7 @@ O Compose padrão inicia `defardas-app` e `defardas-postgres` (PostgreSQL 16 pr�
 
 Docker Engine e Compose v2 com suporte a `env_file.required` (2.24 ou superior), Bash, gzip e sha256sum são necessários. Validar versões e compatibilidade no servidor de destino. O guia anterior citava Compose 2.20, incompatível com essa opção do arquivo.
 
-A porta do ERP é publicada somente em `127.0.0.1:${PORT:-3000}` por padrão. Configurar proxy HTTPS na topologia contratada; se o proxy for outro container/host, ajustar `APP_BIND_ADDRESS` e redes/firewall deliberadamente. Não assumir zero downtime, alta disponibilidade ou rate limiting distribuído. O proxy não deve expor PostgreSQL/Redis e trust proxy precisa ser definido conforme a topologia real; o código atual não confia em X-Forwarded-For arbitrário.
+A porta do ERP é publicada somente em `127.0.0.1:${PORT:-3000}` por padrão. Configurar proxy HTTPS na topologia contratada; se o proxy for outro container/host, ajustar `APP_BIND_ADDRESS` e redes/firewall deliberadamente. Não assumir zero downtime, alta disponibilidade ou rate limiting distribuído. O proxy não deve expor PostgreSQL/Redis e trust proxy precisa ser definido conforme a topologia real; o código não confia em X-Forwarded-For por padrão.
 
 ## Instalação inicial em banco novo
 
@@ -94,3 +94,10 @@ A verificação de restauração da CI compara também IDs/revisões das OPs e e
 
 
 PORT explícito deve ser inteiro decimal canônico de 1 a 65535, sem espaços, zeros iniciais ou sufixos. Ausência usa 3000; valor inválido impede startup. Ajustar também proxy, publicação e healthcheck à porta escolhida.
+
+
+### Proxy HTTP confiável
+
+TRUST_PROXY_CIDRS vazio mantém confiança desativada. Preencher somente IPs/CIDRs dos proxies controlados, separados por vírgula, após confirmar o endereço de origem visto pelo container. Não usar o endereço público do cliente ou assumir que o proxy no host chega como 127.0.0.1 dentro do Docker. O Compose já carrega .env por env_file.
+
+Recusa nomes, booleanos, contagem de saltos e /0. Exemplos de sintaxe (não valores recomendados para seu host): 192.0.2.10/32,2001:db8::10/128. Express percorre a cadeia da direita para a esquerda até a primeira origem não confiável. Proxies confiáveis precisam sobrescrever/normalizar cabeçalhos encaminhados; acesso direto ao app deve ser restrito por rede/firewall. Configurar incorretamente pode permitir falsificação de IP e afetar rate limit/auditoria. Testar clientes distintos, cabeçalho forjado e caminhos alternativos em homologação. O limitador permanece por processo; não resolve múltiplas instâncias.
