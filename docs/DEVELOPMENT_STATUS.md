@@ -1,10 +1,12 @@
 # DE FARDAS — status de desenvolvimento e prontidão
 
-Atualizado em 29/10/2026. Repositório: `enlaceslz/defardas`.
+Atualizado em 31/10/2026. Repositório: `enlaceslz/defardas`.
 
 **Situação: núcleo transacional testado; produção ainda não liberada.** Este documento substitui a declaração anterior de “IMPLEMENTADO, TESTADO E HOMOLOGADO”, que não correspondia às integrações e evidências disponíveis.
 
-As correções estão em PRs incrementais. A revisão parte do PR #23 (`4701bea2`), cuja CI passou na segunda tentativa: https://github.com/enlaceslz/defardas/actions/runs/40897687115. PR aberto, build aprovado e homologação operacional são estados diferentes. Não houve merge, deploy, migração no banco real ou envio externo nesta revisão.
+As correções estão em PRs incrementais. Última entrega funcional validada: [PR #57](https://github.com/enlaceslz/defardas/pull/57), commit publicado `b6c2f0b2`, com 139 testes locais, tipagem e build aprovados. [CI completa](https://github.com/enlaceslz/defardas/actions/runs/41208885465) aprovada: Compose, testes, build, PostgreSQL, backup/restauração e Docker. O PR #57 permanece aberto e sem merge na consulta de 31/10; essa branch não comprova integração na branch principal ou implantação. Os números abaixo referentes a bases anteriores são históricos.
+
+**Próxima etapa de produção:** consolidar a sequência incremental em homologação e resolver os três bloqueios P0 antes de liberar dados reais: armazenamento privado/evidências, matriz de leitura por perfil homologada e ensaio no servidor contratado. Correções de formulário não eliminam esses bloqueios.
 
 | Área | Evidência e situação atual |
 |---|---|
@@ -19,6 +21,29 @@ As correções estão em PRs incrementais. A revisão parte do PR #23 (`4701bea2
 | Arquivos | Upload privado S3, posse, MIME/tamanho e vínculo de evidência ainda não implementados. Variáveis S3 não ativam integração. |
 | Deploy | Imagem com usuário sem privilégios, migração CLI e backup/restauração testados em CI. Compose padrão sem provedor fictício; Redis opcional e sem uso pelo runtime atual. Servidor contratado ainda não ensaiado. |
 | Governança | Matriz de leitura por perfil, cancelamento/estorno, retenção, comissão e alçada definitiva precisam de decisões/homologação. Não automatizar fiscal/comissão sem política válida. |
+
+## Consolidação até o PR #57
+
+| Frente | Correções validadas e limites |
+|---|---|
+| Concorrência de OP | Migração 0006 com revisão/trigger; edição, mudança de etapa e primeira aprovação exigem revisão da leitura. Replay de aprovação conserva metadados. Atualizar clientes da API em conjunto. |
+| Integridade financeira | Baixa exige vínculos e estrutura de conversão coerentes; rejeição não libera OP. Reenvio de título pago preserva confirmação. URL válida ainda não autentica comprovante. |
+| Estoque | UUID/vínculo de OP antes do movimento; histórico/custódia bloqueiam exclusão com consulta de existência; SPA conserva saldo observado no ajuste. Não há revisão completa do item ou solução ABA. |
+| Proposta | Motor puro compartilhado e runtime Docker alinhados; margem/parcelas em centavos; validade representável e limite de 100 itens na SPA. Sem novo prazo comercial ou alteração do markup. |
+| Interface | Formulários sem valores fictícios, limites alinhados à API e bloqueio de duplo envio do perfil. JSDOM não substitui homologação em navegador/dispositivo real. |
+| Comunicação | Chaves incertas por texto/conversa, respostas antigas descartadas, histórico mesclado e QR com tratamento de falha. Estado de chaves não sobrevive à desmontagem; provedor real permanece pendente. |
+
+## Critérios para avançar à liberação
+
+1. Integrar a cadeia de PRs em ambiente de homologação e registrar o commit consolidado. Conferir migrações, clientes próprios da API e configuração; não usar CI de uma branch incremental como prova da versão implantada.
+2. Implementar e ensaiar armazenamento privado no provedor contratado: autorização por arquivo, vínculo de arte/comprovante, tamanho/MIME e URLs temporárias. Credenciais reais não entram no repositório.
+3. Homologar a matriz de leitura com os responsáveis e aplicá-la ao backend e carregamento da SPA. Não presumir alçadas por perfil.
+4. Ensaiar no host contratado HTTPS/proxy/TLS do PostgreSQL, persistência, segredos, monitoramento, backup externo e recuperação em cópia isolada; registrar responsáveis e metas RPO/RTO.
+5. Homologar jornadas com comercial, financeiro e produção, incluindo falhas/reenvios, impressão e dispositivos usados pela equipe. Decidir escopo operacional e pendências aceitas formalmente.
+
+Sem acesso/evidência do host ou decisões de negócio, esses critérios continuam abertos. Nenhuma homologação ou liberação é inferida da quantidade de testes.
+
+## Registros históricos de validação
 
 Na base do PR #23, 87 testes locais passaram; CI validou tipagem, build, PostgreSQL, backup/restauração e imagem. A revisão atual passou 88 testes locais, tipagem e build; acrescenta teste de endpoint WA-AKG obrigatório, validação do Compose e healthcheck interno em porta customizada. Auditoria npm: quatro alertas moderados em ferramentas de desenvolvimento e zero com --omit=dev. Seu resultado deve ser conferido na CI do novo PR, sem substituir o registro histórico da base.
 
