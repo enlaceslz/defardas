@@ -546,3 +546,21 @@ test('proposta exibe telefone do cadastro e condição vigente sem oferecer edi�
     await act(async () => {});
   } finally { api.getMe = oldMe; api.getHealth = oldHealth; }
 });
+
+test('proposta limita inclusão a 100 itens e permite nova inclusão após remoção', async () => {
+  const { AuthProvider } = await import('../src/api/authContext'); const { NewQuoteModal } = await import('../src/components/NewQuoteModal');
+  const oldMe = api.getMe; const oldHealth = api.getHealth;
+  api.getMe = async () => ({ status: 401 }); api.getHealth = async () => ({ status: 200 });
+  try {
+    const view = render(<AuthProvider><NewQuoteModal clients={[]} onClose={() => {}} onSaveQuote={async () => false} /></AuthProvider>);
+    const add = () => view.getByRole('button', { name: /Adicionar item \(/ });
+    for (let i = 1; i < 100; i++) fireEvent.click(add());
+    assert.equal(view.getAllByLabelText('Categoria').length, 100);
+    assert.equal(add().hasAttribute('disabled'), true);
+    fireEvent.click(add()); assert.equal(view.getAllByLabelText('Categoria').length, 100);
+    const remove = view.container.querySelector('button svg.lucide-trash2')?.closest('button'); assert.ok(remove);
+    fireEvent.click(remove); assert.equal(add().hasAttribute('disabled'), false);
+    fireEvent.click(add()); assert.equal(view.getAllByLabelText('Categoria').length, 100);
+    await act(async () => {});
+  } finally { api.getMe = oldMe; api.getHealth = oldHealth; }
+});
