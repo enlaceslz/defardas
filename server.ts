@@ -1,3 +1,4 @@
+import { httpPort } from './server/validation/httpPort';
 import 'dotenv/config';
 import 'express-async-errors';
 /**
@@ -30,7 +31,7 @@ import { settingsRouter } from './server/routes/settingsRoutes';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const PORT = httpPort(process.env.PORT);
 const isProd = process.env.NODE_ENV === 'production';
 
 async function bootstrap() {

@@ -60,3 +60,6 @@ Continuação financeira: 99 testes locais, tipagem e build aprovados. Conversã
 Continuação do replay: 100 testes locais, tipagem e build aprovados. Histórico de conversão parcial não recebe falso sucesso; proposta, OPs e recebíveis precisam ter vínculos consistentes. Reenvio íntegro conserva pagamento e auditoria. Consultar o runbook e a CI do PR correspondente para limites e evidências; reconciliação histórica automática não foi implementada.
 
 Continuação de concorrência: 103 testes locais, tipagem e build aprovados. Migração 0006 adiciona revisão por OP; avanço de etapa exige revisão lida e recusa ação antiga. UI recarrega conflito sem repetir a operação. Schema/trigger e contratos de clientes devem ser atualizados em manutenção; confirmar CI do PR correspondente. Outras escritas não recebem CAS nesta entrega.
+
+
+Nova revisão de 31/10: [achados e critérios de produção](AUDITORIA_PRODUCAO_2026-10-31.md). CI do PR #58 aprovada; startup passa a validar PORT sem coerção parcial. Bloqueios P0 continuam abertos.
