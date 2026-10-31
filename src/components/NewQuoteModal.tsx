@@ -48,7 +48,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
     setSelectedClient(found);
   };
 
-  const handleAddItem = () => setItems((previous) => [...previous, makeItem()]);
+  const handleAddItem = () => setItems((previous) => previous.length >= 100 ? previous : [...previous, makeItem()]);
 
   const handleRemoveItem = (id: string) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
@@ -125,8 +125,8 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
       return;
     }
 
-    if (items.length === 0) {
-      alert('Adicione ao menos um item à proposta comercial.');
+    if (items.length === 0 || items.length > 100) {
+      alert('Informe de 1 a 100 itens na proposta comercial.');
       return;
     }
 
@@ -255,10 +255,12 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
               <button
                 type="button"
                 onClick={handleAddItem}
+                disabled={items.length >= 100}
+                aria-label={`Adicionar item (${items.length} de 100)`}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>+ Adicionar Item</span>
+                <span>+ Adicionar Item ({items.length}/100)</span>
               </button>
             </div>
 

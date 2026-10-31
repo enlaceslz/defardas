@@ -524,3 +524,8 @@ Validação local: 137 testes, tipagem, build e diff-check aprovados. Teste UI v
 ### Continuação 31/10: validade representável na interface
 
 Validade em dias exige inteiro positivo e data resultante entre 0001 e 9999 antes de montar o payload. Erro apresenta validação e interrompe o envio, sem exceção de toISOString. Mantém dias corridos de 24h, sem prazo comercial novo. Testes cobrem bissexto, virada de ano, último dia representável, overflow e referência inválida. Validação local: 138 testes, tipagem e build aprovados. CI pendente; sem migração ou deploy.
+
+
+### Continuação 31/10: limite de itens na interface
+
+SPA limita inclusão a 100 itens, como a API, e exibe contador. Botão é desabilitado no limite e a atualização de estado também recusa inclusão excedente. Remover item permite nova inclusão. Submit mantém validação de 1 a 100, sem alterar regra comercial ou limite do servidor. Teste UI cobre chegar a 100, bloquear item extra e remover/adicionar. Validação local: 139 testes, tipagem, build e diff-check aprovados. CI pendente; sem migração ou deploy.
