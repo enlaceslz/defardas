@@ -91,3 +91,6 @@ Executar 0006_order_revision pelo runner oficial antes de iniciar esta versão. 
 Bootstrap passa a verificar a coluna antes de servir. A API de avanço de etapa exige expectedRevision; atualizar frontend e clientes próprios em conjunto. Cliente antigo sem campo recebe 400; conflito exige releitura e decisão do usuário. Não é atualização transparente por rolling deploy entre contratos diferentes. Restauração/rollback deve preservar schema/trigger e evidência da migração; não remover coluna/trigger em banco real sem plano ensaiado. CI deve validar migração, concorrência, backup/restauração e imagem antes da implantação.
 
 A verificação de restauração da CI compara também IDs/revisões das OPs e executa um UPDATE de notas sem mudança de conteúdo no banco restaurado descartável, exigindo revision anterior + 1. Isso testa a presença funcional do trigger após restore; não executa escrita no banco de origem ou no ambiente real.
+
+
+PORT explícito deve ser inteiro decimal canônico de 1 a 65535, sem espaços, zeros iniciais ou sufixos. Ausência usa 3000; valor inválido impede startup. Ajustar também proxy, publicação e healthcheck à porta escolhida.
