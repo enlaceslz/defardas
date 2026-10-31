@@ -33,3 +33,8 @@ Mudança de compatibilidade: PORT explícito com espaços, zeros iniciais, zero,
 4. Decidir liberação operacional com evidências e escopo aceito; manter estorno, comissão e fiscal sem automação não homologada.
 
 Ver [status consolidado](DEVELOPMENT_STATUS.md), [auditoria anterior](AUDITORIA_PRODUCAO_2026-10-29.md) e [implantação](DOCKER_DEPLOY.md).
+
+
+## Continuação: configuração explícita de proxy
+
+Implementada TRUST_PROXY_CIDRS opcional, desativada por padrão e restrita a IP/CIDR literal sem /0, booleano ou contagem de saltos. O runtime agora permite configurar a topologia sem alterar código. Testes HTTP verificam confiança desativada e parada da cadeia no primeiro endereço não confiável. Validação local: 142 testes, tipagem e build aprovados. CI desta continuação pendente. O achado de proxy continua dependendo de ensaio no host; não foi homologada topologia nem implementado rate limit distribuído. Demais bloqueios P0 permanecem.
