@@ -44,10 +44,14 @@ leadsRouter.post('/', async (req: Request, res: Response) => {
 
   await leadRepository.save(newLead);
 
-  // Cadastrar ou vincular cliente na carteira se for novo
+  // Cadastrar ou vincular cliente na carteira se for novo (comparando dígitos do telefone ou razão social)
+  const phoneDigits = String(phone).replace(/\D/g, '');
   const allClients = await clientRepository.findAll();
   let matchedClient = allClients.find(
-    (c) => c.phone === phone || c.companyName.toLowerCase() === companyName.toLowerCase()
+    (c) =>
+      (phoneDigits.length >= 10 && c.phone.replace(/\D/g, '') === phoneDigits) ||
+      c.companyName.trim().toLowerCase() === String(companyName).trim().toLowerCase() ||
+      c.tradeName.trim().toLowerCase() === String(companyName).trim().toLowerCase()
   );
 
   if (!matchedClient) {
@@ -55,12 +59,12 @@ leadsRouter.post('/', async (req: Request, res: Response) => {
     matchedClient = {
       id: crypto.randomUUID(),
       code: clientCode,
-      companyName: companyName.toUpperCase(),
-      tradeName: companyName,
-      cnpj: '00.000.000/0001-00', // Cadastro preliminar aguardando dados fiscais
-      contactName: clientName,
-      phone,
-      email: email || '',
+      companyName: String(companyName).trim().toUpperCase(),
+      tradeName: String(companyName).trim(),
+      cnpj: `PEND-${clientCode}`, // Identificador preliminar único (evita colisão UNIQUE no PostgreSQL até validação fiscal)
+      contactName: String(clientName).trim(),
+      phone: String(phone).trim(),
+      email: email ? String(email).trim() : '',
       address: 'São Luís - MA',
       city: 'São Luís',
       state: 'MA',
@@ -93,6 +97,14 @@ leadsRouter.post('/', async (req: Request, res: Response) => {
   });
 });
 
+const VALID_LEAD_STATUSES = new Set([
+  'novo',
+  'em_atendimento',
+  'orcamento_enviado',
+  'convertido',
+  'perdido',
+]);
+
 // Atualizar status do lead (Apenas vendedores, gerentes e admin)
 leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clients'), async (req: RequestWithUser, res: Response) => {
   const lead = await leadRepository.findById(req.params.id);
@@ -101,9 +113,29 @@ leadsRouter.patch('/:id/status', requireAuth, requirePermission('crm:manage_clie
   }
 
   const { status, sellerId } = req.body;
+  if (status !== undefined && !VALID_LEAD_STATUSES.has(status)) {
+    return res.status(400).json({
+      error: `Status de lead inválido. Permitidos: ${Array.from(VALID_LEAD_STATUSES).join(', ')}.`,
+    });
+  }
+
+  const oldStatus = lead.status;
   if (status) lead.status = status;
   if (sellerId) lead.assignedSellerId = sellerId;
 
   await leadRepository.save(lead);
+
+  auditService.log({
+    actorId: req.user!.id,
+    actorName: req.user!.fullName,
+    actorRole: req.user!.role,
+    entityName: 'crm.leads',
+    entityId: lead.leadNumber,
+    action: 'UPDATE_LEAD_STATUS',
+    oldData: { status: oldStatus },
+    newData: { status: lead.status, assignedSellerId: lead.assignedSellerId },
+    notes: `Status do lead ${lead.leadNumber} alterado de '${oldStatus}' para '${lead.status}'.`,
+  });
+
   res.json({ success: true, lead });
 });

@@ -2,19 +2,19 @@
  * DE FARDAS ERP — Communication Repository (Drizzle ORM + Resilient Memory Store)
  * Gerencia persistência de canais WhatsApp (Meta Cloud API & WA-AKG), conversas e mensagens.
  */
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, asc } from 'drizzle-orm';
 import { db as drizzleDb } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
-import { 
-  channels, 
-  conversations, 
-  messages, 
-  WhatsAppChannel, 
-  Conversation, 
-  Message, 
-  NewWhatsAppChannel, 
-  NewConversation, 
-  NewMessage 
+import {
+  channels,
+  conversations,
+  messages,
+  WhatsAppChannel,
+  Conversation,
+  Message,
+  NewWhatsAppChannel,
+  NewConversation,
+  NewMessage,
 } from '../db/schema/communication';
 import { WhatsAppChannelEntity, ConversationEntity, MessageEntity } from '../types/db';
 
@@ -44,6 +44,11 @@ export class CommunicationRepository {
     return fallbackDb.channels.get(id) || null;
   }
 
+  public async findChannelByProvider(provider: 'meta_cloud' | 'wa_akg'): Promise<WhatsAppChannelEntity | null> {
+    const all = await this.findAllChannels();
+    return all.find((c) => c.provider === provider && c.isActive) || all.find((c) => c.provider === provider) || null;
+  }
+
   public async saveChannel(channel: WhatsAppChannelEntity): Promise<WhatsAppChannelEntity> {
     fallbackDb.channels.set(channel.id, channel);
 
@@ -66,6 +71,8 @@ export class CommunicationRepository {
           .onConflictDoUpdate({
             target: channels.id,
             set: {
+              channelName: newRecord.channelName,
+              phoneNumber: newRecord.phoneNumber,
               status: newRecord.status,
               qrCode: newRecord.qrCode,
               config: newRecord.config,
@@ -91,7 +98,11 @@ export class CommunicationRepository {
         console.warn('⚠️ [CommunicationRepository] Erro ao listar conversas via Drizzle.', err);
       }
     }
-    return Array.from(fallbackDb.conversations.values());
+    return Array.from(fallbackDb.conversations.values()).sort((a, b) => {
+      const timeA = new Date(a.lastMessageAt || a.updatedAt || a.createdAt).getTime();
+      const timeB = new Date(b.lastMessageAt || b.updatedAt || b.createdAt).getTime();
+      return timeB - timeA;
+    });
   }
 
   public async findConversationById(id: string): Promise<ConversationEntity | null> {
@@ -109,7 +120,11 @@ export class CommunicationRepository {
   public async findConversationByRemoteJid(remoteJid: string): Promise<ConversationEntity | null> {
     if (fallbackDb.isConnected()) {
       try {
-        const rows = await drizzleDb.select().from(conversations).where(eq(conversations.remoteJid, remoteJid)).limit(1);
+        const rows = await drizzleDb
+          .select()
+          .from(conversations)
+          .where(eq(conversations.remoteJid, remoteJid))
+          .limit(1);
         if (rows.length > 0) return this.mapToConversationEntity(rows[0]);
       } catch (err) {
         console.warn(`⚠️ [CommunicationRepository] Falha ao buscar remoteJid ${remoteJid}.`, err);
@@ -148,7 +163,12 @@ export class CommunicationRepository {
           .onConflictDoUpdate({
             target: conversations.id,
             set: {
+              clientId: newRecord.clientId,
+              leadId: newRecord.leadId,
+              customerName: newRecord.customerName,
+              customerPhone: newRecord.customerPhone,
               status: newRecord.status,
+              assignedAgentId: newRecord.assignedAgentId,
               unreadCount: newRecord.unreadCount,
               lastMessageText: newRecord.lastMessageText,
               lastMessageAt: newRecord.lastMessageAt,
@@ -172,13 +192,35 @@ export class CommunicationRepository {
           .select()
           .from(messages)
           .where(eq(messages.conversationId, conversationId))
-          .orderBy(messages.createdAt);
+          .orderBy(asc(messages.createdAt));
         return rows.map((r) => this.mapToMessageEntity(r));
       } catch (err) {
         console.warn(`⚠️ [CommunicationRepository] Falha ao buscar mensagens da conversa ${conversationId}.`, err);
       }
     }
-    return Array.from(fallbackDb.messages.values()).filter((m: any) => m.conversationId === conversationId);
+    return Array.from(fallbackDb.messages.values())
+      .filter((m: MessageEntity) => m.conversationId === conversationId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
+  public async findMessageByExternalId(externalId: string): Promise<MessageEntity | null> {
+    if (!externalId) return null;
+    if (fallbackDb.isConnected()) {
+      try {
+        const rows = await drizzleDb
+          .select()
+          .from(messages)
+          .where(eq(messages.externalId, externalId))
+          .limit(1);
+        if (rows.length > 0) return this.mapToMessageEntity(rows[0]);
+      } catch (err) {
+        console.warn(`⚠️ [CommunicationRepository] Falha ao consultar externalId ${externalId}.`, err);
+      }
+    }
+    for (const m of fallbackDb.messages.values()) {
+      if (m.externalId === externalId) return m;
+    }
+    return null;
   }
 
   public async saveMessage(msg: MessageEntity): Promise<MessageEntity> {
@@ -206,6 +248,7 @@ export class CommunicationRepository {
           .onConflictDoUpdate({
             target: messages.id,
             set: {
+              externalId: newRecord.externalId,
               status: newRecord.status,
               errorMessage: newRecord.errorMessage,
             },

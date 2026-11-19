@@ -299,3 +299,52 @@ export interface MessageEntity {
   errorMessage?: string;
   createdAt: string;
 }
+
+export type PartnerServiceCategory =
+  | 'costura'
+  | 'bordado'
+  | 'silk_screen'
+  | 'acabamento'
+  | 'corte_externo';
+
+export interface PartnerEntity {
+  id: string;
+  code: string; // Ex: FAC-2026-0101
+  name: string;
+  tradeName: string;
+  cnpjCpf?: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  city: string;
+  state?: string;
+  cep?: string;
+  partnerType: PartnerServiceCategory;
+  capacityPiecesPerMonth?: string;
+  defaultCostPerPiece?: number;
+  leadTimeDays?: number;
+  pixKey?: string;
+  rating: number;
+  notes?: string;
+  active: boolean;
+  isDemo?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PartnerCustodyEntity {
+  id: string;
+  partnerId: string;
+  itemId: string;
+  productionOrderId?: string;
+  remittanceMovementId?: string;
+  sentQuantity: number;
+  returnedQuantity: number;
+  lostQuantity: number;
+  unit: string;
+  sentDate: string;
+  status: 'em_custodia' | 'devolvido_total' | 'devolvido_parcial' | 'avaria_registrada';
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}

@@ -170,6 +170,13 @@ class ApiClient {
     });
   }
 
+  public async updateQuote(quoteId: string, payload: any) {
+    return this.request<any>(`/quotes/${quoteId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
   public async updateQuoteStatus(quoteId: string, status: string) {
     return this.request<any>(`/quotes/${quoteId}/status`, {
       method: 'PATCH',
@@ -207,10 +214,10 @@ class ApiClient {
     });
   }
 
-  public async advanceOrderStage(orderId: string, targetStage: string) {
+  public async advanceOrderStage(orderId: string, targetStage: string, reason?: string) {
     return this.request<any>(`/orders/${orderId}/advance-stage`, {
       method: 'POST',
-      body: JSON.stringify({ targetStage }),
+      body: JSON.stringify(reason ? { targetStage, reason } : { targetStage }),
     });
   }
 
@@ -230,6 +237,10 @@ class ApiClient {
     return this.request<any[]>('/finance/transactions', { method: 'GET' });
   }
 
+  public async getFinanceSummary() {
+    return this.request<any>('/finance/summary', { method: 'GET' });
+  }
+
   public async createTransaction(payload: any) {
     return this.request<any>('/finance/transactions', {
       method: 'POST',
@@ -241,10 +252,18 @@ class ApiClient {
     receiptVoucherNumber: string;
     receiptEvidenceUrl?: string;
     confirmationNotes?: string;
+    paymentMethod?: 'pix' | 'boleto' | 'transferencia' | 'cartao';
   }) {
     return this.request<any>(`/finance/transactions/${transactionId}/confirm-payment`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  }
+
+  public async reverseTransaction(transactionId: string, reason: string) {
+    return this.request<any>(`/finance/transactions/${transactionId}/reverse`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
     });
   }
 
@@ -306,9 +325,23 @@ class ApiClient {
     });
   }
 
+  public async updateLeadStatus(
+    leadId: string,
+    status: 'novo' | 'em_atendimento' | 'orcamento_enviado' | 'convertido' | 'perdido'
+  ) {
+    return this.request<any>(`/leads/${leadId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
   // Clients
   public async getClients() {
     return this.request<any[]>('/clients', { method: 'GET' });
+  }
+
+  public async getClientProfile(clientId: string) {
+    return this.request<any>(`/clients/${clientId}/profile`, { method: 'GET' });
   }
 
   public async createClient(payload: any) {
@@ -329,6 +362,67 @@ class ApiClient {
     return this.request<any>(`/clients/${clientId}`, { method: 'DELETE' });
   }
 
+  // Partners & Outsourced Services (Facções / Terceirizados + Custódia)
+  public async getPartners() {
+    return this.request<any[]>('/partners', { method: 'GET' });
+  }
+
+  public async getPartnerDetail(partnerId: string) {
+    return this.request<any>(`/partners/${partnerId}`, { method: 'GET' });
+  }
+
+  public async getPartnerCustody() {
+    return this.request<any[]>('/partners/custody', { method: 'GET' });
+  }
+
+  public async createPartner(payload: any) {
+    return this.request<any>('/partners', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updatePartner(partnerId: string, payload: any) {
+    return this.request<any>(`/partners/${partnerId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deletePartner(partnerId: string) {
+    return this.request<any>(`/partners/${partnerId}`, { method: 'DELETE' });
+  }
+
+  public async dispatchPartnerCustody(
+    partnerId: string,
+    payload: {
+      itemId: string;
+      productionOrderId?: string;
+      sentQuantity: number;
+      notes?: string;
+    }
+  ) {
+    return this.request<any>(`/partners/${partnerId}/custody`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async returnPartnerCustody(
+    custodyId: string,
+    payload: {
+      returnedQuantity: number;
+      lostQuantity: number;
+      returnToPhysicalStock: boolean;
+      notes?: string;
+    }
+  ) {
+    return this.request<any>(`/partners/custody/${custodyId}/return`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // Communication & WhatsApp
   public async getChannels() {
     return this.request<any[]>('/communication/channels', { method: 'GET' });
@@ -346,14 +440,47 @@ class ApiClient {
     return this.request<any[]>('/communication/conversations', { method: 'GET' });
   }
 
+  public async startConversation(payload: {
+    phone: string;
+    customerName?: string;
+    clientId?: string;
+    channelId?: string;
+  }) {
+    return this.request<any>('/communication/conversations', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async markConversationRead(conversationId: string) {
+    return this.request<any>(`/communication/conversations/${conversationId}/read`, {
+      method: 'POST',
+    });
+  }
+
+  public async updateConversationStatus(
+    conversationId: string,
+    status: 'open' | 'pending' | 'resolved' | 'closed'
+  ) {
+    return this.request<any>(`/communication/conversations/${conversationId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
   public async getConversationMessages(conversationId: string) {
     return this.request<any[]>(`/communication/conversations/${conversationId}/messages`, { method: 'GET' });
   }
 
-  public async sendConversationMessage(conversationId: string, body: string, mediaUrl?: string) {
+  public async sendConversationMessage(
+    conversationId: string,
+    body: string,
+    mediaUrl?: string,
+    messageType?: 'text' | 'image' | 'document' | 'template'
+  ) {
     return this.request<any>(`/communication/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ body, mediaUrl }),
+      body: JSON.stringify({ body, mediaUrl, messageType }),
     });
   }
 
@@ -383,6 +510,42 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  // Lookups (CEP & CNPJ)
+  public async lookupCep(cep: string) {
+    const digits = cep.replace(/\D/g, '');
+    return this.request<{
+      cep: string;
+      street: string;
+      neighborhood: string;
+      city: string;
+      state: string;
+      source: string;
+    }>(`/lookups/cep/${digits}`, { method: 'GET' });
+  }
+
+  public async lookupCnpj(cnpj: string) {
+    const digits = cnpj.replace(/\D/g, '');
+    return this.request<{
+      cnpj: string;
+      companyName: string;
+      tradeName: string;
+      email: string;
+      phone: string;
+      cep: string;
+      street: string;
+      number: string;
+      complement: string;
+      neighborhood: string;
+      city: string;
+      state: string;
+      addressLine: string;
+      segment: string;
+      foundedYear?: number;
+      situation?: string;
+      source: string;
+    }>(`/lookups/cnpj/${digits}`, { method: 'GET' });
   }
 
   private async request<T>(path: string, options: RequestInit): Promise<ApiResponse<T>> {

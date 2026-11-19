@@ -26,11 +26,13 @@ inventoryRouter.post('/items', requirePermission('inventory:manage_items'), asyn
     return res.status(400).json({ error: 'Nome do insumo (name) é obrigatório.' });
   }
 
-  const physicalStock = Math.max(0, Number(payload.physicalStock ?? payload.currentStock ?? 0));
-  const allocatedStock = Math.max(0, Number(payload.allocatedStock ?? 0));
-  const inPartnersCustodyStock = Math.max(0, Number(payload.inPartnersCustodyStock ?? 0));
-  const minStock = Math.max(0, Number(payload.minStock ?? 50));
-  const unitCostPrice = Math.max(0, Number(payload.unitCostPrice ?? payload.costPrice ?? 0));
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const physicalStock = round2(Math.max(0, Number(payload.physicalStock ?? payload.currentStock ?? 0)));
+  // Invariante §3.2: saldo alocado e custódia de terceiros só nascem via eventos auditáveis
+  const allocatedStock = 0;
+  const inPartnersCustodyStock = 0;
+  const minStock = round2(Math.max(0, Number(payload.minStock ?? 50)));
+  const unitCostPrice = round2(Math.max(0, Number(payload.unitCostPrice ?? payload.costPrice ?? 0)));
 
   const code = await sequenceService.nextInventoryCodeAsync();
   const newItem: InventoryItemEntity = {
@@ -122,6 +124,12 @@ inventoryRouter.delete('/items/:id', requirePermission('inventory:manage_items')
     });
   }
 
+  if (item.allocatedStock > 0) {
+    return res.status(400).json({
+      error: `Não é permitido excluir o insumo ${item.code} enquanto houver ${item.allocatedStock} ${item.unit} alocados para Ordens de Produção ativas.`,
+    });
+  }
+
   await inventoryRepository.deleteItem(req.params.id);
 
   auditService.log({
@@ -164,27 +172,29 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
   let recordedReason = reason || 'Movimentação operacional';
   let recordedDelta: number | undefined;
 
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
   // Lógica de movimentação conforme tipo
   switch (type) {
     case 'entrada_compra':
-      item.physicalStock += qty;
+      item.physicalStock = round2(item.physicalStock + qty);
       item.lastRestocked = new Date().toISOString().split('T')[0];
       break;
     case 'saida_corte':
       if (item.physicalStock < qty) {
         return res.status(400).json({ error: `Saldo físico insuficiente (Disponível: ${item.physicalStock} ${item.unit})` });
       }
-      item.physicalStock -= qty;
-      if (item.allocatedStock >= qty) {
-        item.allocatedStock -= qty;
+      item.physicalStock = round2(item.physicalStock - qty);
+      if (item.allocatedStock > 0) {
+        item.allocatedStock = round2(Math.max(0, item.allocatedStock - qty));
       }
       break;
     case 'remessa_parceiro': // Envio para facção externa (mantém sob custódia rastreada)
       if (item.physicalStock < qty) {
         return res.status(400).json({ error: `Saldo físico insuficiente para remessa à facção (Disponível: ${item.physicalStock} ${item.unit}).` });
       }
-      item.physicalStock -= qty;
-      item.inPartnersCustodyStock += qty;
+      item.physicalStock = round2(item.physicalStock - qty);
+      item.inPartnersCustodyStock = round2(item.inPartnersCustodyStock + qty);
       break;
     case 'retorno_parceiro': // Retorno de sobras ou peças prontas da facção (Correção P0-003)
       if (qty > item.inPartnersCustodyStock) {
@@ -192,8 +202,8 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
           error: `Quantidade de retorno (${qty} ${item.unit}) excede o saldo em custódia do parceiro (${item.inPartnersCustodyStock} ${item.unit}). Operação rejeitada.`,
         });
       }
-      item.inPartnersCustodyStock -= qty;
-      item.physicalStock += qty;
+      item.inPartnersCustodyStock = round2(item.inPartnersCustodyStock - qty);
+      item.physicalStock = round2(item.physicalStock + qty);
       break;
     case 'perda_tecnica':
       if (qty > item.physicalStock) {
@@ -201,7 +211,7 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
           error: `Perda técnica (${qty} ${item.unit}) excede o saldo físico disponível (${item.physicalStock} ${item.unit}).`,
         });
       }
-      item.physicalStock -= qty;
+      item.physicalStock = round2(item.physicalStock - qty);
       break;
     case 'ajuste_inventario': {
       const adjustAllowed = PERMISSIONS['inventory:adjust'] || ['admin'];
@@ -215,9 +225,9 @@ inventoryRouter.post('/movements', requirePermission('inventory:create_movement'
           error: 'Ajustes compensatórios de inventário exigem justificativa detalhada (mínimo 5 caracteres).',
         });
       }
-      recordedDelta = Math.round((qty - oldPhysical) * 100) / 100;
-      item.physicalStock = qty;
-      recordedReason = `${reason.trim()} [Evento compensatório: saldo ${oldPhysical} -> ${qty}, delta ${recordedDelta >= 0 ? '+' : ''}${recordedDelta} ${item.unit}]`;
+      recordedDelta = round2(qty - oldPhysical);
+      item.physicalStock = round2(qty);
+      recordedReason = `${reason.trim()} [Evento compensatório: saldo ${oldPhysical} -> ${item.physicalStock}, delta ${recordedDelta >= 0 ? '+' : ''}${recordedDelta} ${item.unit}]`;
       break;
     }
     default:

@@ -12,7 +12,9 @@ import {
   ProductionOrderEntity, 
   FinancialTransactionEntity, 
   InventoryItemEntity, 
-  StockMovementEntity 
+  StockMovementEntity,
+  PartnerEntity,
+  PartnerCustodyEntity
 } from '../types/db';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
@@ -32,6 +34,8 @@ export class DatabaseManager {
   public finance: Map<string, FinancialTransactionEntity> = new Map();
   public inventory: Map<string, InventoryItemEntity> = new Map();
   public movements: Map<string, StockMovementEntity> = new Map();
+  public partners: Map<string, PartnerEntity> = new Map();
+  public partnerCustodies: Map<string, PartnerCustodyEntity> = new Map();
   public channels: Map<string, any> = new Map();
   public conversations: Map<string, any> = new Map();
   public messages: Map<string, any> = new Map();
@@ -95,7 +99,7 @@ export class DatabaseManager {
       code: 'CLI-2026-0201',
       companyName: 'HOSPITAL GUARÁ MEDICINA INTEGRADA LTDA',
       tradeName: 'Hospital Guará',
-      cnpj: '14.520.890/0001-33',
+      cnpj: '14.520.890/0001-77',
       stateRegistration: '12.445.678-9',
       contactName: 'Dra. Camila Vasconcelos',
       phone: '(98) 98841-2090',
@@ -116,7 +120,7 @@ export class DatabaseManager {
       code: 'CLI-2026-0202',
       companyName: 'LOGÍSTICA PORTO GRANDE S/A',
       tradeName: 'Porto Grande Log',
-      cnpj: '08.192.401/0001-12',
+      cnpj: '08.192.401/0001-00',
       stateRegistration: '12.112.980-4',
       contactName: 'Marcos Aurélio Sousa',
       phone: '(98) 98112-9944',
@@ -298,6 +302,8 @@ export class DatabaseManager {
       targetDeliveryDate: '2026-11-05',
       technicalNotes: 'Ficha gerada a partir da Proposta ORC-2026-1001. Amostra de bordado aprovada.',
       assignedTeam: 'Mesa de Corte & Facção Especializada',
+      outsourcedPartner: 'Facção Têxtil Maranhense',
+      partnerCostPerPiece: 12.00,
       isDemo: true,
       createdAt: '2026-10-20T15:00:00Z',
       updatedAt: '2026-10-20T15:00:00Z',
@@ -390,6 +396,126 @@ export class DatabaseManager {
     };
     this.messages.set(msg1.id, msg1);
     this.messages.set(msg2.id, msg2);
+
+    // 8. Parceiros & Terceirizados Homologados (São Luís / MA)
+    const p1: PartnerEntity = {
+      id: 'p1111111-1111-1111-1111-111111111111',
+      code: 'FAC-2026-0001',
+      name: 'CONFECÇÕES TÊXTIL MARANHENSE LTDA',
+      tradeName: 'Facção Têxtil Maranhense',
+      cnpjCpf: '28.419.550/0001-18',
+      phone: '(98) 98712-4410',
+      email: 'producao@textilmaranhense.com.br',
+      address: 'Av. Jerônimo de Albuquerque, 1280 - Cohab Anil',
+      city: 'São Luís',
+      state: 'MA',
+      cep: '65050-175',
+      partnerType: 'costura',
+      capacityPiecesPerMonth: '3200',
+      defaultCostPerPiece: 12.00,
+      leadTimeDays: 6,
+      pixKey: '28.419.550/0001-18',
+      rating: 4.9,
+      notes: 'Especializada em camisas polo, jalecos hospitalares e costura reta/overloque industrial.',
+      active: true,
+      isDemo: true,
+      createdAt: '2026-01-12T09:00:00Z',
+      updatedAt: '2026-10-15T11:00:00Z',
+    };
+    const p2: PartnerEntity = {
+      id: 'p2222222-2222-2222-2222-222222222222',
+      code: 'FAC-2026-0002',
+      name: 'BORDADOS SÃO LUÍS PERSONALIZAÇÃO ME',
+      tradeName: 'Bordados São Luís',
+      cnpjCpf: '31.904.112/0001-44',
+      phone: '(98) 98422-8831',
+      email: 'artes@bordadossaoluis.com.br',
+      address: 'Rua Grande, 512 - Centro',
+      city: 'São Luís',
+      state: 'MA',
+      cep: '65020-250',
+      partnerType: 'bordado',
+      capacityPiecesPerMonth: '4500',
+      defaultCostPerPiece: 6.50,
+      leadTimeDays: 3,
+      pixKey: '31.904.112/0001-44',
+      rating: 4.95,
+      notes: 'Bordadeiras Tajima 8 cabeças — alta definição em logomarcas corporativas e brasões.',
+      active: true,
+      isDemo: true,
+      createdAt: '2026-01-18T10:00:00Z',
+      updatedAt: '2026-10-18T14:00:00Z',
+    };
+    const p3: PartnerEntity = {
+      id: 'p3333333-3333-3333-3333-333333333333',
+      code: 'FAC-2026-0003',
+      name: 'ILHA SILK & ESTAMPARIA INDUSTRIAL LTDA',
+      tradeName: 'Ilha Silk & Estamparia',
+      cnpjCpf: '19.775.320/0001-90',
+      phone: '(98) 98109-3377',
+      email: 'orcamento@ilhasilk.com.br',
+      address: 'Av. Guajajaras, 940 - Tirirical',
+      city: 'São Luís',
+      state: 'MA',
+      cep: '65055-285',
+      partnerType: 'silk_screen',
+      capacityPiecesPerMonth: '5000',
+      defaultCostPerPiece: 5.00,
+      leadTimeDays: 4,
+      pixKey: '19.775.320/0001-90',
+      rating: 4.7,
+      notes: 'Silk-screen plastisol, tinta refletiva industrial e sublimação total.',
+      active: true,
+      isDemo: true,
+      createdAt: '2026-02-04T08:30:00Z',
+      updatedAt: '2026-10-12T16:20:00Z',
+    };
+    const p4: PartnerEntity = {
+      id: 'p4444444-4444-4444-4444-444444444444',
+      code: 'FAC-2026-0004',
+      name: 'ATELIÊ RENASCENÇA ACABAMENTO TÊXTIL ME',
+      tradeName: 'Acabamento & Revisão Renascença',
+      cnpjCpf: '42.118.609/0001-05',
+      phone: '(98) 98865-1102',
+      email: 'contato@acabamentorenascenca.com.br',
+      address: 'Rua dos Tucanos, 88 - Jardim Renascença',
+      city: 'São Luís',
+      state: 'MA',
+      cep: '65075-441',
+      partnerType: 'acabamento',
+      capacityPiecesPerMonth: '4000',
+      defaultCostPerPiece: 3.50,
+      leadTimeDays: 2,
+      pixKey: '42.118.609/0001-05',
+      rating: 4.85,
+      notes: 'Caseado, pregação de botões, limpeza de fios, passadoria industrial e embalagem individual.',
+      active: true,
+      isDemo: true,
+      createdAt: '2026-03-01T09:15:00Z',
+      updatedAt: '2026-10-10T10:00:00Z',
+    };
+    this.partners.set(p1.id, p1);
+    this.partners.set(p2.id, p2);
+    this.partners.set(p3.id, p3);
+    this.partners.set(p4.id, p4);
+
+    // 9. Custódia inicial rastreada compatível com m1.inPartnersCustodyStock (60 kg)
+    const cust1: PartnerCustodyEntity = {
+      id: 'cust-1111-1111-1111-111111111111',
+      partnerId: p1.id,
+      itemId: m1.id,
+      productionOrderId: op1.id,
+      sentQuantity: 60.00,
+      returnedQuantity: 0.00,
+      lostQuantity: 0.00,
+      unit: 'kg',
+      sentDate: '2026-10-21',
+      status: 'em_custodia',
+      notes: 'Remessa de Malha Piquet PA Azul Marinho para lote de camisas/jalecos OP-2026-0101.',
+      createdAt: '2026-10-21T09:30:00Z',
+      updatedAt: '2026-10-21T09:30:00Z',
+    };
+    this.partnerCustodies.set(cust1.id, cust1);
   }
 }
 

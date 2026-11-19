@@ -13,6 +13,7 @@ import {
   MessageSquare
 } from 'lucide-react';
 import { PublicCatalogItem, CompanyProfile, UniformCategory } from '../types/erp';
+import { PhoneInputBR } from './FormInputs';
 
 interface PublicPortalViewProps {
   catalog: PublicCatalogItem[];
@@ -101,9 +102,21 @@ export const PublicPortalView: React.FC<PublicPortalViewProps> = ({
       {/* Hero Institutional Banner */}
       <section className="bg-slate-900 text-white rounded-2xl p-8 sm:p-12 border border-slate-800 shadow-md relative overflow-hidden">
         <div className="relative z-10 max-w-3xl space-y-4">
+          {profile.logoUrl && (
+            <div className="inline-flex items-center bg-white rounded-xl px-3.5 py-2 shadow-sm border border-slate-200/80 mb-1">
+              <img
+                src={profile.logoUrl}
+                alt={`Logomarca ${profile.tradeName}`}
+                className="max-h-12 max-w-[180px] w-auto object-contain"
+              />
+            </div>
+          )}
+
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-600/20 border border-blue-500/30 rounded-full text-blue-300 text-xs font-semibold">
             <ShieldCheck className="w-4 h-4 text-blue-400" />
-            <span>Fundada em {profile.foundedYear} em São Luís — Maranhão</span>
+            <span>
+              Fundada em {profile.foundedYear} em {profile.city} — {profile.state}
+            </span>
           </div>
 
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
@@ -295,12 +308,10 @@ export const PublicPortalView: React.FC<PublicPortalViewProps> = ({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">WhatsApp / Telefone *</label>
-                    <input
-                      type="text"
+                    <PhoneInputBR
                       required
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 font-mono"
+                      onChange={setPhone}
                       placeholder="(98) 98800-0000"
                     />
                   </div>

@@ -3,6 +3,7 @@ import { X, Plus, Trash2, Shirt, Scissors, AlertTriangle, ShieldCheck } from 'lu
 import { 
   ProductionOrder, 
   Client, 
+  Partner,
   OperationalStage, 
   PriorityLevel, 
   UniformCategory, 
@@ -10,17 +11,28 @@ import {
   CustomizationItem, 
   CostBreakdown 
 } from '../types/erp';
-import { getTotalFromSizeGrid } from '../utils/formatters';
+import { getTotalFromSizeGrid, formatCurrencyBRL } from '../utils/formatters';
+import { CurrencyInput, DateInputBR } from './FormInputs';
 
 interface NewOrderModalProps {
   clients: Client[];
+  partners?: Partner[];
   existingOrder?: ProductionOrder | null;
   onClose: () => void;
-  onSaveOrder: (order: ProductionOrder) => void;
+  onSaveOrder: (order: ProductionOrder) => Promise<boolean>;
 }
+
+const PARTNER_TYPE_SHORT: Record<string, string> = {
+  costura: 'Facção Costura',
+  bordado: 'Bordado',
+  silk_screen: 'Silk-Screen',
+  acabamento: 'Acabamento',
+  corte_externo: 'Corte Externo',
+};
 
 export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   clients,
+  partners = [],
   existingOrder,
   onClose,
   onSaveOrder,
@@ -39,12 +51,21 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
     existingOrder?.targetDeliveryDate || new Date(Date.now() + 16 * 86400000).toISOString().split('T')[0]
   );
   const [formError, setFormError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Gates de Liberação do PRD (somente leitura: alterados via Financeiro com comprovante e Aprovação de Arte)
   const entryPaymentConfirmed = existingOrder?.entryPaymentConfirmed ?? false;
   const artApproved = existingOrder?.artApproved ?? false;
-  const [outsourcedPartner, setOutsourcedPartner] = useState(existingOrder?.outsourcedPartner || 'Facção Têxtil Maranhense');
-  const [partnerCostPerPiece, setPartnerCostPerPiece] = useState(existingOrder?.partnerCostPerPiece || 18.00);
+  const activePartners = partners.filter((p) => p.active);
+  const initialPartner = existingOrder?.outsourcedPartner ?? (activePartners[0]?.tradeName || 'Facção Têxtil Maranhense');
+  const [outsourcedPartner, setOutsourcedPartner] = useState(initialPartner);
+  const [customPartnerMode, setCustomPartnerMode] = useState<boolean>(() => {
+    if (!initialPartner || initialPartner === 'Produção Interna') return false;
+    return activePartners.length > 0 && !activePartners.some((p) => p.tradeName === initialPartner || p.name === initialPartner);
+  });
+  const [partnerCostPerPiece, setPartnerCostPerPiece] = useState(
+    existingOrder?.partnerCostPerPiece ?? (activePartners[0]?.defaultCostPerPiece || 18.00)
+  );
 
   const [technicalNotes, setTechnicalNotes] = useState(
     existingOrder?.technicalNotes || 'Travetes reforçados nos bolsos. Linha pespasso 120 resistente.'
@@ -83,9 +104,25 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setFormError('');
+
+    if (!clientId) {
+      setFormError('Selecione um cliente cadastrado antes de emitir a Ordem de Produção.');
+      return;
+    }
+
+    if (!itemTitle.trim()) {
+      setFormError('Informe o título do item / modelo da peça.');
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDeliveryDate)) {
+      setFormError('Informe uma data prometida de entrega válida.');
+      return;
+    }
 
     if (totalPieces <= 0) {
       setFormError('Por favor informe ao menos 1 peça na grade de tamanhos.');
@@ -118,10 +155,10 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
       quoteVersion: existingOrder?.quoteVersion || 1,
       clientId,
       clientName,
-      itemTitle,
+      itemTitle: itemTitle.trim(),
       category,
-      fabricName,
-      fabricColor,
+      fabricName: fabricName.trim(),
+      fabricColor: fabricColor.trim(),
       sizes,
       totalPieces,
       customizations,
@@ -142,20 +179,29 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
       financialStatus: entryPaymentConfirmed ? 'entrada_confirmada' : 'entrada_pendente',
       stage: effectiveStage,
       artApproved,
-      artApprovalDate: artApproved ? new Date().toISOString().split('T')[0] : undefined,
+      artApprovalDate: artApproved ? existingOrder?.artApprovalDate : undefined,
       entryPaymentConfirmed,
       canStartProduction: canStart,
-      outsourcedPartner,
+      outsourcedPartner: outsourcedPartner.trim(),
       partnerCostPerPiece,
       priority,
       creationDate: existingOrder?.creationDate || new Date().toISOString().split('T')[0],
       targetDeliveryDate,
-      technicalNotes,
+      technicalNotes: technicalNotes.trim(),
       assignedTeam: existingOrder?.assignedTeam || 'Célula de Confecção / Parceiro Homologado',
     };
 
-    onSaveOrder(savedOrder);
-    onClose();
+    setIsSubmitting(true);
+    try {
+      const ok = await onSaveOrder(savedOrder);
+      if (ok) {
+        onClose();
+      } else {
+        setFormError('Não foi possível salvar a Ordem de Produção. Verifique a notificação de erro acima e tente novamente.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -325,30 +371,83 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
 
           {/* Terceirização e Célula de Produção */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">
+            <div className="space-y-1.5">
+              <label className="block font-semibold text-slate-700">
                 Parceiro Terceirizado / Facção (PRD 5.8)
               </label>
-              <input
-                type="text"
-                value={outsourcedPartner}
-                onChange={(e) => setOutsourcedPartner(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-                placeholder="Ex: Facção Têxtil Maranhense"
-              />
+              {activePartners.length > 0 ? (
+                <>
+                  <select
+                    value={
+                      customPartnerMode
+                        ? '__custom__'
+                        : outsourcedPartner === '' || outsourcedPartner === 'Produção Interna'
+                          ? '__internal__'
+                          : outsourcedPartner
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '__internal__') {
+                        setCustomPartnerMode(false);
+                        setOutsourcedPartner('Produção Interna');
+                        setPartnerCostPerPiece(0);
+                      } else if (val === '__custom__') {
+                        setCustomPartnerMode(true);
+                        if (outsourcedPartner === 'Produção Interna') setOutsourcedPartner('');
+                      } else {
+                        setCustomPartnerMode(false);
+                        setOutsourcedPartner(val);
+                        const match = activePartners.find((p) => p.tradeName === val);
+                        if (match && match.defaultCostPerPiece > 0) {
+                          setPartnerCostPerPiece(match.defaultCostPerPiece);
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="__internal__">Produção Interna (Sem Facção Externa)</option>
+                    {activePartners.map((p) => (
+                      <option key={p.id} value={p.tradeName}>
+                        {p.tradeName} — {PARTNER_TYPE_SHORT[p.partnerType] || p.partnerType}
+                        {p.defaultCostPerPiece > 0 ? ` (${formatCurrencyBRL(p.defaultCostPerPiece)}/pç)` : ''}
+                      </option>
+                    ))}
+                    <option value="__custom__">+ Outro parceiro (digitar manualmente)</option>
+                  </select>
+                  {customPartnerMode && (
+                    <input
+                      type="text"
+                      value={outsourcedPartner}
+                      onChange={(e) => setOutsourcedPartner(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                      placeholder="Nome da facção ou prestador terceirizado"
+                    />
+                  )}
+                </>
+              ) : (
+                <input
+                  type="text"
+                  value={outsourcedPartner}
+                  onChange={(e) => setOutsourcedPartner(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                  placeholder="Ex: Facção Têxtil Maranhense"
+                />
+              )}
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">
+              <label className="block font-semibold text-slate-700 mb-1.5">
                 Custo de Mão de Obra do Parceiro (R$/peça)
               </label>
-              <input
-                type="number"
-                step="0.5"
+              <CurrencyInput
                 value={partnerCostPerPiece}
-                onChange={(e) => setPartnerCostPerPiece(parseFloat(e.target.value) || 0)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 font-mono"
+                onChange={setPartnerCostPerPiece}
               />
+              {activePartners.length > 0 && !customPartnerMode && outsourcedPartner !== 'Produção Interna' && (
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Valor preenchido automaticamente pelo cadastro do parceiro (editável por OP).
+                </p>
+              )}
             </div>
           </div>
 
@@ -385,12 +484,10 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
               <label className="block font-semibold text-slate-700 mb-1">
                 Data Prometida de Entrega *
               </label>
-              <input
-                type="date"
+              <DateInputBR
                 required
                 value={targetDeliveryDate}
-                onChange={(e) => setTargetDeliveryDate(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 font-mono"
+                onChange={setTargetDeliveryDate}
               />
             </div>
           </div>
@@ -412,15 +509,21 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 cursor-pointer"
+              disabled={isSubmitting}
+              className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer"
+              disabled={isSubmitting}
+              className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer disabled:opacity-60"
             >
-              {isEditing ? 'Salvar Alterações da OP' : 'Emitir Ordem de Produção'}
+              {isSubmitting
+                ? 'Salvando...'
+                : isEditing
+                  ? 'Salvar Alterações da OP'
+                  : 'Emitir Ordem de Produção'}
             </button>
           </div>
 

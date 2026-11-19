@@ -18,6 +18,8 @@ import { clientsRouter } from './routes/clientsRoutes';
 import { auditRouter } from './routes/auditRoutes';
 import { migrationRouter } from './routes/migrationRoutes';
 import { communicationRouter } from './routes/communicationRoutes';
+import { lookupRouter } from './routes/lookupRoutes';
+import { partnersRouter } from './routes/partnersRoutes';
 import { db } from './db/connection';
 import {
   clientRepository,
@@ -26,6 +28,7 @@ import {
   orderRepository,
   financeRepository,
   inventoryRepository,
+  partnerRepository,
 } from './repositories/index';
 
 export function createApiApp(): express.Express {
@@ -83,12 +86,14 @@ export function createApiApp(): express.Express {
   app.use('/api/communication', communicationRouter);
   app.use('/api/audit', auditRouter);
   app.use('/api/migration', migrationRouter);
+  app.use('/api/lookups', lookupRouter);
+  app.use('/api/partners', partnersRouter);
 
   // Endpoint de Saúde e Diagnóstico da Fundação
   app.get('/api/health', async (_req: Request, res: Response) => {
     try {
       await db.ensureReady();
-      const [clientsList, leadsList, quotesList, ordersList, financeList, inventoryList] =
+      const [clientsList, leadsList, quotesList, ordersList, financeList, inventoryList, partnersList] =
         await Promise.all([
           clientRepository.findAll(),
           leadRepository.findAll(),
@@ -96,6 +101,7 @@ export function createApiApp(): express.Express {
           orderRepository.findAll(),
           financeRepository.findAll(),
           inventoryRepository.findAllItems(),
+          partnerRepository.findAll(),
         ]);
 
       res.json({
@@ -119,6 +125,7 @@ export function createApiApp(): express.Express {
           orders: ordersList.length,
           finance: financeList.length,
           inventory: inventoryList.length,
+          partners: partnersList.length,
         },
         timestamp: new Date().toISOString(),
       });

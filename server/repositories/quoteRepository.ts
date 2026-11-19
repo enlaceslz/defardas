@@ -23,7 +23,9 @@ export class QuoteRepository {
         console.warn('⚠️ [QuoteRepository] Erro ao listar propostas via Drizzle. Recorrendo à memória.', err);
       }
     }
-    return Array.from(fallbackDb.quotes.values());
+    return Array.from(fallbackDb.quotes.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   }
 
   public async findById(id: string): Promise<QuoteEntity | null> {
@@ -53,6 +55,7 @@ export class QuoteRepository {
           clientId: quote.clientId,
           clientName: quote.clientName,
           clientCnpj: quote.clientCnpj,
+          sellerId: quote.sellerId,
           sellerName: quote.sellerName,
           commercialStatus: quote.commercialStatus,
           date: quote.date,
@@ -64,6 +67,7 @@ export class QuoteRepository {
           discountAmount: quote.discountAmount.toString(),
           estimatedMarginPercentage: quote.estimatedMarginPercentage.toString(),
           belowSuggestedAuthorized: quote.belowSuggestedAuthorized,
+          authorizedById: quote.authorizedById,
           authorizedByName: quote.authorizedByName,
           authorizationDate: quote.authorizationDate ? new Date(quote.authorizationDate) : null,
           authorizationNotes: quote.authorizationNotes,
@@ -92,17 +96,41 @@ export class QuoteRepository {
           .onConflictDoUpdate({
             target: quotes.id,
             set: {
+              version: newRecord.version,
+              clientId: newRecord.clientId,
+              clientName: newRecord.clientName,
+              clientCnpj: newRecord.clientCnpj,
               commercialStatus: newRecord.commercialStatus,
+              validUntil: newRecord.validUntil,
+              totalBaseCost: newRecord.totalBaseCost,
+              markupPercentage: newRecord.markupPercentage,
+              suggestedTotalAmount: newRecord.suggestedTotalAmount,
+              negotiatedTotalAmount: newRecord.negotiatedTotalAmount,
+              discountAmount: newRecord.discountAmount,
+              estimatedMarginPercentage: newRecord.estimatedMarginPercentage,
+              belowSuggestedAuthorized: newRecord.belowSuggestedAuthorized,
+              authorizedById: newRecord.authorizedById,
+              authorizedByName: newRecord.authorizedByName,
+              authorizationDate: newRecord.authorizationDate,
+              authorizationNotes: newRecord.authorizationNotes,
+              entryAmount: newRecord.entryAmount,
+              balanceAmount: newRecord.balanceAmount,
+              paymentTerms: newRecord.paymentTerms,
+              productionLeadDays: newRecord.productionLeadDays,
               artApproved: newRecord.artApproved,
               artApprovedBy: newRecord.artApprovedBy,
               artApprovalDate: newRecord.artApprovalDate,
+              acceptanceChannel: newRecord.acceptanceChannel,
+              acceptanceNotes: newRecord.acceptanceNotes,
+              notes: newRecord.notes,
               convertedOrderId: newRecord.convertedOrderId,
               isLocked: newRecord.isLocked,
               updatedAt: new Date(),
             },
           });
 
-        // Gravar ou atualizar itens
+        // Substituir itens de forma consistente em criações e revisões
+        await drizzleDb.delete(quoteItems).where(eq(quoteItems.quoteId, quote.id));
         if (quote.items && quote.items.length > 0) {
           for (const it of quote.items) {
             const itemRecord: NewQuoteItem = {
@@ -127,10 +155,7 @@ export class QuoteRepository {
               customizations: it.customizations as any,
             };
 
-            await drizzleDb
-              .insert(quoteItems)
-              .values(itemRecord)
-              .onConflictDoNothing();
+            await drizzleDb.insert(quoteItems).values(itemRecord);
           }
         }
       } catch (err) {

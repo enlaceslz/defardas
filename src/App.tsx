@@ -12,6 +12,7 @@ import { SettingsView } from './components/SettingsView';
 import { PublicPortalView } from './components/PublicPortalView';
 import { LoginView } from './components/LoginView';
 import { WhatsAppOmnichannelView } from './components/WhatsAppOmnichannelView';
+import { PartnersView } from './components/PartnersView';
 
 import { NewOrderModal } from './components/NewOrderModal';
 import { NewQuoteModal } from './components/NewQuoteModal';
@@ -38,6 +39,9 @@ import {
   OperationalStage,
   CommercialStatus,
   UniformCategory,
+  Partner,
+  PartnerCustody,
+  LeadItem,
 } from './types/erp';
 
 interface ToastMessage {
@@ -56,9 +60,30 @@ interface ConfirmDialogState {
 export default function App() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const [state, setState] = useState<ERPState>(() => loadERPState());
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnerCustody, setPartnerCustody] = useState<PartnerCustody[]>([]);
+  const [leads, setLeads] = useState<LeadItem[]>([]);
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('defardas_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
+  const handleToggleSidebarCollapse = () => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('defardas_sidebar_collapsed', String(next));
+      } catch {
+        // Ignorar indisponibilidade de storage
+      }
+      return next;
+    });
+  };
 
   // Notification Toast & Confirm Dialog (substitui window.alert / window.confirm)
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -78,6 +103,8 @@ export default function App() {
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<ProductionOrder | null>(null);
   const [isNewQuoteModalOpen, setIsNewQuoteModalOpen] = useState(false);
+  const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
+  const [quoteInitialClientId, setQuoteInitialClientId] = useState<string | null>(null);
   const [selectedOrderForTicket, setSelectedOrderForTicket] = useState<ProductionOrder | null>(null);
   const [selectedQuoteForPrint, setSelectedQuoteForPrint] = useState<Quote | null>(null);
   const [isHelpManualOpen, setIsHelpManualOpen] = useState(false);
@@ -93,13 +120,34 @@ export default function App() {
     if (!isAuthenticated) return;
 
     try {
-      const [ordersRes, quotesRes, invRes, clientsRes, finRes] = await Promise.all([
+      const [ordersRes, quotesRes, invRes, clientsRes, finRes, partnersRes, custodyRes, leadsRes] = await Promise.all([
         api.getOrders(),
         api.getQuotes(),
         api.getInventoryItems(),
         api.getClients(),
         api.getTransactions(),
+        api.getPartners(),
+        api.getPartnerCustody(),
+        api.getLeads(),
       ]);
+
+      if (partnersRes.status === 200 && Array.isArray(partnersRes.data)) {
+        setPartners(partnersRes.data);
+      } else if (partnersRes.status === 403) {
+        setPartners([]);
+      }
+
+      if (custodyRes.status === 200 && Array.isArray(custodyRes.data)) {
+        setPartnerCustody(custodyRes.data);
+      } else if (custodyRes.status === 403) {
+        setPartnerCustody([]);
+      }
+
+      if (leadsRes.status === 200 && Array.isArray(leadsRes.data)) {
+        setLeads(leadsRes.data);
+      } else if (leadsRes.status === 403) {
+        setLeads([]);
+      }
 
       setState((prev) => {
         const updated = { ...prev };
@@ -145,6 +193,8 @@ export default function App() {
             entryPaymentConfirmed: Boolean(o.entryPaymentConfirmed),
             entryReceiptUrl: o.entryReceiptUrl,
             canStartProduction: Boolean(o.entryPaymentConfirmed && o.artApproved),
+            outsourcedPartner: o.outsourcedPartner,
+            partnerCostPerPiece: o.partnerCostPerPiece !== undefined ? Number(o.partnerCostPerPiece) : undefined,
             priority: o.priority,
             creationDate: o.creationDate,
             targetDeliveryDate: o.targetDeliveryDate,
@@ -181,8 +231,15 @@ export default function App() {
               validUntil: q.validUntil,
               items: (q.items || []).map((it: any) => {
                 const baseCost = Number(it.calculatedBaseUnitCost ?? 0);
+                const suggested = Number(it.suggestedUnitPrice ?? 0);
                 const negotiated = Number(it.negotiatedUnitPrice ?? 0);
-                const estMargin = negotiated > 0 ? Math.round(((negotiated - baseCost) / negotiated) * 1000) / 10 : 0;
+                const itemDiscAmt = Math.max(0, Math.round((suggested - negotiated) * 100) / 100);
+                const itemDiscPct =
+                  suggested > 0 ? Math.round((itemDiscAmt / suggested) * 10000) / 100 : 0;
+                const estMargin =
+                  negotiated > 0
+                    ? Math.round(((negotiated - baseCost) / negotiated) * 10000) / 100
+                    : 0;
                 return {
                   id: it.id,
                   modelName: it.modelName,
@@ -199,22 +256,22 @@ export default function App() {
                     technicalLossPercentage: Number(it.technicalLossPercentage ?? 2),
                     calculatedBaseCost: baseCost,
                     markupPercentage: Number(it.markupPercentage ?? 50),
-                    suggestedUnitPrice: Number(it.suggestedUnitPrice ?? 0),
+                    suggestedUnitPrice: suggested,
                     negotiatedUnitPrice: negotiated,
-                    discountPercentage: 0,
-                    belowSuggestedAuthorized: Boolean(q.belowSuggestedAuthorized),
+                    discountPercentage: itemDiscPct,
+                    belowSuggestedAuthorized: Boolean(q.belowSuggestedAuthorized && negotiated < suggested),
                     authorizerName: q.authorizedByName,
                     estimatedMarginPercentage: estMargin,
                   },
                   unitFinalPrice: negotiated,
-                  totalPrice: Number(it.totalItemPrice ?? negotiated * (it.totalQuantity || 1)),
+                  totalPrice: Number(it.totalItemPrice ?? Math.round(negotiated * (it.totalQuantity || 1) * 100) / 100),
                   customizations: it.customizations || [],
                 };
               }),
-              subtotal: Number(q.suggestedTotalAmount ?? 0),
+              subtotal: Number(q.negotiatedTotalAmount ?? 0),
               discountPercentage:
                 q.suggestedTotalAmount > 0 && q.discountAmount > 0
-                  ? Math.round((q.discountAmount / q.suggestedTotalAmount) * 1000) / 10
+                  ? Math.round((q.discountAmount / q.suggestedTotalAmount) * 10000) / 100
                   : 0,
               totalAmount: Number(q.negotiatedTotalAmount ?? 0),
               entryPercentage: 50,
@@ -228,6 +285,8 @@ export default function App() {
               convertedToOrderId: linkedOrder?.orderNumber || q.convertedOrderId,
             };
           });
+        } else if (quotesRes.status === 403) {
+          updated.quotes = [];
         }
 
         if (invRes.status === 200 && Array.isArray(invRes.data)) {
@@ -255,6 +314,7 @@ export default function App() {
             companyName: c.companyName,
             tradeName: c.tradeName,
             cnpj: c.cnpj,
+            isPreliminaryCnpj: Boolean(c.isPreliminaryCnpj),
             stateRegistration: c.stateRegistration,
             contactName: c.contactName,
             phone: c.phone,
@@ -266,6 +326,7 @@ export default function App() {
             standardUniformNotes: c.standardUniformNotes || '',
             totalOrdersCount: Number(c.totalOrdersCount ?? 0),
             totalSpent: Number(c.totalSpent ?? 0),
+            metrics: c.metrics,
             isDemo: c.isDemo,
             createdAt: c.createdAt ? c.createdAt.split('T')[0] : '2026-01-01',
           }));
@@ -275,6 +336,8 @@ export default function App() {
           updated.finance = finRes.data.map((f: any) => ({
             id: f.id,
             transactionNumber: f.transactionNumber || f.id,
+            productionOrderId: f.productionOrderId,
+            quoteId: f.quoteId,
             type: f.type,
             subType: f.subType,
             description: f.description,
@@ -287,8 +350,13 @@ export default function App() {
             referenceId: f.referenceId,
             receiptEvidenceUrl: f.receiptEvidenceUrl,
             receiptVoucherNumber: f.receiptVoucherNumber,
+            confirmedById: f.confirmedById,
+            confirmedByName: f.confirmedByName,
+            confirmationNotes: f.confirmationNotes,
             isDemo: f.isDemo,
           }));
+        } else if (finRes.status === 403) {
+          updated.finance = [];
         }
 
         return updated;
@@ -305,7 +373,7 @@ export default function App() {
   // =========================================================================
   // ORDERS ACTIONS (Backend-Authoritative)
   // =========================================================================
-  const handleSaveOrder = async (savedOrder: ProductionOrder) => {
+  const handleSaveOrder = async (savedOrder: ProductionOrder): Promise<boolean> => {
     const exists = state.orders.some((o) => o.id === savedOrder.id);
     const res = exists
       ? await api.updateOrder(savedOrder.id, savedOrder)
@@ -313,7 +381,7 @@ export default function App() {
 
     if (res.status < 200 || res.status >= 300) {
       notify('error', 'Erro ao salvar Ordem de Produção', res.error || `Falha HTTP ${res.status}`);
-      return;
+      return false;
     }
 
     await fetchServerState();
@@ -325,6 +393,7 @@ export default function App() {
         ? `Ficha técnica da OP ${res.data?.orderNumber || savedOrder.orderNumber || savedOrder.id} atualizada.`
         : `OP ${res.data?.orderNumber} criada em 'Aguardando Liberação' até quitação do sinal 50% e aprovação de arte.`
     );
+    return true;
   };
 
   const handleEditOrder = (order: ProductionOrder) => {
@@ -337,7 +406,7 @@ export default function App() {
     const label = target?.orderNumber || orderId;
     setConfirmDialog({
       title: `Excluir Ordem de Produção ${label}?`,
-      message: 'Esta operação remove a OP do servidor e será registrada na trilha de auditoria. Apenas administradores possuem alçada.',
+      message: 'Esta operação remove a OP do servidor e será registrada na trilha de auditoria. OPs entregues, com custódia aberta em facção ou com títulos liquidados são protegidas pelo servidor.',
       confirmLabel: 'Excluir OP',
       onConfirm: async () => {
         const res = await api.deleteOrder(orderId);
@@ -351,14 +420,18 @@ export default function App() {
     });
   };
 
-  const handleUpdateOrderStage = async (orderId: string, nextStage: OperationalStage) => {
-    const res = await api.advanceOrderStage(orderId, nextStage);
+  const handleUpdateOrderStage = async (orderId: string, nextStage: OperationalStage, reason?: string) => {
+    const res = await api.advanceOrderStage(orderId, nextStage, reason);
     if (res.status < 200 || res.status >= 300) {
-      notify(
-        'error',
-        res.status === 422 ? 'Portão Fabril Bloqueado (Gate A.3.2)' : 'Avanço de etapa não permitido',
-        res.error || `Servidor rejeitou a transição com HTTP ${res.status}.`
-      );
+      const title =
+        res.code === 'GATE_A32_BLOCKED'
+          ? 'Portão Fabril Bloqueado (Gate A.3.2)'
+          : res.code === 'INVALID_STAGE_TRANSITION'
+            ? 'Transição de Etapa Não Permitida'
+            : res.code === 'REOPEN_DELIVERED_REQUIRES_ADMIN'
+              ? 'Reabertura Restrita à Diretoria'
+              : 'Avanço de etapa não permitido';
+      notify('error', title, res.error || `Servidor rejeitou a transição com HTTP ${res.status}.`);
       return;
     }
 
@@ -367,33 +440,77 @@ export default function App() {
   };
 
   // PRD Gate 2: Aprovação formal da Arte / Layout (Autoritativa no Backend)
-  const handleApproveArt = async (orderId: string) => {
-    const res = await api.approveOrderArt(orderId, user?.fullName || 'Cliente (WhatsApp)');
+  const handleApproveArt = async (orderId: string, approverName?: string, notes?: string) => {
+    const resolvedApprover = (approverName || '').trim() || user?.fullName || 'Cliente (WhatsApp)';
+    const res = await api.approveOrderArt(orderId, resolvedApprover, notes?.trim() || undefined);
     if (res.status < 200 || res.status >= 300) {
       notify('error', 'Falha ao aprovar arte', res.error || `Falha HTTP ${res.status}`);
       return;
     }
 
     await fetchServerState();
-    notify('success', 'Arte final aprovada', 'Aprovação formal registrada na OP e na trilha de auditoria.');
+    notify(
+      res.data?.alreadyApproved ? 'info' : 'success',
+      res.data?.alreadyApproved ? 'Arte já estava aprovada' : 'Arte final aprovada',
+      res.data?.message || `Aprovação formal de ${resolvedApprover} registrada na OP e na trilha de auditoria.`
+    );
   };
 
   // =========================================================================
   // QUOTES ACTIONS (Backend-Authoritative)
   // =========================================================================
-  const handleSaveQuote = async (quote: Quote) => {
-    const res = await api.createQuote(quote);
+  const handleSaveQuote = async (quote: Quote, isEdit = false): Promise<boolean> => {
+    const res = isEdit
+      ? await api.updateQuote(quote.id, quote)
+      : await api.createQuote(quote);
     if (res.status < 200 || res.status >= 300) {
       notify(
         'error',
-        res.status === 403 ? 'Alçada Comercial Violada (Adendo B.2.5)' : 'Erro ao emitir proposta',
+        res.status === 403 ? 'Alçada Comercial Violada (Adendo B.2.5)' : 'Erro ao salvar proposta',
         res.error || `Falha HTTP ${res.status}`
       );
-      return;
+      return false;
     }
 
     await fetchServerState();
-    notify('success', 'Proposta emitida', `Proposta ${res.data?.quoteNumber || ''} salva com sucesso no servidor.`);
+    setEditingQuote(null);
+    notify(
+      'success',
+      isEdit ? 'Proposta revisada' : 'Proposta emitida',
+      isEdit
+        ? `Proposta ${res.data?.quoteNumber || quote.quoteNumber || ''} atualizada para v${res.data?.version || quote.version}.`
+        : `Proposta ${res.data?.quoteNumber || ''} salva com sucesso no servidor.`
+    );
+    return true;
+  };
+
+  const handleEditQuote = (quote: Quote) => {
+    setEditingQuote(quote);
+    setIsNewQuoteModalOpen(true);
+  };
+
+  const handleSendQuoteWhatsApp = async (quote: Quote) => {
+    const targetPhone = quote.whatsAppProof?.contactId || quote.clientPhone;
+    if (!targetPhone) {
+      notify('error', 'Telefone ausente', 'O cliente não possui número de WhatsApp cadastrado.');
+      return;
+    }
+    const res = await api.sendTemplateMessage({
+      templateType: 'quote_ready',
+      clientPhone: targetPhone,
+      clientName: quote.clientName,
+      quoteNumber: quote.quoteNumber || quote.id,
+      amount: quote.totalAmount,
+    });
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Falha no envio via WhatsApp', res.error || `Falha HTTP ${res.status}`);
+      return;
+    }
+    notify(
+      'success',
+      'Proposta enviada no WhatsApp',
+      `Resumo da ${quote.quoteNumber || quote.id} disparado para ${quote.clientName} (${targetPhone}).`
+    );
   };
 
   const handleUpdateQuoteStatus = async (quoteId: string, status: CommercialStatus) => {
@@ -548,28 +665,62 @@ export default function App() {
   };
 
   // =========================================================================
-  // CLIENTS ACTIONS (Backend-Authoritative)
+  // CLIENTS & LEADS ACTIONS (Backend-Authoritative)
   // =========================================================================
-  const handleSaveClient = async (client: Client) => {
+  const handleSaveClient = async (client: Client): Promise<boolean> => {
     const exists = state.clients.some((c) => c.id === client.id);
     const res = exists
       ? await api.updateClient(client.id, client)
       : await api.createClient(client);
 
     if (res.status < 200 || res.status >= 300) {
-      notify('error', 'Erro ao salvar cliente', res.error || `Falha HTTP ${res.status}`);
-      return;
+      notify(
+        'error',
+        res.status === 409 ? 'CNPJ já cadastrado' : 'Erro ao salvar cliente',
+        res.error || `Falha HTTP ${res.status}`
+      );
+      return false;
     }
 
     await fetchServerState();
     notify('success', exists ? 'Cliente atualizado' : 'Cliente cadastrado', `${client.companyName} salvo na carteira B2B.`);
+    return true;
+  };
+
+  const handleUpdateLeadStatus = async (leadId: string, status: LeadItem['status']): Promise<boolean> => {
+    const res = await api.updateLeadStatus(leadId, status);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Erro ao atualizar lead', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify('success', 'Status do lead atualizado', `Lead movido para '${status}'.`);
+    return true;
+  };
+
+  const handleOpenClientWhatsApp = async (target: { id?: string; name: string; phone: string }) => {
+    const res = await api.startConversation({
+      phone: target.phone,
+      customerName: target.name,
+      clientId: target.id,
+    });
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'WhatsApp indisponível', res.error || `Falha HTTP ${res.status}`);
+      return;
+    }
+    setCurrentTab('whatsapp');
+    notify(
+      'success',
+      'Conversa aberta na Central WhatsApp',
+      `Atendimento com ${target.name} (${target.phone}) pronto para envio.`
+    );
   };
 
   const handleDeleteClient = (clientId: string) => {
     const target = state.clients.find((c) => c.id === clientId);
     setConfirmDialog({
       title: `Excluir cliente ${target?.tradeName || ''}?`,
-      message: 'Clientes com histórico de Ordens de Produção não podem ser excluídos.',
+      message: 'Clientes com histórico de Ordens de Produção, propostas comerciais ou títulos financeiros não podem ser excluídos.',
       confirmLabel: 'Excluir Cliente',
       onConfirm: async () => {
         const res = await api.deleteClient(clientId);
@@ -581,6 +732,111 @@ export default function App() {
         notify('success', 'Cliente excluído', `${target?.tradeName || 'Cliente'} removido da carteira.`);
       },
     });
+  };
+
+  // =========================================================================
+  // PARTNERS & OUTSOURCED CUSTODY ACTIONS (Backend-Authoritative)
+  // =========================================================================
+  const handleSavePartner = async (payload: Partial<Partner>, existingId?: string): Promise<boolean> => {
+    const res = existingId
+      ? await api.updatePartner(existingId, payload)
+      : await api.createPartner(payload);
+
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Erro ao salvar parceiro', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+
+    await fetchServerState();
+    notify(
+      'success',
+      existingId ? 'Parceiro atualizado' : 'Parceiro homologado',
+      `${res.data?.tradeName || payload.tradeName || 'Parceiro'} (${res.data?.code || ''}) salvo com sucesso.`
+    );
+    return true;
+  };
+
+  const handleDeletePartner = (partnerId: string) => {
+    const target = partners.find((p) => p.id === partnerId);
+    setConfirmDialog({
+      title: `Excluir parceiro ${target?.tradeName || ''}?`,
+      message: 'Parceiros com materiais em custódia aberta ou OPs em andamento não podem ser excluídos (prefira inativar).',
+      confirmLabel: 'Excluir Parceiro',
+      onConfirm: async () => {
+        const res = await api.deletePartner(partnerId);
+        if (res.status < 200 || res.status >= 300) {
+          notify('error', 'Exclusão bloqueada', res.error || `Falha HTTP ${res.status}`);
+          return;
+        }
+        await fetchServerState();
+        notify('success', 'Parceiro excluído', `${target?.tradeName || 'Parceiro'} removido da base.`);
+      },
+    });
+  };
+
+  const handleDispatchPartnerCustody = async (
+    partnerId: string,
+    payload: {
+      itemId: string;
+      productionOrderId?: string;
+      sentQuantity: number;
+      notes?: string;
+    }
+  ): Promise<boolean> => {
+    const res = await api.dispatchPartnerCustody(partnerId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Remessa rejeitada', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify(
+      'success',
+      `Remessa ${res.data?.movement?.movementNumber || ''} registrada`,
+      'Material transferido do Estoque Físico para Em Poder de Terceiros com rastreabilidade auditável.'
+    );
+    return true;
+  };
+
+  const handleReturnPartnerCustody = async (
+    custodyId: string,
+    payload: {
+      returnedQuantity: number;
+      lostQuantity: number;
+      returnToPhysicalStock: boolean;
+      notes?: string;
+    }
+  ): Promise<boolean> => {
+    const res = await api.returnPartnerCustody(custodyId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Baixa de custódia rejeitada', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify(
+      'success',
+      'Baixa de custódia registrada',
+      payload.returnToPhysicalStock
+        ? 'Devolução lançada no estoque físico com evento compensatório.'
+        : 'Consumo/perda confirmada com atualização do saldo em poder de terceiros.'
+    );
+    return true;
+  };
+
+  const handleOpenPartnerWhatsApp = async (partner: Partner) => {
+    const res = await api.startConversation({
+      phone: partner.phone,
+      customerName: `${partner.tradeName} (${partner.code})`,
+    });
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'WhatsApp indisponível', res.error || `Falha HTTP ${res.status}`);
+      return;
+    }
+    setCurrentTab('whatsapp');
+    notify(
+      'success',
+      'Conversa aberta na Central WhatsApp',
+      `Atendimento com ${partner.tradeName} (${partner.phone}) pronto para envio.`
+    );
   };
 
   // =========================================================================
@@ -620,12 +876,14 @@ export default function App() {
     trxId: string,
     voucherNumber: string,
     evidenceUrl: string,
-    notes: string
+    notes: string,
+    paymentMethod?: FinancialTransaction['paymentMethod']
   ) => {
     const res = await api.confirmPayment(trxId, {
       receiptVoucherNumber: voucherNumber,
       receiptEvidenceUrl: evidenceUrl,
       confirmationNotes: notes,
+      paymentMethod,
     });
 
     if (res.status < 200 || res.status >= 300) {
@@ -642,28 +900,110 @@ export default function App() {
     return true;
   };
 
-  // Profile & Reset
+  // Estorno compensatório auditável (títulos liquidados nunca são apagados)
+  const handleReverseTransaction = async (trxId: string, reason: string) => {
+    const res = await api.reverseTransaction(trxId, reason);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Estorno negado', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+
+    await fetchServerState();
+    notify(
+      'info',
+      'Estorno compensatório registrado',
+      res.data?.message || 'Título estornado com registro em auditoria.'
+    );
+    return true;
+  };
+
+  // Profile, Server-Synced Backup Restore & Cache Reset
   const handleSaveProfile = (profile: CompanyProfile) => {
     setState((prev) => ({ ...prev, profile }));
-    notify('success', 'Perfil atualizado', 'Dados institucionais da empresa salvos.');
+    notify('success', 'Perfil atualizado', 'Dados institucionais e logomarca salvos para todos os documentos.');
   };
 
-  const handleRestoreState = (restored: ERPState) => {
+  const handleRestoreState = async (restored: ERPState) => {
     setState(restored);
-    notify('success', 'Backup restaurado', 'Dados do backup JSON carregados na sessão.');
+    saveERPState(restored);
+
+    const syncRes = await api.importLocalStorageData({
+      clients: restored.clients,
+      inventory: restored.inventory,
+      orders: restored.orders,
+      quotes: restored.quotes,
+      finance: restored.finance,
+    });
+
+    if (syncRes.status >= 200 && syncRes.status < 300) {
+      await fetchServerState();
+      // Preserva explicitamente o perfil institucional e logomarca restaurados do backup
+      setState((prev) => ({ ...prev, profile: restored.profile }));
+      const stats = syncRes.data?.stats;
+      const summary = stats
+        ? `Backup restaurado e sincronizado no servidor (+${stats.importedClientsCount} clientes, +${stats.importedInventoryCount} insumos, +${stats.importedQuotesCount} orçamentos, +${stats.importedOrdersCount} OPs, +${stats.importedFinanceCount} títulos).`
+        : 'Backup JSON restaurado e sincronizado com o servidor.';
+      notify('success', 'Backup restaurado e sincronizado', summary);
+      return { syncedToServer: true, summary };
+    }
+
+    const fallbackSummary =
+      'Backup JSON aplicado localmente (incluindo perfil e logomarca). Sincronização com servidor indisponível no momento.';
+    notify('info', 'Backup restaurado localmente', syncRes.error || fallbackSummary);
+    return { syncedToServer: false, summary: fallbackSummary };
   };
 
-  const handleResetToDefaults = () => {
-    const fresh = resetERPState();
+  const handleResetToDefaults = (preserveProfile: boolean = true) => {
+    const fresh = resetERPState(preserveProfile ? state.profile : undefined);
     setState(fresh);
     fetchServerState();
-    notify('info', 'Cache local recarregado', 'Estado local reinicializado e ressincronizado com o servidor.');
+    notify(
+      'info',
+      'Cache local ressincronizado',
+      preserveProfile
+        ? 'Cache local limpo e ressincronizado com o servidor mantendo os dados e a logo da empresa.'
+        : 'Cache local e perfil institucional restaurados aos padrões.'
+    );
   };
 
-  // Counts for sidebar badges
-  const activeOrdersCount = state.orders.filter((o) => o.stage !== 'entregue').length;
+  // Redirecionar aba restrita automaticamente caso o perfil logado não possua alçada RBAC
+  useEffect(() => {
+    if (!isAuthenticated || !user?.role) return;
+    const role = user.role;
+    if (currentTab === 'finance' && !['admin', 'financeiro', 'gerente_comercial'].includes(role)) {
+      setCurrentTab('dashboard');
+    } else if (
+      currentTab === 'partners' &&
+      !['admin', 'gerente_comercial', 'pcp_producao', 'expedicao_qualidade', 'financeiro'].includes(role)
+    ) {
+      setCurrentTab('dashboard');
+    } else if (currentTab === 'whatsapp' && !['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role)) {
+      setCurrentTab('dashboard');
+    } else if (currentTab === 'settings' && role !== 'admin') {
+      setCurrentTab('dashboard');
+    }
+  }, [isAuthenticated, user?.role, currentTab]);
+
+  // Real operational counts for Sidebar badges & capacity bar
+  const activeOrders = state.orders.filter((o) => o.stage !== 'entregue');
+  const activeOrdersCount = activeOrders.length;
+  const activePiecesCount = activeOrders.reduce((sum, o) => sum + (o.totalPieces || 0), 0);
+  const blockedOrdersCount = activeOrders.filter((o) => !o.canStartProduction).length;
   const lowStockCount = state.inventory.filter((i) => i.currentStock <= i.minStock).length;
-  const pendingQuotesCount = state.quotes.filter((q) => q.status === 'enviado' || q.status === 'aprovado').length;
+  const openCustodyCount = partnerCustody.filter(
+    (c) => c.status === 'em_custodia' || c.status === 'devolvido_parcial'
+  ).length;
+  const newLeadsCount = leads.filter((l) => l.status === 'novo').length;
+  const pendingQuotesCount = state.quotes.filter(
+    (q) => q.status === 'enviado' || q.status === 'em_negociacao' || q.status === 'aprovado'
+  ).length;
+  const todayISO = new Date().toISOString().split('T')[0];
+  const pendingDownpaymentsCount = state.finance.filter(
+    (f) => f.type === 'receber' && f.subType === 'entrada_pedido' && (f.status === 'pendente' || f.status === 'atrasado')
+  ).length;
+  const overdueFinanceCount = state.finance.filter(
+    (f) => f.status === 'atrasado' || (f.status === 'pendente' && f.dueDate && f.dueDate < todayISO)
+  ).length;
 
   if (isLoading) {
     return (
@@ -681,9 +1021,21 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 text-slate-900 antialiased flex flex-col">
         <header className="sticky top-0 z-30 bg-slate-950 text-white border-b border-slate-800 px-4 sm:px-8 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <ShieldCheck className="w-5 h-5 text-blue-400" />
-            <span className="font-bold tracking-tight text-sm">DE FARDAS</span>
-            <span className="text-[11px] text-slate-400 hidden sm:inline">· Vitrine Digital & Catálogo B2B (São Luís - MA)</span>
+            {state.profile.logoUrl ? (
+              <div className="h-8 max-w-[110px] bg-white rounded-md px-1.5 py-0.5 flex items-center justify-center overflow-hidden">
+                <img
+                  src={state.profile.logoUrl}
+                  alt={`Logomarca ${state.profile.tradeName}`}
+                  className="max-h-full max-w-full object-contain"
+                />
+              </div>
+            ) : (
+              <ShieldCheck className="w-5 h-5 text-blue-400" />
+            )}
+            <span className="font-bold tracking-tight text-sm">{state.profile.tradeName || 'DE FARDAS'}</span>
+            <span className="text-[11px] text-slate-400 hidden sm:inline">
+              · Vitrine Digital & Catálogo B2B ({state.profile.city} - {state.profile.state})
+            </span>
           </div>
           <button
             onClick={() => setCurrentTab('dashboard')}
@@ -735,17 +1087,24 @@ export default function App() {
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
         activeOrdersCount={activeOrdersCount}
+        activePiecesCount={activePiecesCount}
+        blockedOrdersCount={blockedOrdersCount}
         lowStockCount={lowStockCount}
+        openCustodyCount={openCustodyCount}
+        newLeadsCount={newLeadsCount}
         pendingQuotesCount={pendingQuotesCount}
+        pendingDownpaymentsCount={pendingDownpaymentsCount}
+        overdueFinanceCount={overdueFinanceCount}
         profile={state.profile}
         isCollapsed={isSidebarCollapsed}
-        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        onToggleCollapse={handleToggleSidebarCollapse}
         isMobileOpen={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
         onOpenNewOrderModal={() => {
           setEditingOrder(null);
           setIsNewOrderModalOpen(true);
         }}
+        onOpenNewQuoteModal={() => setIsNewQuoteModalOpen(true)}
         onOpenHelpManual={() => setIsHelpManualOpen(true)}
       />
 
@@ -810,9 +1169,11 @@ export default function App() {
 
             {currentTab === 'dashboard' && (
               <DashboardView
+                profile={state.profile}
                 orders={state.orders}
                 quotes={state.quotes}
                 inventory={state.inventory}
+                finance={state.finance}
                 onSelectTab={setCurrentTab}
                 onOpenNewOrderModal={() => {
                   setEditingOrder(null);
@@ -842,10 +1203,15 @@ export default function App() {
             {currentTab === 'quotes' && (
               <QuotesView
                 quotes={state.quotes}
-                onOpenNewQuoteModal={() => setIsNewQuoteModalOpen(true)}
+                onOpenNewQuoteModal={() => {
+                  setEditingQuote(null);
+                  setIsNewQuoteModalOpen(true);
+                }}
+                onEditQuote={handleEditQuote}
                 onOpenPrintQuote={(quote) => setSelectedQuoteForPrint(quote)}
                 onUpdateQuoteStatus={handleUpdateQuoteStatus}
                 onConvertQuoteToOrder={handleConvertQuoteToOrder}
+                onSendQuoteWhatsApp={handleSendQuoteWhatsApp}
                 onDeleteQuote={handleDeleteQuote}
               />
             )}
@@ -859,24 +1225,54 @@ export default function App() {
               />
             )}
 
+            {currentTab === 'partners' && (
+              <PartnersView
+                partners={partners}
+                custodyList={partnerCustody}
+                inventory={state.inventory}
+                orders={state.orders}
+                onSavePartner={handleSavePartner}
+                onDeletePartner={handleDeletePartner}
+                onDispatchCustody={handleDispatchPartnerCustody}
+                onReturnCustody={handleReturnPartnerCustody}
+                onCreateServicePayable={handleSaveTransaction}
+                onOpenWhatsApp={handleOpenPartnerWhatsApp}
+                onNavigateTab={setCurrentTab}
+              />
+            )}
+
             {currentTab === 'clients' && (
               <ClientsView
                 clients={state.clients}
+                leads={leads}
                 onSaveClient={handleSaveClient}
                 onDeleteClient={handleDeleteClient}
+                onSelectClientForQuote={(client) => {
+                  setEditingQuote(null);
+                  setQuoteInitialClientId(client.id);
+                  setIsNewQuoteModalOpen(true);
+                }}
+                onOpenWhatsApp={handleOpenClientWhatsApp}
+                onUpdateLeadStatus={handleUpdateLeadStatus}
+                onNavigateTab={setCurrentTab}
               />
             )}
 
             {currentTab === 'finance' && (
               <FinancialView
+                profile={state.profile}
                 transactions={state.finance}
+                orders={state.orders}
                 onSaveTransaction={handleSaveTransaction}
                 onDeleteTransaction={handleDeleteTransaction}
                 onConfirmPaymentWithVoucher={handleConfirmPaymentWithVoucher}
+                onReverseTransaction={handleReverseTransaction}
               />
             )}
 
-            {currentTab === 'whatsapp' && <WhatsAppOmnichannelView />}
+            {currentTab === 'whatsapp' && (
+              <WhatsAppOmnichannelView clients={state.clients} profile={state.profile} />
+            )}
 
             {currentTab === 'settings' && (
               <SettingsView
@@ -933,6 +1329,7 @@ export default function App() {
       {isNewOrderModalOpen && (
         <NewOrderModal
           clients={state.clients}
+          partners={partners}
           existingOrder={editingOrder}
           onClose={() => {
             setIsNewOrderModalOpen(false);
@@ -942,11 +1339,17 @@ export default function App() {
         />
       )}
 
-      {/* Modal: New Commercial Quote with PRD Pricing Engine */}
+      {/* Modal: New/Edit Commercial Quote with PRD Pricing Engine */}
       {isNewQuoteModalOpen && (
         <NewQuoteModal
           clients={state.clients}
-          onClose={() => setIsNewQuoteModalOpen(false)}
+          existingQuote={editingQuote}
+          initialClientId={quoteInitialClientId}
+          onClose={() => {
+            setIsNewQuoteModalOpen(false);
+            setEditingQuote(null);
+            setQuoteInitialClientId(null);
+          }}
           onSaveQuote={handleSaveQuote}
         />
       )}

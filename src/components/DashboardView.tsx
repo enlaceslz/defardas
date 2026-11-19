@@ -23,15 +23,28 @@ import {
   PieChart as PieIcon,
   BarChart3,
   ArrowUpRight,
-  Filter
+  Filter,
+  Printer,
 } from 'lucide-react';
-import { ProductionOrder, Quote, InventoryItem, OperationalStage, UniformCategory } from '../types/erp';
+import {
+  CompanyProfile,
+  FinancialTransaction,
+  ProductionOrder,
+  Quote,
+  InventoryItem,
+  OperationalStage,
+  UniformCategory,
+} from '../types/erp';
 import { formatCurrencyBRL, formatDateBR, getStageLabel, getPriorityBadge } from '../utils/formatters';
+import { PrintReportModal } from './PrintReportModal';
+import { useAuth } from '../api/authContext';
 
 interface DashboardViewProps {
+  profile: CompanyProfile;
   orders: ProductionOrder[];
   quotes: Quote[];
   inventory: InventoryItem[];
+  finance?: FinancialTransaction[];
   onSelectTab: (tab: string) => void;
   onOpenNewOrderModal: () => void;
   onOpenNewQuoteModal: () => void;
@@ -39,16 +52,20 @@ interface DashboardViewProps {
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
+  profile,
   orders,
   quotes,
   inventory,
+  finance = [],
   onSelectTab,
   onOpenNewOrderModal,
   onOpenNewQuoteModal,
   onSelectOrderForTicket,
 }) => {
+  const { user } = useAuth();
   // Active filter tab for dashboard views
   const [dashboardTab, setDashboardTab] = useState<'all' | 'production' | 'commercial'>('all');
+  const [isExecutiveReportOpen, setIsExecutiveReportOpen] = useState(false);
 
   // Core calculations
   const activeOrders = orders.filter((o) => o.stage !== 'entregue');
@@ -62,8 +79,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalClosedQuotes = quotes.filter((q) => q.status === 'convertido_em_pedido' || q.status === 'aprovado').length;
   const conversionRate = quotes.length > 0 ? Math.round((totalClosedQuotes / quotes.length) * 100) : 75;
 
-  // Capacity calculations (Company profile default: 5.000 pieces/month)
-  const monthlyCapacity = 5000;
+  // Capacity calculations driven dynamically by Settings -> Company Profile
+  const monthlyCapacity = Math.max(1, profile.productionCapacityPiecesMonth || 5000);
   const capacityUsedPercent = Math.min(100, Math.round((totalPiecesInProduction / monthlyCapacity) * 100));
   const capacityRemaining = Math.max(0, monthlyCapacity - totalPiecesInProduction);
 
@@ -219,6 +236,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
           </div>
 
+          <button
+            type="button"
+            onClick={() => setIsExecutiveReportOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-2xs transition-colors cursor-pointer"
+          >
+            <Printer className="w-3.5 h-3.5 text-slate-500" />
+            <span>Relatório Gerencial</span>
+          </button>
           <button
             onClick={onOpenNewQuoteModal}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-2xs transition-colors cursor-pointer"
@@ -804,6 +829,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {isExecutiveReportOpen && (
+        <PrintReportModal
+          mode="executive"
+          profile={profile}
+          orders={orders}
+          quotes={quotes}
+          inventory={inventory}
+          transactions={finance}
+          filterSummary={`Visão selecionada: ${dashboardTab === 'all' ? 'Visão 360°' : dashboardTab === 'production' ? 'PCP & Fábrica' : 'Comercial'}`}
+          generatedBy={user?.fullName}
+          onClose={() => setIsExecutiveReportOpen(false)}
+        />
+      )}
     </div>
   );
 };

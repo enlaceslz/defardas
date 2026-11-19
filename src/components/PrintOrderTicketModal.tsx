@@ -49,16 +49,33 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
         <div className="p-8 space-y-6 text-slate-900 bg-white print-page text-sm">
           
           {/* Header */}
-          <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4">
-            <div>
-              <div className="text-xl font-black tracking-tight text-slate-900">
-                {profile.tradeName}
-              </div>
-              <div className="text-xs text-slate-600 font-mono mt-0.5">
-                {profile.name} · CNPJ: {profile.cnpj}
-              </div>
-              <div className="text-xs text-slate-500 mt-0.5">
-                {profile.address} - {profile.neighborhood}, {profile.city}/{profile.state} · Tel: {profile.phone}
+          <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4 gap-4">
+            <div className="flex items-start gap-3.5">
+              {profile.logoUrl && (
+                <div className="shrink-0 flex items-center justify-center bg-white border border-slate-200 rounded-lg p-1.5 max-w-[128px] max-h-[68px]">
+                  <img
+                    src={profile.logoUrl}
+                    alt={`Logomarca ${profile.tradeName}`}
+                    className="max-h-12 max-w-[114px] w-auto object-contain"
+                  />
+                </div>
+              )}
+              <div>
+                <div className="text-xl font-black tracking-tight text-slate-900">
+                  {profile.tradeName}
+                </div>
+                <div className="text-xs text-slate-600 font-mono mt-0.5">
+                  {profile.name} · CNPJ: {profile.cnpj} {profile.ie ? `· I.E.: ${profile.ie}` : ''}
+                </div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {profile.address}
+                  {profile.neighborhood ? ` - ${profile.neighborhood}` : ''}, {profile.city}/{profile.state} · Tel: {profile.phone}
+                </div>
+                {profile.email && (
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    E-mail: {profile.email}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -99,6 +116,12 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
                   {order.entryPaymentConfirmed ? 'Sinal 50% Confirmado' : 'Sinal Pendente'} · {order.artApproved ? 'Arte Aprovada' : 'Arte Pendente'}
                 </span>
               </div>
+              {order.artApproved && order.artApprovedBy && (
+                <div className="text-[11px] text-slate-500">
+                  Arte aprovada por <strong className="text-slate-700">{order.artApprovedBy}</strong>
+                  {order.artApprovalDate ? ` em ${formatDateBR(order.artApprovalDate)}` : ''}
+                </div>
+              )}
             </div>
           </div>
 
@@ -222,40 +245,44 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
               <tbody className="divide-y divide-slate-200">
                 <tr>
                   <td className="py-3 px-3 font-semibold text-slate-800">1. Corte & Enfesto</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/2026</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">DE FARDAS Mesa 1</td>
+                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
+                  <td className="py-3 px-3 font-mono text-slate-600">{order.assignedTeam || 'DE FARDAS · Corte'}</td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ m</td>
                   <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
                 </tr>
                 <tr>
                   <td className="py-3 px-3 font-semibold text-slate-800">2. Bordado / Silk (Parceiro)</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/2026</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">Bordados São Luís</td>
+                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
+                  <td className="py-3 px-3 font-mono text-slate-600">
+                    {order.customizations?.find((c) => c.partnerName)?.partnerName || 'Parceiro de Personalização'}
+                  </td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
                 </tr>
                 <tr>
                   <td className="py-3 px-3 font-semibold text-slate-800">3. Costura & Montagem</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/2026</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">Facção Externa</td>
+                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
+                  <td className="py-3 px-3 font-mono text-slate-600">
+                    {order.outsourcedPartner || 'Produção Interna DE FARDAS'}
+                  </td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
                 </tr>
                 <tr>
                   <td className="py-3 px-3 font-semibold text-slate-800">4. Inspeção Final DE FARDAS</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/2026</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">Controle Qualidade</td>
+                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
+                  <td className="py-3 px-3 font-mono text-slate-600">Controle de Qualidade</td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
                 </tr>
                 <tr>
                   <td className="py-3 px-3 font-semibold text-slate-800">5. Embalagem & Expedição</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/2026</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">Almoxarifado Envio</td>
+                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
+                  <td className="py-3 px-3 font-mono text-slate-600">Expedição / Almoxarifado</td>
                   <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
                   <td className="py-3 px-3 font-mono text-slate-400">-</td>
                   <td className="py-3 px-3 font-mono text-slate-400">__________________</td>

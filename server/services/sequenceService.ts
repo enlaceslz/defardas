@@ -110,6 +110,12 @@ class SequenceService {
     return `MOV-${this.currentYear}-${padded}`;
   }
 
+  public async nextPartnerCodeAsync(): Promise<string> {
+    const val = await this.getNextSequenceValue('seq_partner_number', 'partner');
+    const padded = String(val).padStart(4, '0');
+    return `FAC-${this.currentYear}-${padded}`;
+  }
+
   // Métodos síncronos mantidos apenas para retrocompatibilidade
   public nextQuoteNumber(): string {
     const nextVal = this.increment('quote');

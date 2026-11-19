@@ -235,12 +235,24 @@ export interface InventoryItem {
   lastRestocked: string;
 }
 
+export interface ClientMetrics {
+  quotesCount: number;
+  openQuotesCount: number;
+  ordersCount: number;
+  activeOrdersCount: number;
+  totalPiecesOrdered: number;
+  paidReceivablesAmount: number;
+  pendingReceivablesAmount: number;
+  lastOrderDate?: string | null;
+}
+
 export interface Client {
   id: string;
   code?: string;
   companyName: string;
   tradeName: string;
   cnpj: string;
+  isPreliminaryCnpj?: boolean;
   stateRegistration?: string;
   contactName: string;
   phone: string;
@@ -252,13 +264,42 @@ export interface Client {
   standardUniformNotes: string;
   totalOrdersCount: number;
   totalSpent: number;
+  metrics?: ClientMetrics;
   isDemo?: boolean;
   createdAt: string;
+}
+
+export interface LeadItem {
+  id: string;
+  leadNumber: string;
+  clientName: string;
+  companyName: string;
+  phone: string;
+  email?: string;
+  category: string;
+  estimatedQuantity: number;
+  notes?: string;
+  origin: string;
+  status: 'novo' | 'em_atendimento' | 'orcamento_enviado' | 'convertido' | 'perdido';
+  assignedSellerId?: string;
+  isDemo?: boolean;
+  createdAt: string;
+}
+
+export interface ClientProfileResponse {
+  client: Client;
+  quotes: any[];
+  orders: ProductionOrder[];
+  transactions: FinancialTransaction[];
+  leads: LeadItem[];
+  metrics: ClientMetrics;
 }
 
 export interface FinancialTransaction {
   id: string;
   transactionNumber?: string;
+  productionOrderId?: string;
+  quoteId?: string;
   type: 'receber' | 'pagar';
   subType: 'entrada_pedido' | 'saldo_entrega' | 'compra_tecido' | 'servico_terceirizado' | 'despesa_geral';
   description: string;
@@ -266,11 +307,14 @@ export interface FinancialTransaction {
   amount: number;
   dueDate: string;
   paidDate?: string;
-  status: 'pendente' | 'pago' | 'atrasado';
+  status: 'pendente' | 'pago' | 'atrasado' | 'estornado';
   paymentMethod: 'boleto' | 'pix' | 'transferencia' | 'cartao';
   referenceId?: string; // OP ou Pedido vinculado
   receiptEvidenceUrl?: string; // Comprovante obrigatório
   receiptVoucherNumber?: string;
+  confirmedById?: string;
+  confirmedByName?: string;
+  confirmationNotes?: string;
   isDemo?: boolean;
 }
 
@@ -290,6 +334,7 @@ export interface CompanyProfile {
   cep: string;
   openingHours: string;
   productionCapacityPiecesMonth: number;
+  logoUrl?: string;
 }
 
 export interface PublicCatalogItem {
@@ -303,3 +348,78 @@ export interface PublicCatalogItem {
   imageUrl?: string;
   isPopular?: boolean;
 }
+
+export type PartnerServiceCategory =
+  | 'costura'
+  | 'bordado'
+  | 'silk_screen'
+  | 'acabamento'
+  | 'corte_externo';
+
+export interface PartnerMetrics {
+  activeOrdersCount: number;
+  totalOrdersCount: number;
+  totalPiecesAssigned: number;
+  openCustodyCount: number;
+  openCustodyQty: number;
+  pendingPayablesAmount: number;
+  paidServicesAmount: number;
+}
+
+export interface Partner {
+  id: string;
+  code: string;
+  name: string;
+  tradeName: string;
+  cnpjCpf?: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  city: string;
+  state: string;
+  cep?: string;
+  partnerType: PartnerServiceCategory;
+  capacityPiecesPerMonth?: string;
+  defaultCostPerPiece: number;
+  leadTimeDays: number;
+  pixKey?: string;
+  rating: number;
+  notes?: string;
+  active: boolean;
+  isDemo?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  metrics?: PartnerMetrics;
+}
+
+export interface PartnerCustody {
+  id: string;
+  partnerId: string;
+  itemId: string;
+  productionOrderId?: string;
+  remittanceMovementId?: string;
+  sentQuantity: number;
+  returnedQuantity: number;
+  lostQuantity: number;
+  pendingQuantity: number;
+  unit: string;
+  sentDate: string;
+  status: 'em_custodia' | 'devolvido_parcial' | 'devolvido_total' | 'avaria_registrada';
+  notes?: string;
+  partnerCode?: string;
+  partnerName?: string;
+  partnerType?: PartnerServiceCategory;
+  itemCode?: string;
+  itemName?: string;
+  orderNumber?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PartnerDetailResponse {
+  partner: Partner;
+  orders: ProductionOrder[];
+  custody: PartnerCustody[];
+  payables: FinancialTransaction[];
+}
+

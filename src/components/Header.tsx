@@ -1,4 +1,4 @@
-import { Menu, Plus, AlertTriangle, Calendar, Building2, HelpCircle, Shirt, ShieldCheck, Users, LogOut } from 'lucide-react';
+import { Menu, Plus, AlertTriangle, Calendar, Building2, HelpCircle, ShieldCheck, LogOut } from 'lucide-react';
 import { formatDateBR } from '../utils/formatters';
 import { useAuth } from '../api/authContext';
 
@@ -22,6 +22,10 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuditModal,
 }) => {
   const { user, logout } = useAuth();
+  const role = user?.role || '';
+  const canCreateOrder = ['admin', 'gerente_comercial', 'pcp_producao'].includes(role);
+  const canViewAudit = role === 'admin';
+
   const getTabTitle = (tab: string): string => {
     switch (tab) {
       case 'portal': return 'Portal Público & Portfólio Digital';
@@ -29,7 +33,9 @@ export const Header: React.FC<HeaderProps> = ({
       case 'orders': return 'Ordens de Produção (PCP)';
       case 'quotes': return 'Orçamentos & Propostas Comerciais';
       case 'inventory': return 'Estoque & Tecidoteca';
+      case 'partners': return 'Parceiros & Terceirizados (Facções)';
       case 'clients': return 'Carteira de Clientes B2B';
+      case 'whatsapp': return 'Central WhatsApp Omnichannel';
       case 'finance': return 'Fluxo de Caixa & Finanças';
       case 'settings': return 'Configurações & Backup';
       default: return 'Sistema de Gestão';
@@ -90,7 +96,7 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {onOpenAuditModal && (
+            {onOpenAuditModal && canViewAudit && (
               <button
                 onClick={onOpenAuditModal}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap shadow-2xs"
@@ -112,13 +118,15 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            <button
-              onClick={onOpenNewOrderModal}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-sm transition-all whitespace-nowrap shrink-0 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ Nova OP</span>
-            </button>
+            {canCreateOrder && (
+              <button
+                onClick={onOpenNewOrderModal}
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-sm transition-all whitespace-nowrap shrink-0 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Nova OP</span>
+              </button>
+            )}
 
             {user && (
               <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">

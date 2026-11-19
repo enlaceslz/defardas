@@ -28,7 +28,8 @@ export interface RequestWithUser extends Request {
 
 // Matriz de Permissões Rigorosa (PRD v1.6 e Adendo B.2.5)
 export const PERMISSIONS: Record<string, UserRole[]> = {
-  // Apenas admin pode autorizar desconto abaixo do preço sugerido (Adendo B.2.5)
+  // Comercial & Orçamentos (Adendo B.2.5)
+  'quotes:view': ['admin', 'gerente_comercial', 'vendedor', 'financeiro'],
   'quotes:authorize_discount': ['admin'],
   'quotes:create': ['admin', 'gerente_comercial', 'vendedor'],
   'quotes:edit': ['admin', 'gerente_comercial', 'vendedor'],
@@ -41,9 +42,11 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
   'orders:delete': ['admin'],
   'orders:approve_art': ['admin', 'gerente_comercial', 'vendedor', 'pcp_producao'],
 
-  // Financeiro (Quitação de sinal e baixas)
+  // Financeiro (Visualização, lançamentos, quitação de sinal, estorno e exclusão)
+  'finance:view': ['admin', 'financeiro', 'gerente_comercial'],
   'finance:confirm_receipt': ['admin', 'financeiro'],
   'finance:create_transaction': ['admin', 'financeiro'],
+  'finance:reverse_transaction': ['admin'],
   'finance:delete_transaction': ['admin'],
 
   // Estoque & Tecidoteca
@@ -51,11 +54,20 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
   'inventory:adjust': ['admin', 'pcp_producao'],
   'inventory:manage_items': ['admin', 'pcp_producao'],
 
+  // Parceiros & Terceirizados (Facções, Bordado, Silk, Corte e Custódia)
+  'partners:view': ['admin', 'gerente_comercial', 'pcp_producao', 'expedicao_qualidade', 'financeiro'],
+  'partners:manage': ['admin', 'pcp_producao', 'gerente_comercial'],
+  'partners:manage_custody': ['admin', 'pcp_producao'],
+  'partners:delete': ['admin'],
+
   // CRM & Clientes
   'crm:manage_clients': ['admin', 'gerente_comercial', 'vendedor'],
+  'crm:delete_clients': ['admin', 'gerente_comercial'],
   'crm:view_leads': ['admin', 'gerente_comercial', 'vendedor'],
 
   // Comunicação & WhatsApp Omnichannel
+  'communication:view': ['admin', 'gerente_comercial', 'vendedor', 'financeiro'],
+  'communication:send_message': ['admin', 'gerente_comercial', 'vendedor', 'financeiro'],
   'communication:manage_channels': ['admin', 'gerente_comercial'],
   'communication:send_template': ['admin', 'gerente_comercial', 'vendedor', 'financeiro'],
   

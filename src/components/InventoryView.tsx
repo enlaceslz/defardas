@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { InventoryItem, InventoryCategory } from '../types/erp';
 import { formatCurrencyBRL } from '../utils/formatters';
+import { CurrencyInput } from './FormInputs';
 
 type StockMovementType =
   | 'entrada_compra'
@@ -497,12 +498,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Custo Unitário (R$)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <CurrencyInput
                     value={costPrice}
-                    onChange={(e) => setCostPrice(parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
+                    onChange={setCostPrice}
                   />
                 </div>
 
