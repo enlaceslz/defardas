@@ -20,9 +20,18 @@ interface LoginViewProps {
   onGoToPortal?: () => void;
 }
 
+interface DevAccountItem {
+  email: string;
+  role: string;
+  name?: string;
+  fullName?: string;
+  description?: string;
+}
+
 interface DevCredentialsPayload {
   defaultPassword?: string;
-  users?: Array<{ email: string; role: string; fullName: string }>;
+  accounts?: DevAccountItem[];
+  users?: DevAccountItem[];
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
@@ -32,14 +41,22 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showDevCredentials, setShowDevCredentials] = useState(false);
-  const [devCredentials, setDevCredentials] = useState<DevCredentialsPayload | null>(null);
+  const [showDevCredentials, setShowDevCredentials] = useState(true);
+  const [devCredentials, setDevCredentials] = useState<{
+    defaultPassword?: string;
+    accounts: DevAccountItem[];
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
     api.getDevCredentials().then((res) => {
-      if (active && res.status === 200 && res.data?.users?.length) {
-        setDevCredentials(res.data);
+      const payload = res.data as DevCredentialsPayload | undefined;
+      const list = payload?.accounts || payload?.users || [];
+      if (active && res.status === 200 && list.length > 0) {
+        setDevCredentials({
+          defaultPassword: payload?.defaultPassword,
+          accounts: list,
+        });
       }
     }).catch(() => {
       // Endpoint indisponível em produção (HTTP 404) — manter oculto
@@ -50,14 +67,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    if (!email || !password) {
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail || !password) {
       setErrorMessage('Por favor, informe o e-mail e a senha.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const result = await login(email, password);
+      const result = await login(normalizedEmail, password);
       if (!result.success) {
         setErrorMessage(result.error || 'Credenciais inválidas.');
       }
@@ -200,7 +218,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
           </form>
 
           {/* Quick Credential Helper (Only rendered when backend exposes dev-only endpoint) */}
-          {devCredentials && devCredentials.users && devCredentials.users.length > 0 && (
+          {devCredentials && devCredentials.accounts.length > 0 && (
             <div className="mt-6 pt-5 border-t border-slate-800">
               <button
                 type="button"
@@ -219,8 +237,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
               {showDevCredentials && (
                 <div className="mt-3 space-y-2 animate-fadeIn">
                   <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 text-[11px] text-slate-400">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-slate-300 font-semibold">Credenciais de Teste (Dev):</span>
+                    <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                      <span className="text-slate-300 font-semibold">Clique em um perfil para preencher:</span>
                       {devCredentials.defaultPassword && (
                         <span className="font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800/60">
                           Senha: {devCredentials.defaultPassword}
@@ -228,7 +246,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
                       )}
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
-                      {devCredentials.users.map((u) => (
+                      {devCredentials.accounts.map((u) => (
                         <button
                           key={u.email}
                           type="button"
@@ -236,8 +254,13 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
                           className="text-left p-2 rounded-lg bg-slate-900 hover:bg-slate-800/80 border border-slate-800 hover:border-blue-700/60 transition-all cursor-pointer group"
                         >
                           <div className="font-medium text-slate-200 group-hover:text-blue-300 truncate text-[11px]">
-                            {u.fullName}
+                            {u.name || u.fullName || u.role}
                           </div>
+                          {u.description && (
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {u.description}
+                            </div>
+                          )}
                           <div className="text-[10px] font-mono text-slate-500 truncate">
                             {u.email}
                           </div>
