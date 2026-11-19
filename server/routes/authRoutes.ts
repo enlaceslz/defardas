@@ -11,6 +11,7 @@ import { PasswordService } from '../auth/passwordService';
 import { auditService } from '../services/auditService';
 import { authRateLimiter, passwordRecoveryRateLimiter } from '../middleware/rateLimiter';
 import { CSRF_COOKIE_NAME, generateCsrfToken } from '../middleware/csrf';
+import { db } from '../db/connection';
 
 export const authRouter = Router();
 
@@ -46,6 +47,15 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
 
   if (!email || !password) {
     return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
+  }
+
+  await db.ensureReady();
+  if (isProd && !db.isConnected()) {
+    return res.status(503).json({
+      error:
+        'Banco de dados PostgreSQL não conectado em produção. Configure a variável DATABASE_URL no ambiente e execute as migrações Drizzle (npm run db:migrate).',
+      code: 'DATABASE_UNAVAILABLE',
+    });
   }
 
   const user = await userRepository.findByEmail(email);
@@ -91,8 +101,8 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
     return res.status(401).json({ error: 'Credenciais inválidas. Verifique seu e-mail e senha.' });
   }
 
-  // Criação de sessão segura
-  const session = sessionStore.createSession(
+  // Criação de sessão segura com persistência garantida em PostgreSQL (compatível com serverless)
+  const session = await sessionStore.createSessionAsync(
     {
       id: user.id,
       fullName: user.fullName,
@@ -152,10 +162,10 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
  * POST /api/auth/logout
  * Encerra a sessão e remove o cookie HttpOnly
  */
-authRouter.post('/logout', requireAuth, (req: RequestWithUser, res: Response) => {
+authRouter.post('/logout', requireAuth, async (req: RequestWithUser, res: Response) => {
   const token = req.sessionToken;
   if (token) {
-    sessionStore.destroySession(token);
+    await sessionStore.destroySessionAsync(token);
   }
 
   res.clearCookie('defardas_session', { path: '/' });
@@ -328,10 +338,10 @@ authRouter.post('/switch-role', requireAuth, async (req: RequestWithUser, res: R
 
   // Atualiza sessão atual
   if (req.sessionToken) {
-    sessionStore.destroySession(req.sessionToken);
+    await sessionStore.destroySessionAsync(req.sessionToken);
   }
 
-  const newSession = sessionStore.createSession(
+  const newSession = await sessionStore.createSessionAsync(
     {
       id: targetUser.id,
       fullName: targetUser.fullName,

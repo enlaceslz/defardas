@@ -28,10 +28,15 @@ class SessionStore {
     setInterval(() => this.cleanupExpired(), 30 * 60 * 1000).unref();
   }
 
+  private get hasDatabaseUrl(): boolean {
+    return Boolean(process.env.DATABASE_URL);
+  }
+
   /**
    * Carrega sessões ativas do PostgreSQL para a memória durante inicialização do processo
    */
   public async loadActiveSessionsFromDb(): Promise<void> {
+    if (!this.hasDatabaseUrl) return;
     try {
       const res = await pool.query<{
         token: string;
@@ -92,13 +97,54 @@ class SessionStore {
 
     this.sessions.set(token, record);
 
-    // Persistência assíncrona no PostgreSQL
-    pool.query(
-      `INSERT INTO core.sessions (token, user_id, user_role, user_full_name, user_email, created_at, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (token) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-      [token, user.id, user.role, user.fullName, user.email, now, expiresAt, ipAddress || null, userAgent || null]
-    ).catch(() => {});
+    if (this.hasDatabaseUrl) {
+      // Persistência assíncrona no PostgreSQL
+      pool.query(
+        `INSERT INTO core.sessions (token, user_id, user_role, user_full_name, user_email, created_at, expires_at, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (token) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
+        [token, user.id, user.role, user.fullName, user.email, now, expiresAt, ipAddress || null, userAgent || null]
+      ).catch(() => {});
+    }
+
+    return record;
+  }
+
+  /**
+   * Cria nova sessão aguardando a gravação no PostgreSQL (obrigatório em ambientes serverless como Vercel)
+   */
+  public async createSessionAsync(
+    user: AuthenticatedUser,
+    ipAddress?: string,
+    userAgent?: string
+  ): Promise<SessionRecord> {
+    const token = crypto.randomBytes(32).toString('hex');
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + this.SESSION_DURATION_MS);
+
+    const record: SessionRecord = {
+      token,
+      user,
+      createdAt: now,
+      expiresAt,
+      ipAddress,
+      userAgent,
+    };
+
+    this.sessions.set(token, record);
+
+    if (this.hasDatabaseUrl) {
+      try {
+        await pool.query(
+          `INSERT INTO core.sessions (token, user_id, user_role, user_full_name, user_email, created_at, expires_at, ip_address, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (token) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
+          [token, user.id, user.role, user.fullName, user.email, now, expiresAt, ipAddress || null, userAgent || null]
+        );
+      } catch (err) {
+        console.warn('[AUTH] Falha ao persistir sessão no PostgreSQL:', err);
+      }
+    }
 
     return record;
   }
@@ -114,7 +160,9 @@ class SessionStore {
     // Verificar expiração
     if (new Date() > session.expiresAt) {
       this.sessions.delete(token);
-      pool.query(`DELETE FROM core.sessions WHERE token = $1`, [token]).catch(() => {});
+      if (this.hasDatabaseUrl) {
+        pool.query(`DELETE FROM core.sessions WHERE token = $1`, [token]).catch(() => {});
+      }
       return null;
     }
 
@@ -128,6 +176,7 @@ class SessionStore {
     if (!token) return null;
     const cached = this.getSession(token);
     if (cached) return cached;
+    if (!this.hasDatabaseUrl) return null;
 
     try {
       const res = await pool.query<{
@@ -179,7 +228,25 @@ class SessionStore {
   public destroySession(token: string): boolean {
     if (!token) return false;
     const deleted = this.sessions.delete(token);
-    pool.query(`DELETE FROM core.sessions WHERE token = $1`, [token]).catch(() => {});
+    if (this.hasDatabaseUrl) {
+      pool.query(`DELETE FROM core.sessions WHERE token = $1`, [token]).catch(() => {});
+    }
+    return deleted;
+  }
+
+  /**
+   * Destrói sessão aguardando a remoção no PostgreSQL (serverless)
+   */
+  public async destroySessionAsync(token: string): Promise<boolean> {
+    if (!token) return false;
+    const deleted = this.sessions.delete(token);
+    if (this.hasDatabaseUrl) {
+      try {
+        await pool.query(`DELETE FROM core.sessions WHERE token = $1`, [token]);
+      } catch {
+        // Ignorar se banco offline
+      }
+    }
     return deleted;
   }
 
@@ -194,7 +261,9 @@ class SessionStore {
         count++;
       }
     }
-    pool.query(`DELETE FROM core.sessions WHERE user_id = $1`, [userId]).catch(() => {});
+    if (this.hasDatabaseUrl) {
+      pool.query(`DELETE FROM core.sessions WHERE user_id = $1`, [userId]).catch(() => {});
+    }
     return count;
   }
 
@@ -208,7 +277,9 @@ class SessionStore {
         this.sessions.delete(token);
       }
     }
-    pool.query(`DELETE FROM core.sessions WHERE expires_at <= NOW()`).catch(() => {});
+    if (this.hasDatabaseUrl) {
+      pool.query(`DELETE FROM core.sessions WHERE expires_at <= NOW()`).catch(() => {});
+    }
   }
 
   /**

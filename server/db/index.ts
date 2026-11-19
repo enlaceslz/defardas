@@ -33,10 +33,12 @@ function createPgPool(): pg.Pool {
     }
   }
 
+  const defaultPoolMax = process.env.VERCEL ? '5' : '20';
+
   return new Pool({
     connectionString: connectionString || undefined,
     ssl: sslConfig || undefined,
-    max: parseInt(process.env.DATABASE_POOL_MAX || '20', 10),
+    max: parseInt(process.env.DATABASE_POOL_MAX || defaultPoolMax, 10),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
   });

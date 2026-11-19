@@ -22,6 +22,7 @@ import { pool, db as drizzleDb } from './index';
 export class DatabaseManager {
   private pgPool: pg.Pool = pool;
   private isConnectedToPostgres: boolean = false;
+  private readyPromise: Promise<void>;
 
   // Repositórios em memória transacionais com integridade referencial
   public clients: Map<string, ClientEntity> = new Map();
@@ -36,7 +37,11 @@ export class DatabaseManager {
   public messages: Map<string, any> = new Map();
 
   constructor() {
-    this.initDatabase();
+    this.readyPromise = this.initDatabase();
+  }
+
+  public async ensureReady(): Promise<void> {
+    await this.readyPromise;
   }
 
   private async initDatabase() {
