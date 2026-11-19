@@ -28,7 +28,11 @@ Em ambiente `NODE_ENV=production` (padrão da Vercel), os seeds locais e o fallb
    ```bash
    DATABASE_URL="postgresql://usuario:senha@host:5432/defardas_erp?sslmode=require" npm run db:migrate
    ```
-3. Cadastre ao menos o usuário administrador inicial em `core.users` com hash `bcrypt` (12 rounds) — nunca utilize senhas padrão de desenvolvimento em produção.
+3. Crie o usuário administrador inicial em `core.users` com hash `bcrypt` (12 rounds) executando o CLI seguro do repositório:
+   ```bash
+   DATABASE_URL="postgresql://usuario:senha@host:5432/defardas_erp?sslmode=require" npm run db:create-admin
+   ```
+   *(Suporta modo interativo com senha oculta ou flags `--name`, `--email`, `--password`, `--role` e `--reset`.)*
 
 ---
 
