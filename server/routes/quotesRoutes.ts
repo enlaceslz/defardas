@@ -30,7 +30,7 @@ quotesRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
 });
 
 // Criar nova proposta comercial
-quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
+quotesRouter.post('/', requirePermission('quotes:create'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const payload = req.body;
 
@@ -42,36 +42,49 @@ quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
   }
 
   // 2. Processar itens através do motor de cálculo de markup (Correção P1-007: suporte estrito a 0 via ??)
-  const processedItems: QuoteItemEntity[] = (payload.items || []).map((it: any) => {
+  const rawItems = Array.isArray(payload.items) ? payload.items : [];
+  if (rawItems.length === 0) {
+    return res.status(400).json({ error: 'A proposta comercial deve conter ao menos um item.' });
+  }
+
+  const processedItems: QuoteItemEntity[] = rawItems.map((it: any) => {
+    const materialUnitCost = Math.max(0, Number(it.costBreakdown?.materialUnitCost ?? it.materialUnitCost ?? 0));
+    const outsourcedSewingUnitCost = Math.max(0, Number(it.costBreakdown?.outsourcedSewingUnitCost ?? it.outsourcedSewingUnitCost ?? 0));
+    const customizationUnitCost = Math.max(0, Number(it.costBreakdown?.customizationUnitCost ?? it.customizationUnitCost ?? 0));
+    const freightUnitCost = Math.max(0, Number(it.costBreakdown?.freightPerUnit ?? it.freightUnitCost ?? 0));
+    const technicalLossPercentage = Math.max(0, Number(it.costBreakdown?.technicalLossPercentage ?? it.technicalLossPercentage ?? 2.0));
+    const markupPercentage = Math.max(0, Number(it.costBreakdown?.markupPercentage ?? it.markupPercentage ?? 50.0));
+    const totalQuantity = Math.max(1, Number(it.totalQuantity ?? 1));
+
     const pricing = PricingEngine.calculateItemPricing({
-      materialUnitCost: it.costBreakdown?.materialUnitCost ?? it.materialUnitCost ?? 0,
-      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost ?? it.outsourcedSewingUnitCost ?? 0,
-      customizationUnitCost: it.costBreakdown?.customizationUnitCost ?? it.customizationUnitCost ?? 0,
-      freightUnitCost: it.costBreakdown?.freightPerUnit ?? it.freightUnitCost ?? 0,
-      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage ?? it.technicalLossPercentage ?? 2.0,
-      markupPercentage: it.costBreakdown?.markupPercentage ?? it.markupPercentage ?? 50.0,
+      materialUnitCost,
+      outsourcedSewingUnitCost,
+      customizationUnitCost,
+      freightUnitCost,
+      technicalLossPercentage,
+      markupPercentage,
       negotiatedUnitPrice: it.unitFinalPrice ?? it.negotiatedUnitPrice,
     });
 
     return {
-      id: it.id || crypto.randomUUID(),
+      id: (typeof it.id === 'string' && /^[0-9a-f-]{36}$/i.test(it.id)) ? it.id : crypto.randomUUID(),
       quoteId: '',
       category: it.category || 'polos',
       modelName: it.modelName || 'Uniforme Profissional',
       fabricName: it.fabricName || 'Padrão DE FARDAS',
       fabricColor: it.fabricColor || 'Padrão',
       sizes: it.sizes || { pp: 0, p: 0, m: 0, g: 0, gg: 0, xg: 0, exg: 0, sobMedida: 0 },
-      totalQuantity: it.totalQuantity || 1,
-      materialUnitCost: pricing.directUnitCost,
-      outsourcedSewingUnitCost: it.costBreakdown?.outsourcedSewingUnitCost ?? 0,
-      customizationUnitCost: it.costBreakdown?.customizationUnitCost ?? 0,
-      freightUnitCost: it.costBreakdown?.freightPerUnit ?? 0,
-      technicalLossPercentage: it.costBreakdown?.technicalLossPercentage ?? 2.0,
+      totalQuantity,
+      materialUnitCost,
+      outsourcedSewingUnitCost,
+      customizationUnitCost,
+      freightUnitCost,
+      technicalLossPercentage,
       calculatedBaseUnitCost: pricing.calculatedBaseUnitCost,
-      markupPercentage: it.costBreakdown?.markupPercentage ?? 50.0,
+      markupPercentage,
       suggestedUnitPrice: pricing.suggestedUnitPrice,
       negotiatedUnitPrice: pricing.negotiatedUnitPrice,
-      totalItemPrice: Math.round(pricing.negotiatedUnitPrice * (it.totalQuantity || 1) * 100) / 100,
+      totalItemPrice: Math.round(pricing.negotiatedUnitPrice * totalQuantity * 100) / 100,
       customizations: it.customizations || [],
     };
   });
@@ -117,10 +130,13 @@ quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
     }
   }
 
-  const quoteId = `quote-${Date.now()}`;
-  const quoteNumber = sequenceService.nextQuoteNumber();
+  const quoteId = crypto.randomUUID();
+  const quoteNumber = await sequenceService.nextQuoteNumberAsync();
   const entryAmount = Math.round((negotiatedTotalAmount * 0.5) * 100) / 100;
-  const balanceAmount = negotiatedTotalAmount - entryAmount;
+  const balanceAmount = Math.round((negotiatedTotalAmount - entryAmount) * 100) / 100;
+  const effectiveMarkupPercentage = totalBaseCost > 0
+    ? Math.round(((suggestedTotalAmount - totalBaseCost) / totalBaseCost) * 10000) / 100
+    : (processedItems[0]?.markupPercentage ?? 50.0);
 
   const newQuote: QuoteEntity = {
     id: quoteId,
@@ -135,7 +151,7 @@ quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
     date: payload.date || new Date().toISOString().split('T')[0],
     validUntil: payload.validUntil || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
     totalBaseCost,
-    markupPercentage: 50.0,
+    markupPercentage: effectiveMarkupPercentage,
     suggestedTotalAmount,
     negotiatedTotalAmount,
     discountAmount,
@@ -186,14 +202,35 @@ quotesRouter.post('/', async (req: RequestWithUser, res: Response) => {
 });
 
 // Atualizar status comercial
-quotesRouter.patch('/:id/status', async (req: RequestWithUser, res: Response) => {
+const VALID_COMMERCIAL_STATUSES = new Set([
+  'rascunho',
+  'enviado',
+  'em_negociacao',
+  'aprovado',
+  'recusado',
+  'cancelado',
+]);
+
+quotesRouter.patch('/:id/status', requirePermission('quotes:edit'), async (req: RequestWithUser, res: Response) => {
   const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
   }
 
+  if (quote.isLocked || quote.commercialStatus === 'convertido_em_pedido') {
+    return res.status(409).json({
+      error: 'Proposta bloqueada: Propostas já convertidas em Ordem de Produção não podem ter seu status comercial alterado.',
+    });
+  }
+
   const oldStatus = quote.commercialStatus;
   const newStatus = req.body.status;
+  if (!newStatus || !VALID_COMMERCIAL_STATUSES.has(newStatus)) {
+    return res.status(400).json({
+      error: `Status comercial inválido. Valores permitidos: ${Array.from(VALID_COMMERCIAL_STATUSES).join(', ')}.`,
+    });
+  }
+
   quote.commercialStatus = newStatus;
   quote.updatedAt = new Date().toISOString();
 
@@ -215,7 +252,7 @@ quotesRouter.patch('/:id/status', async (req: RequestWithUser, res: Response) =>
 });
 
 // Conversão IDEMPOTENTE de Orçamento em Pedido / Ordem de Produção (Regra B.2.2 & Gate A.3.2)
-quotesRouter.post('/:id/convert-to-order', async (req: RequestWithUser, res: Response) => {
+quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_order'), async (req: RequestWithUser, res: Response) => {
   const quote = await quoteRepository.findById(req.params.id);
   if (!quote) {
     return res.status(404).json({ error: 'Orçamento não encontrado' });
@@ -237,7 +274,7 @@ quotesRouter.post('/:id/convert-to-order', async (req: RequestWithUser, res: Res
     });
   }
 
-  const orderNumber = sequenceService.nextOrderNumber();
+  const orderNumber = await sequenceService.nextOrderNumberAsync();
   const orderId = crypto.randomUUID();
   const firstItem = quote.items[0] || {
     modelName: 'Fardamento Confeccionado',
@@ -286,7 +323,7 @@ quotesRouter.post('/:id/convert-to-order', async (req: RequestWithUser, res: Res
   await orderRepository.save(newOrder);
 
   // Lançamentos Financeiros Idempotentes: Sinal de 50% + Saldo na Entrega
-  const finSinalNumber = sequenceService.nextFinanceNumber();
+  const finSinalNumber = await sequenceService.nextFinanceNumberAsync();
   const finSinal: FinancialTransactionEntity = {
     id: crypto.randomUUID(),
     transactionNumber: finSinalNumber,
@@ -306,7 +343,7 @@ quotesRouter.post('/:id/convert-to-order', async (req: RequestWithUser, res: Res
     updatedAt: new Date().toISOString(),
   };
 
-  const finSaldoNumber = sequenceService.nextFinanceNumber();
+  const finSaldoNumber = await sequenceService.nextFinanceNumberAsync();
   const finSaldo: FinancialTransactionEntity = {
     id: crypto.randomUUID(),
     transactionNumber: finSaldoNumber,

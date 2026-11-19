@@ -32,7 +32,7 @@ interface ProductionOrdersViewProps {
   onDeleteOrder: (orderId: string) => void;
   onUpdateOrderStage: (orderId: string, nextStage: OperationalStage) => void;
   onOpenPrintTicket: (order: ProductionOrder) => void;
-  onConfirmEntryPayment?: (orderId: string) => void;
+  onGoToFinanceForPayment?: () => void;
   onApproveArt?: (orderId: string) => void;
 }
 
@@ -43,7 +43,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
   onDeleteOrder,
   onUpdateOrderStage,
   onOpenPrintTicket,
-  onConfirmEntryPayment,
+  onGoToFinanceForPayment,
   onApproveArt,
 }) => {
   const [viewMode, setViewMode] = useState<'kanban' | 'table'>('kanban');
@@ -90,11 +90,13 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
 
   // Filter orders
   const filteredOrders = orders.filter((order) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch = 
-      order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.itemTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.fabricName.toLowerCase().includes(searchQuery.toLowerCase());
+      order.id.toLowerCase().includes(q) ||
+      (order.orderNumber || '').toLowerCase().includes(q) ||
+      order.clientName.toLowerCase().includes(q) ||
+      order.itemTitle.toLowerCase().includes(q) ||
+      order.fabricName.toLowerCase().includes(q);
 
     const matchesPriority = priorityFilter === 'all' || order.priority === priorityFilter;
     const matchesStage = stageFilter === 'all' || order.stage === stageFilter;
@@ -249,7 +251,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                             {/* Card Top: Code + Priority */}
                             <div className="flex items-center justify-between">
                               <span className="font-mono font-bold text-slate-900 text-[11px]">
-                                {order.id}
+                                {order.orderNumber || order.id}
                               </span>
                               <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${priorityInfo.bg} ${priorityInfo.text}`}>
                                 {priorityInfo.label}
@@ -274,25 +276,25 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                                   <span>Produção Bloqueada:</span>
                                 </div>
                                 {!order.entryPaymentConfirmed && (
-                                  <div className="text-rose-700 flex justify-between items-center">
-                                    <span>• Aguarda confirmação do sinal</span>
-                                    {onConfirmEntryPayment && (
+                                  <div className="text-rose-700 flex justify-between items-center gap-1">
+                                    <span>• Aguarda sinal (50%)</span>
+                                    {onGoToFinanceForPayment && (
                                       <button
-                                        onClick={() => onConfirmEntryPayment(order.id)}
-                                        className="text-[9px] font-bold underline cursor-pointer text-rose-900"
+                                        onClick={() => onGoToFinanceForPayment()}
+                                        className="text-[9px] font-bold underline cursor-pointer text-rose-900 shrink-0"
                                       >
-                                        Confirmar Sinal
+                                        Ir ao Financeiro
                                       </button>
                                     )}
                                   </div>
                                 )}
                                 {!order.artApproved && (
-                                  <div className="text-rose-700 flex justify-between items-center">
+                                  <div className="text-rose-700 flex justify-between items-center gap-1">
                                     <span>• Aguarda aprovação da arte</span>
                                     {onApproveArt && (
                                       <button
                                         onClick={() => onApproveArt(order.id)}
-                                        className="text-[9px] font-bold underline cursor-pointer text-rose-900"
+                                        className="text-[9px] font-bold underline cursor-pointer text-rose-900 shrink-0"
                                       >
                                         Aprovar Arte
                                       </button>
@@ -416,7 +418,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                   return (
                     <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                        {order.id}
+                        {order.orderNumber || order.id}
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-900">{order.clientName}</div>
@@ -455,13 +457,19 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                           </button>
                           {nextStage && (
                             <button
-                              onClick={() => onUpdateOrderStage(order.id, nextStage)}
-                              disabled={order.stage === 'aguardando_liberacao' && isBlocked}
-                              className={`px-2 py-1 text-[11px] font-semibold rounded transition-colors ${
+                              onClick={() => {
+                                if (order.stage === 'aguardando_liberacao' && isBlocked) {
+                                  setGateModalOrder(order);
+                                  return;
+                                }
+                                onUpdateOrderStage(order.id, nextStage);
+                              }}
+                              className={`px-2 py-1 text-[11px] font-semibold rounded transition-colors cursor-pointer ${
                                 order.stage === 'aguardando_liberacao' && isBlocked
-                                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                  : 'text-white bg-blue-600 hover:bg-blue-500 cursor-pointer'
+                                  ? 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                                  : 'text-white bg-blue-600 hover:bg-blue-500'
                               }`}
+                              title={order.stage === 'aguardando_liberacao' && isBlocked ? 'Ver pendências do Gate A.3.2' : undefined}
                             >
                               Avançar
                             </button>
@@ -498,7 +506,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                 <ShieldAlert className="w-5 h-5 text-rose-400" />
                 <div>
                   <h3 className="text-base font-bold">Portão Fabril Bloqueado (Gate A.3.2)</h3>
-                  <p className="text-[11px] text-slate-400">{gateModalOrder.orderNumber} · {gateModalOrder.clientName}</p>
+                  <p className="text-[11px] text-slate-400">{gateModalOrder.orderNumber || gateModalOrder.id} · {gateModalOrder.clientName}</p>
                 </div>
               </div>
               <button
@@ -534,18 +542,18 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                     <p className="text-[11px] text-slate-600">
                       {gateModalOrder.entryPaymentConfirmed
                         ? `Sinal liquidado com comprovante autenticado.`
-                        : 'Aguardando quitação do sinal no Financeiro com registro do comprovante bancário.'}
+                        : 'Aguardando quitação do sinal no Financeiro com registro de comprovante bancário e evidência auditável.'}
                     </p>
                   </div>
-                  {!gateModalOrder.entryPaymentConfirmed && onConfirmEntryPayment && (
+                  {!gateModalOrder.entryPaymentConfirmed && onGoToFinanceForPayment && (
                     <button
                       onClick={() => {
-                        onConfirmEntryPayment(gateModalOrder.id);
                         setGateModalOrder(null);
+                        onGoToFinanceForPayment();
                       }}
                       className="px-2.5 py-1 bg-amber-600 text-white font-semibold rounded text-[11px] hover:bg-amber-500 transition-colors shrink-0 cursor-pointer"
                     >
-                      Confirmar Sinal
+                      Ir ao Financeiro
                     </button>
                   )}
                 </div>

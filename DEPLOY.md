@@ -46,9 +46,14 @@ S3_ACCESS_KEY_ID=CHAVE_DE_ACESSO_S3
 S3_SECRET_ACCESS_KEY=CHAVE_SECRETA_S3
 S3_FORCE_PATH_STYLE=true
 
-# Segurança e Sessão
+# Segurança, Sessão e Webhooks WhatsApp
 SESSION_SECRET=CHAVE_CRIPTOGRAFICA_MINIMO_32_CARACTERES
-JWT_SECRET=CHAVE_JWT_ALEATORIA_LONGA
+META_WA_TOKEN=EAAG...
+META_WA_PHONE_NUMBER_ID=
+META_WA_WEBHOOK_VERIFY_TOKEN=TOKEN_VERIFICACAO_META
+META_WA_APP_SECRET=SEGREDO_HMAC_APP_META
+WA_AKG_ENDPOINT=http://127.0.0.1:8080
+WA_AKG_API_KEY=CHAVE_SECRETA_WA_AKG
 
 # Inteligência e Assistência IA (Opcional - Chave Gemini API)
 GEMINI_API_KEY=AIzaSy...
@@ -62,17 +67,18 @@ GEMINI_API_KEY=AIzaSy...
 
 ### 3.1. Clonagem e Instalação de Dependências
 ```bash
-# Clonar repositório privado
-git clone git@github.com:defardas/defardas-erp.git /var/www/defardas-erp
+# Clonar repositório oficial
+git clone https://github.com/enlaceslz/defardas.git /var/www/defardas-erp
 cd /var/www/defardas-erp
 
-# Instalar dependências de produção
+# Instalar dependências
 npm ci
 ```
 
-### 3.2. Validação e Testes Estáticos
-Antes de gerar o build, execute a validação de tipagem e integridade:
+### 3.2. Migrações do Banco (Drizzle ORM) e Validação Estática
+Antes de iniciar o servidor, aplique as migrações no PostgreSQL e valide a tipagem:
 ```bash
+npm run db:migrate
 npm run lint
 ```
 
@@ -80,7 +86,7 @@ npm run lint
 ```bash
 npm run build
 ```
-O comando gerará os artefatos otimizados e minificados no diretório `dist/`.
+O comando gerará os artefatos otimizados e minificados no diretório `dist/`. Para implantação containerizada (recomendada), consulte [`docs/DOCKER_DEPLOY.md`](./docs/DOCKER_DEPLOY.md).
 
 ### 3.4. Inicialização com Gerenciador de Processos (PM2)
 Recomenda-se utilizar o PM2 para garantir reinicialização automática e monitoramento:
@@ -187,8 +193,10 @@ pg_restore -U defardas_user -h 127.0.0.1 -d defardas_db_teste "/var/backups/defa
 ## 6. Checklist de Homologação Pré-Go-Live
 
 Antes de liberar o acesso geral aos operadores da fábrica:
-- [ ] Conexão segura HTTPS com certificado SSL válido A+ (Qualys SSL Labs).
-- [ ] Banco de dados PostgreSQL com acesso restrito a `localhost` ou VPN interna.
-- [ ] Backup automático via cron configurado e teste de restauração concluído com sucesso.
-- [ ] Criação de contas de usuários com permissões específicas de perfil (Administrador, Vendas, PCP, Financeiro).
+- [ ] Conexão segura HTTPS com certificado SSL válido A+ (Qualys SSL Labs) e `trust proxy` preservado.
+- [ ] `NODE_ENV=production` ativo (confirmar que `/api/auth/dev-credentials` retorna `404` e `GET /api/health` responde `200`).
+- [ ] Banco de dados PostgreSQL com migrações Drizzle aplicadas (`npm run db:migrate`) e acesso restrito à rede interna.
+- [ ] `META_WA_APP_SECRET` e/ou `WA_AKG_API_KEY` configurados para verificação criptográfica de webhooks.
+- [ ] Backup automático (`scripts/backup.sh`) configurado via cron e teste de restauração (`scripts/restore.sh`) concluído.
+- [ ] Contas reais de usuários criadas com perfis RBAC específicos (Administrador, Gerente Comercial, Vendas, PCP, Financeiro, Qualidade/Expedição).
 - [ ] Dados da empresa em *Configurações* conferidos com CNPJ e endereço de São Luís - MA.

@@ -19,15 +19,19 @@ interface FinancialViewProps {
   transactions: FinancialTransaction[];
   onSaveTransaction: (trx: FinancialTransaction) => void;
   onDeleteTransaction: (trxId: string) => void;
-  onToggleStatus: (trxId: string) => void;
-  onConfirmPaymentWithVoucher?: (trxId: string, voucherNumber: string, notes: string) => void;
+  onToggleStatus?: (trxId: string) => void;
+  onConfirmPaymentWithVoucher?: (
+    trxId: string,
+    voucherNumber: string,
+    evidenceUrl: string,
+    notes: string
+  ) => Promise<boolean> | void;
 }
 
 export const FinancialView: React.FC<FinancialViewProps> = ({
   transactions,
   onSaveTransaction,
   onDeleteTransaction,
-  onToggleStatus,
   onConfirmPaymentWithVoucher,
 }) => {
   const [typeFilter, setTypeFilter] = useState<'all' | 'receber' | 'pagar'>('all');
@@ -37,7 +41,10 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   // Voucher Confirmation Modal
   const [selectedTrxForVoucher, setSelectedTrxForVoucher] = useState<FinancialTransaction | null>(null);
   const [voucherNumber, setVoucherNumber] = useState('');
+  const [receiptEvidenceUrl, setReceiptEvidenceUrl] = useState('');
   const [voucherNotes, setVoucherNotes] = useState('');
+  const [voucherError, setVoucherError] = useState('');
+  const [isConfirmingVoucher, setIsConfirmingVoucher] = useState(false);
 
   // Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -49,11 +56,14 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<FinancialTransaction['paymentMethod']>('boleto');
 
   const filtered = transactions.filter((t) => {
+    const q = searchQuery.toLowerCase();
     const matchesType = typeFilter === 'all' || t.type === typeFilter;
     const matchesStatus = statusFilter === 'all' || t.status === statusFilter;
     const matchesSearch = 
-      t.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.category.toLowerCase().includes(searchQuery.toLowerCase());
+      t.description.toLowerCase().includes(q) ||
+      t.category.toLowerCase().includes(q) ||
+      (t.transactionNumber || '').toLowerCase().includes(q) ||
+      (t.receiptVoucherNumber || '').toLowerCase().includes(q);
     return matchesType && matchesStatus && matchesSearch;
   });
 
@@ -266,9 +276,10 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                     </td>
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-900">{t.description}</div>
-                      {t.referenceId && (
-                        <div className="text-[11px] text-slate-400 font-mono">Ref: {t.referenceId}</div>
-                      )}
+                      <div className="text-[11px] text-slate-400 font-mono flex flex-wrap gap-2">
+                        <span>{t.transactionNumber || t.id}</span>
+                        {t.receiptVoucherNumber && <span className="text-emerald-700">Comprovante: {t.receiptVoucherNumber}</span>}
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-slate-600">{t.category}</td>
                     <td className="py-3 px-4 font-mono text-slate-700">
@@ -283,26 +294,30 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                       </span>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <button
-                        onClick={() => {
-                          if (!isPaid) {
+                      {isPaid ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800"
+                          title={t.receiptVoucherNumber ? `Liquidado · Comprovante ${t.receiptVoucherNumber}` : 'Título liquidado'}
+                        >
+                          <CheckCircle className="w-3 h-3" />
+                          <span>Liquidado</span>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => {
                             setSelectedTrxForVoucher(t);
-                            setVoucherNumber(`COMPR-PIX-${Date.now().toString().slice(-6)}`);
-                            setVoucherNotes('Comprovante bancário conferido via extrato.');
-                          } else {
-                            onToggleStatus(t.id);
-                          }
-                        }}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer transition-colors ${
-                          isPaid
-                            ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                            : 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                        }`}
-                        title={isPaid ? 'Liquidado com comprovante (Clique para alterar)' : 'Clique para anexar comprovante e liquidar'}
-                      >
-                        {isPaid ? <CheckCircle className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
-                        <span>{isPaid ? 'Liquidado' : 'Pendente'}</span>
-                      </button>
+                            setVoucherNumber('');
+                            setReceiptEvidenceUrl('');
+                            setVoucherNotes('');
+                            setVoucherError('');
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer transition-colors bg-amber-100 text-amber-800 hover:bg-amber-200"
+                          title="Clique para anexar comprovante bancário e liquidar"
+                        >
+                          <Clock className="w-3 h-3" />
+                          <span>Pendente</span>
+                        </button>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
@@ -453,14 +468,30 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
             </div>
 
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
-                if (onConfirmPaymentWithVoucher) {
-                  onConfirmPaymentWithVoucher(selectedTrxForVoucher.id, voucherNumber, voucherNotes);
-                } else {
-                  onToggleStatus(selectedTrxForVoucher.id);
+                if (!voucherNumber.trim() || voucherNumber.trim().length < 4) {
+                  setVoucherError('Informe o código/autenticação real do comprovante bancário (mínimo 4 caracteres).');
+                  return;
                 }
-                setSelectedTrxForVoucher(null);
+                if (!receiptEvidenceUrl.trim() || receiptEvidenceUrl.trim().length < 5) {
+                  setVoucherError('Informe a URL ou chave S3 da evidência do comprovante (obrigatório pelo Gate A.3.2).');
+                  return;
+                }
+                setVoucherError('');
+                if (onConfirmPaymentWithVoucher) {
+                  setIsConfirmingVoucher(true);
+                  const result = await onConfirmPaymentWithVoucher(
+                    selectedTrxForVoucher.id,
+                    voucherNumber.trim(),
+                    receiptEvidenceUrl.trim(),
+                    voucherNotes.trim()
+                  );
+                  setIsConfirmingVoucher(false);
+                  if (result !== false) {
+                    setSelectedTrxForVoucher(null);
+                  }
+                }
               }}
               className="p-6 space-y-4 text-xs"
             >
@@ -474,10 +505,16 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 </div>
                 {selectedTrxForVoucher.subType === 'entrada_pedido' && (
                   <div className="text-[11px] font-bold text-blue-700 pt-1">
-                    ★ Este título é o sinal de 50%. A liquidação liberará o portão de corte da Ordem de Produção!
+                    ★ Este título é o sinal de 50%. A liquidação liberará o requisito financeiro do Portão Fabril (Gate A.3.2).
                   </div>
                 )}
               </div>
+
+              {voucherError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg font-medium">
+                  {voucherError}
+                </div>
+              )}
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
@@ -488,7 +525,21 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                   required
                   value={voucherNumber}
                   onChange={(e) => setVoucherNumber(e.target.value)}
-                  placeholder="Ex: AUT-PIX-849102"
+                  placeholder="Ex: AUT-PIX-849102 ou E2EID do extrato"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 font-mono text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  URL ou Chave Privada (S3) da Evidência do Comprovante *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={receiptEvidenceUrl}
+                  onChange={(e) => setReceiptEvidenceUrl(e.target.value)}
+                  placeholder="Ex: s3://defardas-docs/comprovantes/2026/pix-849102.pdf"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 font-mono text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 />
               </div>
@@ -501,6 +552,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                   rows={2}
                   value={voucherNotes}
                   onChange={(e) => setVoucherNotes(e.target.value)}
+                  placeholder="Ex: Conferido no extrato bancário conta PJ DE FARDAS."
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 />
               </div>
@@ -515,9 +567,10 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-500 transition-colors shadow-xs cursor-pointer"
+                  disabled={isConfirmingVoucher}
+                  className="px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-500 disabled:opacity-60 transition-colors shadow-xs cursor-pointer"
                 >
-                  Confirmar e Liquidar
+                  {isConfirmingVoucher ? 'Validando...' : 'Confirmar e Liquidar'}
                 </button>
               </div>
             </form>

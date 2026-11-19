@@ -28,6 +28,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
   const [artApproved, setArtApproved] = useState(false);
   const [whatsAppContact, setWhatsAppContact] = useState(clients[0]?.phone || '(98) 98135-4130');
   const [notes, setNotes] = useState('Proposta inclui prova de tamanho e amostra física de cor antes do corte. Frete CIF incluso para São Luís e região metropolitana.');
+  const [formError, setFormError] = useState('');
 
   // Items list with PRD Cost Decomposition
   const [items, setItems] = useState<QuoteItem[]>([
@@ -191,14 +192,15 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
 
     if (!selectedClient) {
-      alert('Selecione um cliente para a proposta.');
+      setFormError('Selecione um cliente para a proposta.');
       return;
     }
 
     if (items.length === 0) {
-      alert('Adicione ao menos um item à proposta comercial.');
+      setFormError('Adicione ao menos um item à proposta comercial.');
       return;
     }
 
@@ -208,7 +210,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
     );
 
     if (unauthorizedItem) {
-      alert(`Alçada Violada: O item "${unauthorizedItem.modelName}" está com preço negociado (R$ ${unauthorizedItem.costBreakdown.negotiatedUnitPrice.toFixed(2)}) abaixo do sugerido (R$ ${unauthorizedItem.costBreakdown.suggestedUnitPrice.toFixed(2)}). Requer autorização formal de Administrador conforme o PRD v1.6 Adendo B.2.5.`);
+      setFormError(`Alçada Violada: O item "${unauthorizedItem.modelName}" está com preço negociado (R$ ${unauthorizedItem.costBreakdown.negotiatedUnitPrice.toFixed(2)}) abaixo do sugerido (R$ ${unauthorizedItem.costBreakdown.suggestedUnitPrice.toFixed(2)}). Requer autorização formal de Administrador conforme o PRD v1.6 Adendo B.2.5.`);
       return;
     }
 
@@ -279,6 +281,12 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[82vh] overflow-y-auto text-xs">
+          {formError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg font-medium flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span>{formError}</span>
+            </div>
+          )}
           
           {/* Client & Salesperson selection */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -402,42 +410,59 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                     </div>
 
                     {/* PRD Component Breakdown (Transparent Costing) */}
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-3 bg-white rounded-lg border border-slate-200">
+                    <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 p-3 bg-white rounded-lg border border-slate-200">
                       <div>
                         <label className="block text-[10px] font-semibold text-slate-500">
                           Tecido & Aviamentos (R$/un)
                         </label>
                         <input
                           type="number"
+                          min="0"
                           step="0.5"
                           value={cb.materialUnitCost}
-                          onChange={(e) => updateItemCostComponent(index, 'materialUnitCost', parseFloat(e.target.value) || 0)}
+                          onChange={(e) => updateItemCostComponent(index, 'materialUnitCost', Math.max(0, parseFloat(e.target.value) || 0))}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[10px] font-semibold text-slate-500">
-                          Costura Terceirizada (R$/un)
+                          Costura Facção (R$/un)
                         </label>
                         <input
                           type="number"
+                          min="0"
                           step="0.5"
                           value={cb.outsourcedSewingUnitCost}
-                          onChange={(e) => updateItemCostComponent(index, 'outsourcedSewingUnitCost', parseFloat(e.target.value) || 0)}
+                          onChange={(e) => updateItemCostComponent(index, 'outsourcedSewingUnitCost', Math.max(0, parseFloat(e.target.value) || 0))}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[10px] font-semibold text-slate-500">
-                          Personalização (Bord/Silk)
+                          Bordado / Silk (R$/un)
                         </label>
                         <input
                           type="number"
+                          min="0"
                           step="0.5"
                           value={cb.customizationUnitCost}
-                          onChange={(e) => updateItemCostComponent(index, 'customizationUnitCost', parseFloat(e.target.value) || 0)}
+                          onChange={(e) => updateItemCostComponent(index, 'customizationUnitCost', Math.max(0, parseFloat(e.target.value) || 0))}
+                          className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-500">
+                          Frete Rateado (R$/un)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={cb.freightPerUnit}
+                          onChange={(e) => updateItemCostComponent(index, 'freightPerUnit', Math.max(0, parseFloat(e.target.value) || 0))}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
                       </div>
@@ -448,9 +473,10 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
                         </label>
                         <input
                           type="number"
+                          min="0"
                           step="0.5"
                           value={cb.technicalLossPercentage}
-                          onChange={(e) => updateItemCostComponent(index, 'technicalLossPercentage', parseFloat(e.target.value) || 0)}
+                          onChange={(e) => updateItemCostComponent(index, 'technicalLossPercentage', Math.max(0, parseFloat(e.target.value) || 0))}
                           className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-semibold text-xs mt-1"
                         />
                       </div>

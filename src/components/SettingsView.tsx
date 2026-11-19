@@ -30,6 +30,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [formData, setFormData] = useState<CompanyProfile>(profile);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [backupFeedback, setBackupFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,15 +50,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         const parsed = JSON.parse(event.target?.result as string);
         if (parsed.orders && parsed.inventory && parsed.quotes) {
           onRestoreState(parsed);
-          alert('Backup restaurado com sucesso!');
+          setBackupFeedback({ type: 'success', message: 'Backup JSON importado e restaurado com sucesso.' });
         } else {
-          alert('Arquivo de backup inválido.');
+          setBackupFeedback({ type: 'error', message: 'Arquivo de backup inválido: estrutura ERP incompleta.' });
         }
-      } catch (err) {
-        alert('Erro ao processar o arquivo de backup.');
+      } catch {
+        setBackupFeedback({ type: 'error', message: 'Erro ao processar o arquivo de backup JSON.' });
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
   };
 
   return (
@@ -199,8 +202,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 const parts = e.target.value.split('/');
                 setFormData({
                   ...formData,
-                  city: parts[0] || 'São Paulo',
-                  state: parts[1] || 'SP',
+                  city: parts[0] || 'São Luís',
+                  state: parts[1] || 'MA',
                 });
               }}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
@@ -237,13 +240,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
 
         <p className="text-slate-600 leading-relaxed">
-          Todos os dados cadastrados (Ordens de Produção, Tecidos, Clientes, Propostas Comerciais e Financeiro)
-          são salvos automaticamente em cache local no navegador. Você pode exportar um backup em formato JSON para arquivamento ou transferir para outro computador.
+          Os dados operacionais do ERP (Ordens de Produção, Estoque, Clientes, Orçamentos e Financeiro) são persistidos no servidor com cópia de contingência local. Você pode exportar ou restaurar um arquivo JSON para auditoria e migração.
         </p>
+
+        {backupFeedback && (
+          <div className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+            backupFeedback.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}>
+            {backupFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span>{backupFeedback.message}</span>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
           {/* Export JSON */}
           <button
+            type="button"
             onClick={() => exportERPStateAsJSON(fullState)}
             className="flex items-center justify-center gap-2 p-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg font-semibold text-slate-800 transition-colors cursor-pointer"
           >
@@ -264,17 +282,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </label>
 
           {/* Reset */}
-          <button
-            onClick={() => {
-              if (confirm('Tem certeza que deseja restaurar os dados de demonstração originais da confecção?')) {
-                onResetToDefaults();
-              }
-            }}
-            className="flex items-center justify-center gap-2 p-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg font-semibold text-rose-800 transition-colors cursor-pointer"
-          >
-            <RotateCcw className="w-4 h-4 text-rose-600" />
-            <span>Recarregar Dados Demo</span>
-          </button>
+          {!confirmingReset ? (
+            <button
+              type="button"
+              onClick={() => setConfirmingReset(true)}
+              className="flex items-center justify-center gap-2 p-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg font-semibold text-rose-800 transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4 text-rose-600" />
+              <span>Recarregar Dados Demo</span>
+            </button>
+          ) : (
+            <div className="flex items-center justify-between gap-2 p-2.5 bg-rose-50 border border-rose-300 rounded-lg">
+              <span className="text-[11px] font-semibold text-rose-900">Confirmar restauração?</span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingReset(false)}
+                  className="px-2 py-1 text-[11px] bg-white border border-slate-300 rounded text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Não
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingReset(false);
+                    onResetToDefaults();
+                    setBackupFeedback({ type: 'success', message: 'Dados demonstrativos recarregados.' });
+                  }}
+                  className="px-2 py-1 text-[11px] bg-rose-600 text-white font-semibold rounded hover:bg-rose-500 cursor-pointer"
+                >
+                  Sim
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

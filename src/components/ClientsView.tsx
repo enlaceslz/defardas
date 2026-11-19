@@ -41,8 +41,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
-  const [city, setCity] = useState('São Paulo');
-  const [state, setState] = useState('SP');
+  const [city, setCity] = useState('São Luís');
+  const [state, setState] = useState('MA');
   const [segment, setSegment] = useState('Indústria');
   const [standardUniformNotes, setStandardUniformNotes] = useState('');
 
@@ -56,8 +56,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     setPhone('');
     setEmail('');
     setAddress('');
-    setCity('São Paulo');
-    setState('SP');
+    setCity('São Luís');
+    setState('MA');
     setSegment('Indústria');
     setStandardUniformNotes('');
     setIsModalOpen(true);
@@ -343,7 +343,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-slate-900"
-                    placeholder="(11) 98765-4321"
+                    placeholder="(98) 98765-4321"
                   />
                 </div>
               </div>
@@ -376,8 +376,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                     value={`${city}/${state}`}
                     onChange={(e) => {
                       const parts = e.target.value.split('/');
-                      setCity(parts[0] || 'São Paulo');
-                      setState(parts[1] || 'SP');
+                      setCity(parts[0] || 'São Luís');
+                      setState(parts[1] || 'MA');
                     }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
                   />

@@ -22,24 +22,34 @@ export interface PasswordResetTokenRecord {
   expiresAt: Date;
 }
 
-// Senha padrão para ambiente de desenvolvimento/testes locais (Dev Seed)
+const isProd = process.env.NODE_ENV === 'production';
+
+// Senha padrão estritamente para ambiente de desenvolvimento/testes locais (Dev Seed)
 // Em produção, as senhas devem ser configuradas via variáveis de ambiente ou migração
-export const DEV_DEFAULT_PASSWORD = process.env.ERP_DEV_PASSWORD || 'DeFardas@2026!';
+export const DEV_DEFAULT_PASSWORD = isProd ? '' : (process.env.ERP_DEV_PASSWORD || 'DeFardas@2026!');
 
 class UserRepository {
   private users: Map<string, UserEntity> = new Map();
   private resetTokens: Map<string, PasswordResetTokenRecord> = new Map();
-  private isInitialized = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor() {
-    this.initUsers();
+    if (!isProd) {
+      this.initPromise = this.initUsers();
+    }
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.initPromise) {
+      await this.initPromise;
+    }
   }
 
   /**
-   * Inicializa usuários padrão do sistema com senhas criptografadas em bcrypt
+   * Inicializa usuários padrão do sistema com senhas criptografadas em bcrypt (apenas DEV)
    */
   private async initUsers() {
-    if (this.isInitialized) return;
+    if (isProd) return;
 
     // Gerar hash para a credencial inicial segura
     const defaultHash = await PasswordService.hashPassword(DEV_DEFAULT_PASSWORD);
@@ -104,17 +114,17 @@ class UserRepository {
       });
     }
 
-    this.isInitialized = true;
-    console.log(`🔐 [AUTH] Repositório de usuários inicializado com ${this.users.size} contas protegidas por bcrypt.`);
+    console.log(`🔐 [AUTH] Repositório de usuários DEV inicializado com ${this.users.size} contas protegidas por bcrypt.`);
   }
 
   /**
    * Busca usuário por email
    */
   public async findByEmail(email: string): Promise<UserEntity | null> {
+    await this.ensureInitialized();
     const normalized = email.trim().toLowerCase();
 
-    // Se conectado ao PostgreSQL real, consulta tabela core.users
+    // Se conectado ao PostgreSQL real, consulta tabela core.users como fonte única da verdade
     if (db.isConnected() && db.getPool()) {
       try {
         const pool = db.getPool()!;
@@ -135,12 +145,17 @@ class UserRepository {
             updatedAt: row.updated_at,
           };
         }
+        // Em produção com PostgreSQL ativo, NUNCA recorrer a seed de desenvolvimento
+        if (isProd) {
+          return null;
+        }
       } catch (err) {
-        console.warn('[AUTH] Falha ao consultar PostgreSQL para usuário, recorrendo ao repositório local:', err);
+        console.warn('[AUTH] Falha ao consultar PostgreSQL para usuário:', err);
+        if (isProd) return null;
       }
     }
 
-    // Consulta repositório transacional
+    // Consulta repositório transacional local (DEV)
     for (const u of this.users.values()) {
       if (u.email.toLowerCase() === normalized) {
         return u;
@@ -153,6 +168,7 @@ class UserRepository {
    * Busca usuário por ID
    */
   public async findById(id: string): Promise<UserEntity | null> {
+    await this.ensureInitialized();
     if (db.isConnected() && db.getPool()) {
       try {
         const pool = db.getPool()!;
@@ -173,8 +189,10 @@ class UserRepository {
             updatedAt: row.updated_at,
           };
         }
+        if (isProd) return null;
       } catch (err) {
         console.warn('[AUTH] Falha ao consultar PostgreSQL para usuário por ID:', err);
+        if (isProd) return null;
       }
     }
 

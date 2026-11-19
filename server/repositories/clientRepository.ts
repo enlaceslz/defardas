@@ -86,9 +86,15 @@ export class ClientRepository {
             set: {
               companyName: newRecord.companyName,
               tradeName: newRecord.tradeName,
+              cnpj: newRecord.cnpj,
+              stateRegistration: newRecord.stateRegistration,
+              contactName: newRecord.contactName,
               phone: newRecord.phone,
               email: newRecord.email,
               address: newRecord.address,
+              city: newRecord.city,
+              state: newRecord.state,
+              segment: newRecord.segment,
               standardUniformNotes: newRecord.standardUniformNotes,
               totalOrdersCount: newRecord.totalOrdersCount,
               totalSpent: newRecord.totalSpent,
@@ -101,6 +107,19 @@ export class ClientRepository {
     }
 
     return client;
+  }
+
+  public async delete(id: string): Promise<boolean> {
+    fallbackDb.clients.delete(id);
+    if (fallbackDb.isConnected()) {
+      try {
+        await drizzleDb.delete(clients).where(eq(clients.id, id));
+        return true;
+      } catch (err) {
+        console.error(`❌ [ClientRepository] Falha ao excluir cliente ${id} via Drizzle:`, err);
+      }
+    }
+    return true;
   }
 
   private mapToEntity(row: Client): ClientEntity {

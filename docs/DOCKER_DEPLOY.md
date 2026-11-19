@@ -49,11 +49,12 @@ nano .env
 ```
 
 Garanta que as seguintes variáveis estejam preenchidas:
+- `NODE_ENV=production` (desativa seeds demo, endpoint `/api/auth/dev-credentials` e fallback em memória)
 - `POSTGRES_USER` e `POSTGRES_PASSWORD` (senhas fortes e aleatórias)
 - `POSTGRES_DB=defardas_db`
-- `DATABASE_URL` apontando para o contêiner `defardas-postgres`
-- `S3_*` para armazenamento de artes e comprovantes
-- `META_WA_*` ou `WA_AKG_*` para comunicação
+- `DATABASE_URL` apontando para o contêiner `defardas-postgres` (e `DATABASE_CA_CERT` quando usar SSL externo)
+- `S3_*` para armazenamento privado de artes e comprovantes bancários
+- `META_WA_*` (incluindo `META_WA_APP_SECRET` para assinatura HMAC-SHA256) e/ou `WA_AKG_*` (incluindo `WA_AKG_API_KEY`) para webhooks assinados
 
 ### 3.2. Construção e Inicialização dos Contêineres
 Suba todos os serviços em segundo plano:
@@ -85,6 +86,7 @@ docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\
 docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt producao.*"
 docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt estoque.*"
 docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt financeiro.*"
+docker compose exec defardas-postgres psql -U defardas_user -d defardas_db -c "\dt communication.*"
 ```
 
 ---

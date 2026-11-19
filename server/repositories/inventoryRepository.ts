@@ -63,10 +63,16 @@ export class InventoryRepository {
           .onConflictDoUpdate({
             target: items.id,
             set: {
+              name: newRecord.name,
+              category: newRecord.category,
+              unit: newRecord.unit,
               physicalStock: newRecord.physicalStock,
               allocatedStock: newRecord.allocatedStock,
               inPartnersCustodyStock: newRecord.inPartnersCustodyStock,
+              minStock: newRecord.minStock,
               unitCostPrice: newRecord.unitCostPrice,
+              supplier: newRecord.supplier,
+              location: newRecord.location,
               lastRestocked: newRecord.lastRestocked,
               updatedAt: new Date(),
             },
@@ -77,6 +83,19 @@ export class InventoryRepository {
     }
 
     return item;
+  }
+
+  public async deleteItem(id: string): Promise<boolean> {
+    fallbackDb.inventory.delete(id);
+    if (fallbackDb.isConnected()) {
+      try {
+        await drizzleDb.delete(items).where(eq(items.id, id));
+        return true;
+      } catch (err) {
+        console.error(`❌ [InventoryRepository] Falha ao excluir item ${id} via Drizzle:`, err);
+      }
+    }
+    return true;
   }
 
   public async findAllMovements(): Promise<StockMovementEntity[]> {

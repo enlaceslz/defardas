@@ -52,43 +52,48 @@ A aplicação unifica três ambientes complementares:
   7. *6. Concluído / Entregue*: Entrega com registro de protocolo e recebedor.
 - **Ficha de Produção Fabril (Imprimível):** Roteiro de fábrica com grade detalhada de tamanhos (PP ao Sob Medida) e tabela de vistos de controle de qualidade por etapa.
 
-### 2.4. Almoxarifado, Tecidoteca & Custódia de Terceiros
-- Controle de rolos têxteis (Brim Santanense, Cedro, Gabardine, Malha PV, Dry-Fit).
-- Gestão de estoque próprio vs. **estoque em poder de facções terceirizadas**.
-- Ponto de pedido automatizado com alertas visuais de reposição.
-- Registro de movimentações auditáveis (entradas por compra, saídas para corte e perdas técnicas).
+### 2.4. Almoxarifado, Tecidoteca & Custódia de Terceiros (PRD §3.2)
+- Controle de rolos têxteis e aviamentos (Brim Santanense, Cedro, Gabardine, Malha Piquet/PV, Dry-Fit, faixas refletivas 3M).
+- Distinção obrigatória de 3 saldos por item: **Saldo Físico Próprio**, **Saldo Alocado para OPs** e **Saldo em Poder de Terceiros (Facções)**.
+- Bloqueio automático de devolução acima da custódia registrada (`HTTP 400`) e impedimento de exclusão de insumos com saldo em facções.
+- Registro exclusivo por eventos auditáveis (entrada de compra, saída para corte, remessa/retorno de facção, perda técnica e ajuste compensatório de inventário com justificativa obrigatória).
 
-### 2.5. Carteira de Clientes B2B & CRM
-- Cadastro empresarial completo (Razão Social, Nome Fantasia, CNPJ, Contatos).
-- Histórico de compras e especificações do fardamento padronizado de cada cliente corporativo.
+### 2.5. Carteira de Clientes B2B, Leads & CRM
+- Cadastro empresarial completo (Razão Social, Nome Fantasia, CNPJ, contatos, endereço padrão São Luís/MA e especificações de fardamento).
+- Captação pública de leads (`POST /api/leads`) integrada ao funil interno e conversão em clientes/orçamentos.
 
-### 2.6. Financeiro & Fluxo de Caixa
-- Contas a Receber estruturadas em parcelas: *Sinal de Entrada (50%)* e *Saldo na Entrega*.
-- Contas a Pagar: compras de matérias-primas e pagamentos a facções após execução e inspeção.
-- Resumo em tempo real de saldo projetado e conciliação manual com comprovantes anexos.
+### 2.6. Financeiro & Fluxo de Caixa Auditável
+- Contas a Receber estruturadas em **Sinal de Entrada (50%)** e **Saldo na Entrega (50%)**, além de Contas a Pagar para tecidos e facções.
+- Quitação com exigência obrigatória de número/autenticação do comprovante bancário e evidência S3 (`receiptEvidenceUrl`).
+- Proteção contra liquidação duplicada (`HTTP 409`) e transição automática do status financeiro da OP (`entrada_confirmada` → `quitado`) sem acoplamento com a etapa fabril.
 
----
-
-- **Frontend:** React 19, TypeScript, Vite.
-- **Backend Modular:** Node.js Express montado em `server.ts` com rotas modulares de API (`/api/*`).
-- **Segurança & Autenticação (Fase 1 Homologada):**
-  - Criptografia de senhas com `bcrypt` (12 salt rounds).
-  - Sessões criptograficamente seguras (tokens de 256 bits CSPRNG) com cookies `HttpOnly`, `SameSite: Lax` e suporte a cabeçalho `Authorization: Bearer`.
-  - Controle de Acesso Baseado em Função (RBAC) com 6 perfis normativos: `admin`, `gerente_comercial`, `vendedor`, `pcp_producao`, `financeiro`, `expedicao_qualidade`.
-  - Rejeição absoluta de cabeçalhos manipulados pelo cliente (`x-user-role` / `x-user-id`) e eliminação total do administrador automático.
-  - Retorno estrito de `HTTP 401 Unauthorized` para acessos não autenticados e `HTTP 403 Forbidden` para violações de alçada.
-  - Trilha de auditoria persistente gravando tentativas de acesso não autorizado e bypass de portões.
-- **Estilização:** Tailwind CSS v4, seguindo tipografia estruturada (*Plus Jakarta Sans* e *DM Sans*) e numerais tabulares (*JetBrains Mono / tabular-nums*).
-- **Ícones:** Lucide React.
-- **Armazenamento de Estado:** Banco PostgreSQL próprio da DE FARDAS via `DATABASE_URL` com fallback transacional resiliente e migração segura de dados locais.
-- **Layout:** Barra lateral (Sidebar) expansível/recolhível com navegação por agrupamentos operacionais e suporte a gaveta responsiva (mobile drawer).
-- **Estilos de Impressão:** Folhas de estilo dedicadas (`@media print`) para fichas técnicas e propostas comerciais formatadas para folha A4.
+### 2.7. Central WhatsApp Multiprovedor (Omnichannel Nativo)
+- Atendimento comercial e operacional nativo dentro do ERP (sem iframes externos).
+- Suporte simultâneo a **Meta WhatsApp Business Cloud API** (oficial, com verificação HMAC-SHA256 `X-Hub-Signature-256`) e **WA-AKG por QR Code** em container isolado (com validação de API Key via `timingSafeEqual`).
+- Templates operacionais vinculados ao fluxo do Gate A.3.2 (solicitação de aprovação de arte e confirmação de sinal).
 
 ---
 
-## 4. Credenciais de Desenvolvimento (Seed RBAC)
+## 3. Arquitetura, Stack Técnica & Segurança
 
-Para fins de teste e auditoria de alçadas em ambiente local/desenvolvimento, o sistema disponibiliza os seguintes perfis pré-cadastrados (senha padrão: `DeFardas@2026!`):
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4 e Lucide React.
+- **Backend:** Node.js + Express (`server.ts`) com rotas modulares (`/api/*`), serviços de domínio e repositórios tipados.
+- **Banco de Dados & ORM:** PostgreSQL 16 + **Drizzle ORM** + **Drizzle Kit**, estruturado nos schemas `core`, `crm`, `producao`, `estoque`, `financeiro` e `communication`, com sequenciadores SQL dedicados (`sequenceService`) e chaves primárias UUID (`crypto.randomUUID()`).
+- **Segurança & Governança (Auditada V7):**
+  - Senhas protegidas com `bcrypt` (12 salt rounds) e sessões CSPRNG persistidas em PostgreSQL (`core.sessions`) com cookie `HttpOnly` e `SameSite=Lax`.
+  - Proteção **CSRF Double-Submit Cookie** (`X-CSRF-Token` + `timingSafeEqual`) em todas as mutações da API, com isenção estrita para `POST /api/leads`, autenticação e webhooks assinados.
+  - **Rate Limiting** em login e recuperação de senha (`HTTP 429` + `Retry-After`).
+  - **RBAC** com 6 perfis normativos (`admin`, `gerente_comercial`, `vendedor`, `pcp_producao`, `financeiro`, `expedicao_qualidade`) aplicado em todas as rotas administrativas e operacionais.
+  - Cabeçalhos defensivos (`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, remoção de `X-Powered-By`) e trilha de auditoria persistente em `core.audit_logs`.
+  - Em `NODE_ENV=production`, seeds de demonstração, endpoint de credenciais de dev e fallback em memória são desativados automaticamente.
+- **Infraestrutura & Containers:** Dockerfile multi-stage (Node 22-alpine, usuário não-privilegiado), `compose.yaml` (PostgreSQL 16, Redis 7, ERP e WA-AKG) e scripts de backup/restore com verificação SHA-256 (`scripts/backup.sh`, `scripts/restore.sh`).
+- **Impressão A4:** Fichas técnicas de produção (com status real do Gate A.3.2) e propostas comerciais formatadas via `@media print`.
+
+---
+
+## 4. Perfis de Acesso & Ambiente de Desenvolvimento
+
+Em ambiente local de desenvolvimento (`NODE_ENV !== 'production'`), o servidor disponibiliza perfis de teste RBAC consultados dinamicamente pela tela de login via `/api/auth/dev-credentials` (nunca embutidos no bundle de produção):
 
 | Perfil | E-mail | Nome | Alçada / Responsabilidade |
 | :--- | :--- | :--- | :--- |
@@ -99,39 +104,51 @@ Para fins de teste e auditoria de alçadas em ambiente local/desenvolvimento, o 
 | **Gerente Comercial** | `gerente@defardas.com.br` | Roberto Mendes | Gestão de equipe de vendas e esteira de orçamentos |
 | **Qualidade & Expedição** | `qualidade@defardas.com.br` | Patrícia Soares | Inspeção final, aprovação de peças e romaneio |
 
-> **Nota de Segurança:** Em ambiente de produção (`NODE_ENV=production`), senhas devem ser alteradas imediatamente e endpoints de simulação/dev são automaticamente desativados.
+> **Nota de Segurança:** Em produção (`NODE_ENV=production`), o seed de desenvolvimento é bloqueado e `/api/auth/dev-credentials` retorna `404`. Crie os usuários reais diretamente no PostgreSQL com senhas fortes.
 
 ---
 
 ## 5. Como Executar Localmente
 
 ```bash
-# 1. Instalar as dependências
+# 1. Instalar dependências
 npm install
 
-# 2. Iniciar servidor de desenvolvimento (porta 3000)
+# 2. Copiar variáveis de ambiente e configurar PostgreSQL (opcional em dev)
+cp .env.example .env
+
+# 3. Gerar/aplicar migrações Drizzle (quando conectado ao PostgreSQL)
+npm run db:migrate
+
+# 4. Iniciar servidor de desenvolvimento (Frontend + API na porta 3000)
 npm run dev
 
-# 3. Executar validação de tipagem e integridade
+# 5. Executar análise estática TypeScript e build de produção
 npm run lint
-
-# 4. Gerar build de produção
 npm run build
 ```
 
 ---
 
-## 5. Como Fazer Deploy na Vercel via GitHub
+## 6. Implantação em Produção (Docker Compose)
 
-O projeto está totalmente configurado para deploy instantâneo na Vercel:
-1. Conecte o repositório na [Vercel](https://vercel.com).
-2. O arquivo `vercel.json` já configura o preset **Vite**, o comando `npm run build`, pasta `dist` e reescritas de rota SPA.
-3. Consulte o guia detalhado em [`VERCEL.md`](./VERCEL.md).
+A topologia recomendada de produção utiliza Docker Compose com PostgreSQL 16, Redis 7, aplicação ERP e container isolado WA-AKG:
+
+```bash
+cp .env.example .env
+# Preencha DATABASE_URL, META_WA_APP_SECRET, WA_AKG_API_KEY e credenciais S3
+docker compose up -d --build
+docker compose exec defardas-app npx drizzle-kit migrate
+```
+
+Consulte o manual completo de operação, monitoramento e backup/restore em [`docs/DOCKER_DEPLOY.md`](./docs/DOCKER_DEPLOY.md).
 
 ---
 
-## 6. Documentos Complementares
+## 7. Documentos Complementares
 
-- `VERCEL.md`: Guia passo a passo de deploy na Vercel diretamente pelo GitHub com CI/CD automático.
-- `AGENTS.md`: Diretrizes normativas e invariantes do PRD para desenvolvedores e agentes autônomos de IA.
-- `DEPLOY.md`: Manual de infraestrutura, implantação em servidor dedicado Linux, configuração do PostgreSQL e rotinas de backup.
+- [`AGENTS.md`](./AGENTS.md): Diretrizes normativas, invariantes do PRD v1.6 e regras de segurança para engenharia e agentes de IA.
+- [`docs/DEVELOPMENT_STATUS.md`](./docs/DEVELOPMENT_STATUS.md): Matriz de entregas, rastreabilidade de módulos e histórico da Auditoria Geral V7.
+- [`docs/DOCKER_DEPLOY.md`](./docs/DOCKER_DEPLOY.md): Manual de implantação em containers, migrações Drizzle e rotina de backup/restore SHA-256.
+- [`DEPLOY.md`](./DEPLOY.md) e [`VERCEL.md`](./VERCEL.md): Guias complementares de servidor dedicado e deploy estático.
+

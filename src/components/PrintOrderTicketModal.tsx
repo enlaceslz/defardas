@@ -26,7 +26,7 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white no-print">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold">Ficha de Produção Fabril & Roteiro de Qualidade</span>
-            <span className="text-xs text-slate-400 font-mono">[{order.id}]</span>
+            <span className="text-xs text-slate-400 font-mono">[{order.orderNumber || order.id}]</span>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -67,7 +67,7 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
                 Ordem de Produção (PCP)
               </div>
               <div className="text-2xl font-black font-mono text-blue-700">
-                {order.id}
+                {order.orderNumber || order.id}
               </div>
               <div className="text-xs text-slate-600 mt-0.5 font-mono">
                 Emissão: {formatDateBR(order.creationDate)}
@@ -94,8 +94,10 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
                 <span className="font-semibold text-slate-800">{order.outsourcedPartner || 'Produção Interna'}</span>
               </div>
               <div>
-                <span className="text-slate-500">Portões de Liberação: </span>
-                <span className="font-semibold text-emerald-700">Sinal Confirmado · Arte Aprovada</span>
+                <span className="text-slate-500">Portões de Liberação (A.3.2): </span>
+                <span className={`font-semibold ${order.entryPaymentConfirmed && order.artApproved ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {order.entryPaymentConfirmed ? 'Sinal 50% Confirmado' : 'Sinal Pendente'} · {order.artApproved ? 'Arte Aprovada' : 'Arte Pendente'}
+                </span>
               </div>
             </div>
           </div>

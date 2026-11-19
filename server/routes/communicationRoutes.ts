@@ -3,11 +3,19 @@
  * Endpoints para central de atendimento omnichannel, canais Meta Cloud API / WA-AKG e webhooks.
  */
 import { Router, Request, Response } from 'express';
-import { RequestWithUser, requireAuth } from '../auth/rbac';
+import crypto from 'crypto';
+import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { communicationRepository } from '../repositories/communicationRepository';
 import { whatsAppService } from '../services/whatsappService';
 
 export const communicationRouter = Router();
+
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 // ==============================================================================
 // 1. Webhooks Públicos (Isentos de autenticação de sessão)
@@ -32,6 +40,19 @@ communicationRouter.get('/webhooks/meta', (req: Request, res: Response) => {
 // Recebimento de mensagens da Meta WhatsApp Cloud API
 communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) => {
   try {
+    const appSecret = process.env.META_WA_APP_SECRET;
+    if (appSecret) {
+      const signature = req.headers['x-hub-signature-256'] as string | undefined;
+      const rawBody: Buffer | undefined = (req as any).rawBody;
+      if (!signature || !rawBody) {
+        return res.status(401).json({ error: 'Assinatura X-Hub-Signature-256 ausente.' });
+      }
+      const expected = `sha256=${crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+      if (!safeCompare(signature, expected)) {
+        return res.status(401).json({ error: 'Assinatura do webhook Meta inválida.' });
+      }
+    }
+
     const body = req.body;
     if (body.object === 'whatsapp_business_account') {
       const entries = body.entry || [];
@@ -67,6 +88,14 @@ communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) =
 // Recebimento de mensagens do container isolado WA-AKG
 communicationRouter.post('/webhooks/wa-akg', async (req: Request, res: Response) => {
   try {
+    const configuredKey = process.env.WA_AKG_API_KEY;
+    if (configuredKey) {
+      const providedKey = String(req.headers['x-api-key'] || req.headers['apikey'] || '');
+      if (!providedKey || !safeCompare(providedKey, configuredKey)) {
+        return res.status(401).json({ error: 'Chave de API WA-AKG inválida ou ausente.' });
+      }
+    }
+
     const { from, senderName, text, id, mediaUrl, mediaType } = req.body;
     if (from && text) {
       await whatsAppService.handleInboundMessage({
@@ -115,7 +144,7 @@ communicationRouter.get('/channels/:id/qr', async (req: RequestWithUser, res: Re
 });
 
 // Solicitar reconexão de canal
-communicationRouter.post('/channels/:id/reconnect', async (req: RequestWithUser, res: Response) => {
+communicationRouter.post('/channels/:id/reconnect', requirePermission('communication:manage_channels'), async (req: RequestWithUser, res: Response) => {
   const channel = await communicationRepository.findChannelById(req.params.id);
   if (!channel) {
     return res.status(404).json({ error: 'Canal não encontrado' });
@@ -170,7 +199,7 @@ communicationRouter.post('/conversations/:id/messages', async (req: RequestWithU
 });
 
 // Disparo de templates automáticos de ERP
-communicationRouter.post('/send-template', async (req: RequestWithUser, res: Response) => {
+communicationRouter.post('/send-template', requirePermission('communication:send_template'), async (req: RequestWithUser, res: Response) => {
   const { templateType, clientPhone, clientName, quoteNumber, orderNumber, amount, voucherNumber } = req.body;
 
   if (!clientPhone || !clientName) {

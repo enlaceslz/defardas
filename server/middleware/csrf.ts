@@ -10,13 +10,13 @@ const isProd = process.env.NODE_ENV === 'production';
 export const CSRF_COOKIE_NAME = 'defardas_csrf_token';
 export const CSRF_HEADER_NAME = 'x-csrf-token';
 
-// Rotas isentas de validação CSRF (ingestão pública de leads e fluxos iniciais de recuperação)
+// Rotas isentas de validação CSRF (ingestão pública de leads, fluxos de login/recuperação e webhooks S2S)
 const EXEMPT_PATHS = [
   '/api/leads',                   // Formulário público de solicitação de cotação na landing page
-  '/api/auth/login',               // Autenticação inicial (gera o token CSRF na resposta)
-  '/api/auth/recover-password',    // Recuperação pública de senha
-  '/api/auth/reset-password',      // Redefinição de senha com token de e-mail
-  '/api/auth/csrf-token',          // Endpoint de emissão do token
+  '/api/auth/login',              // Autenticação inicial (gera o token CSRF na resposta)
+  '/api/auth/recover-password',   // Recuperação pública de senha
+  '/api/auth/reset-password',     // Redefinição de senha com token de e-mail
+  '/api/auth/csrf-token',         // Endpoint de emissão do token
   '/api/communication/webhooks',  // Webhooks externos de WhatsApp (Meta Cloud API e WA-AKG)
 ];
 
@@ -50,8 +50,18 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
     return next();
   }
 
+  // Caminho completo incluindo o prefixo de montagem (/api + req.path)
+  const fullPath = `${req.baseUrl || ''}${req.path}`;
+
   // Verificar se o caminho está na lista de exceções
-  const isExempt = EXEMPT_PATHS.some((path) => req.path.startsWith(path));
+  // Nota: /api/leads é isento APENAS em POST exato (ingestão pública), nunca em PATCH /api/leads/:id/status
+  const isExempt = EXEMPT_PATHS.some((exemptPath) => {
+    if (exemptPath === '/api/leads') {
+      return req.method === 'POST' && (fullPath === '/api/leads' || fullPath === '/api/leads/');
+    }
+    return fullPath === exemptPath || fullPath.startsWith(`${exemptPath}/`);
+  });
+
   if (isExempt) {
     return next();
   }
@@ -77,7 +87,7 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
         code: 'CSRF_TOKEN_INVALID',
       });
     }
-  } catch (err) {
+  } catch {
     return res.status(403).json({
       error: 'Proteção CSRF: Erro na validação de segurança.',
       code: 'CSRF_VALIDATION_ERROR',

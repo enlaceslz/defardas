@@ -38,10 +38,12 @@ export const QuotesView: React.FC<QuotesViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const filteredQuotes = quotes.filter((q) => {
+    const query = searchQuery.toLowerCase();
     const matchesSearch = 
-      q.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.clientCnpj.toLowerCase().includes(searchQuery.toLowerCase());
+      q.id.toLowerCase().includes(query) ||
+      (q.quoteNumber || '').toLowerCase().includes(query) ||
+      q.clientName.toLowerCase().includes(query) ||
+      q.clientCnpj.toLowerCase().includes(query);
     const matchesStatus = statusFilter === 'all' || q.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -129,7 +131,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="font-mono font-bold text-slate-900 text-sm">
-                      {quote.id}
+                      {quote.quoteNumber || quote.id}
                     </span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">
                       v{quote.version || 1}
@@ -239,7 +241,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({
                     </div>
                     <div className="pt-2 border-t border-slate-200 flex items-center justify-between mt-2">
                       <span className="font-bold text-slate-700 uppercase text-[11px]">Valor Total:</span>
-                      <span className="font-mono font-black text-slate-900 text-base text-blue-700">
+                      <span className="font-mono font-black text-base text-blue-700">
                         {formatCurrencyBRL(quote.totalAmount)}
                       </span>
                     </div>

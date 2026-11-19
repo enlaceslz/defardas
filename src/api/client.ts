@@ -170,6 +170,13 @@ class ApiClient {
     });
   }
 
+  public async updateQuoteStatus(quoteId: string, status: string) {
+    return this.request<any>(`/quotes/${quoteId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
   public async convertQuoteToOrder(quoteId: string, idempotencyKey?: string) {
     return this.request<any>(`/quotes/${quoteId}/convert-to-order`, {
       method: 'POST',
@@ -184,6 +191,20 @@ class ApiClient {
   // Orders
   public async getOrders() {
     return this.request<any[]>('/orders', { method: 'GET' });
+  }
+
+  public async createOrder(payload: any) {
+    return this.request<any>('/orders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateOrder(orderId: string, payload: any) {
+    return this.request<any>(`/orders/${orderId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
   }
 
   public async advanceOrderStage(orderId: string, targetStage: string) {
@@ -243,6 +264,21 @@ class ApiClient {
     });
   }
 
+  public async updateInventoryItem(itemId: string, payload: any) {
+    return this.request<any>(`/inventory/items/${itemId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteInventoryItem(itemId: string) {
+    return this.request<any>(`/inventory/items/${itemId}`, { method: 'DELETE' });
+  }
+
+  public async getInventoryMovements() {
+    return this.request<any[]>('/inventory/movements', { method: 'GET' });
+  }
+
   public async createStockMovement(payload: any) {
     return this.request<any>('/inventory/movements', {
       method: 'POST',
@@ -280,6 +316,17 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  public async updateClient(clientId: string, payload: any) {
+    return this.request<any>(`/clients/${clientId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteClient(clientId: string) {
+    return this.request<any>(`/clients/${clientId}`, { method: 'DELETE' });
   }
 
   // Communication & WhatsApp

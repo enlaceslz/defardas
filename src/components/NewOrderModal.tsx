@@ -33,15 +33,16 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   const [category, setCategory] = useState<UniformCategory>(existingOrder?.category || 'polos');
   const [fabricName, setFabricName] = useState(existingOrder?.fabricName || 'Malha Piquet PA 50/50');
   const [fabricColor, setFabricColor] = useState(existingOrder?.fabricColor || 'Azul Marinho / Vivos Brancos');
-  const [stage, setStage] = useState<OperationalStage>(existingOrder?.stage || 'corte');
+  const stage: OperationalStage = existingOrder?.stage || 'aguardando_liberacao';
   const [priority, setPriority] = useState<PriorityLevel>(existingOrder?.priority || 'normal');
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(
     existingOrder?.targetDeliveryDate || new Date(Date.now() + 16 * 86400000).toISOString().split('T')[0]
   );
+  const [formError, setFormError] = useState('');
   
-  // Gates de Liberação do PRD
-  const [entryPaymentConfirmed, setEntryPaymentConfirmed] = useState(existingOrder?.entryPaymentConfirmed ?? true);
-  const [artApproved, setArtApproved] = useState(existingOrder?.artApproved ?? true);
+  // Gates de Liberação do PRD (somente leitura: alterados via Financeiro com comprovante e Aprovação de Arte)
+  const entryPaymentConfirmed = existingOrder?.entryPaymentConfirmed ?? false;
+  const artApproved = existingOrder?.artApproved ?? false;
   const [outsourcedPartner, setOutsourcedPartner] = useState(existingOrder?.outsourcedPartner || 'Facção Têxtil Maranhense');
   const [partnerCostPerPiece, setPartnerCostPerPiece] = useState(existingOrder?.partnerCostPerPiece || 18.00);
 
@@ -84,16 +85,17 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
 
     if (totalPieces <= 0) {
-      alert('Por favor informe ao menos 1 peça na grade de tamanhos.');
+      setFormError('Por favor informe ao menos 1 peça na grade de tamanhos.');
       return;
     }
 
     const orderId = existingOrder?.id || `OP-2026-${Math.floor(100 + Math.random() * 900)}`;
 
     const canStart = Boolean(entryPaymentConfirmed && artApproved);
-    const effectiveStage = canStart ? stage : 'aguardando_liberacao';
+    const effectiveStage: OperationalStage = isEditing && canStart ? stage : 'aguardando_liberacao';
 
     const defaultCostBreakdown: CostBreakdown = existingOrder?.costBreakdown || {
       materialUnitCost: 25.00,
@@ -165,7 +167,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
           <div className="flex items-center gap-2">
             <Shirt className="w-5 h-5 text-blue-400" />
             <h2 className="text-base font-bold">
-              {isEditing ? `Editar Ordem de Produção [${existingOrder?.id}]` : 'Emitir Nova Ordem de Produção (PCP)'}
+              {isEditing ? `Editar Ordem de Produção [${existingOrder?.orderNumber || existingOrder?.id}]` : 'Emitir Nova Ordem de Produção (PCP)'}
             </h2>
           </div>
           <button
@@ -178,6 +180,12 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
 
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[80vh] overflow-y-auto text-xs">
+          {formError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg font-medium flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
           
           {/* Section 1: Cliente & Modelo */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -261,38 +269,28 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
             />
           </div>
 
-          {/* PRD Gates: Confirmação de Sinal & Aprovação de Arte */}
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+          {/* PRD Gates: Status Auditável (Sem Bypass Manual) */}
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
             <span className="font-bold text-slate-900 text-xs uppercase flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-blue-600" />
-              <span>Portões de Liberação Fabril (Critérios Normativos A.3.2)</span>
+              <span>Portões de Liberação Fabril (Gate Normativo A.3.2)</span>
             </span>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Toda nova Ordem de Produção nasce em <strong>Aguardando Liberação</strong>. A confirmação do sinal (50%) exige comprovante bancário no módulo Financeiro e a aprovação da arte é registrada diretamente no PCP.
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <label className="flex items-center gap-2 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={entryPaymentConfirmed}
-                  onChange={(e) => setEntryPaymentConfirmed(e.target.checked)}
-                  className="rounded text-blue-600 focus:ring-blue-500"
-                />
-                <div>
-                  <strong className="block text-slate-800">Sinal de Entrada Confirmado</strong>
-                  <span className="text-[11px] text-slate-500">Comprovante de pagamento registrado</span>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-2 p-2.5 bg-white border border-slate-200 rounded-lg cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={artApproved}
-                  onChange={(e) => setArtApproved(e.target.checked)}
-                  className="rounded text-blue-600 focus:ring-blue-500"
-                />
-                <div>
-                  <strong className="block text-slate-800">Arte / Layout Aprovado</strong>
-                  <span className="text-[11px] text-slate-500">Aceite formal do cliente arquivado</span>
-                </div>
-              </label>
+              <div className={`p-2.5 rounded-lg border ${entryPaymentConfirmed ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+                <strong className="block">Sinal de Entrada (50%)</strong>
+                <span className="text-[11px]">
+                  {entryPaymentConfirmed ? 'Confirmado com comprovante auditado' : 'Pendente de liquidação no Financeiro'}
+                </span>
+              </div>
+              <div className={`p-2.5 rounded-lg border ${artApproved ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+                <strong className="block">Arte / Layout Personalizado</strong>
+                <span className="text-[11px]">
+                  {artApproved ? 'Aprovada formalmente para produção' : 'Pendente de aprovação no quadro PCP'}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -358,20 +356,14 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block font-semibold text-slate-700 mb-1">
-                Etapa Operacional
+                Etapa Operacional (via Kanban)
               </label>
-              <select
-                value={stage}
-                onChange={(e) => setStage(e.target.value as OperationalStage)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
-              >
-                <option value="corte">1. Corte & Enfesto</option>
-                <option value="bordado_silk">2. Bordado & Silk (Parceiro)</option>
-                <option value="costura">3. Costura & Montagem</option>
-                <option value="conferencia_qualidade">4. Inspeção de Qualidade</option>
-                <option value="expedicao">5. Embalagem & Envio</option>
-                <option value="entregue">Concluído / Entregue</option>
-              </select>
+              <input
+                type="text"
+                readOnly
+                value={stage === 'aguardando_liberacao' ? '0. Bloqueado (Aguardando Gate A.3.2)' : stage.replace('_', ' ')}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-100 text-slate-600 font-medium cursor-not-allowed capitalize"
+              />
             </div>
 
             <div>

@@ -23,7 +23,7 @@ leadsRouter.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Campos obrigatórios: clientName, companyName, phone, category' });
   }
 
-  const leadNumber = sequenceService.nextLeadNumber();
+  const leadNumber = await sequenceService.nextLeadNumberAsync();
   const leadId = crypto.randomUUID();
 
   const newLead: LeadEntity = {
@@ -51,7 +51,7 @@ leadsRouter.post('/', async (req: Request, res: Response) => {
   );
 
   if (!matchedClient) {
-    const clientCode = sequenceService.nextClientCode();
+    const clientCode = await sequenceService.nextClientCodeAsync();
     matchedClient = {
       id: crypto.randomUUID(),
       code: clientCode,

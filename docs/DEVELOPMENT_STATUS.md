@@ -4,14 +4,14 @@
 **Localização:** São Luís, Maranhão  
 **Repositório Oficial:** https://github.com/enlaceslz/defardas  
 **Commit-Base de Referência:** `fefa8901bbb045a73a9b4b00834be25f3ec41b69`  
-**Versão Atual:** `1.6.0-P0-ETAPA4`  
-**Data da Última Atualização:** 2026-10-25  
+**Versão Atual:** `1.6.0-V7-AUDITED`  
+**Data da Última Atualização:** 2026-11-19  
 
 ---
 
 ## 1. Etapa Atual
-- **Etapa Concluída:** **ETAPA 1 (Fundação Drizzle), ETAPA 2 (Segurança & Repositórios) e ETAPA 4 (Infraestrutura Docker)**
-- **Status Geral:** **IMPLEMENTADO, TESTADO E HOMOLOGADO**
+- **Etapa Concluída:** **ETAPA 1 (Fundação Drizzle), ETAPA 2 (Segurança & Repositórios), ETAPA 4 (Infraestrutura Docker) e AUDITORIA GERAL V7 (Remediação End-to-End)**
+- **Status Geral:** **IMPLEMENTADO, AUDITADO, TESTADO E HOMOLOGADO**
 
 ---
 
@@ -90,3 +90,37 @@
    - Gate A.3.2: Ordem de produção não avança para corte sem 50% de sinal e arte aprovada.
    - Comprovantes reais: Exigência de URL e autenticação bancária.
    - Custódia de facções: Rejeição de retornos que excedem o saldo em poder de terceiros.
+
+---
+
+## 5. Revisão e Auditoria Geral do Sistema (V7 — Remediação End-to-End)
+
+Auditoria técnica completa sobre backend (`server.ts`, middlewares, repositórios, serviços, rotas), banco de dados/Drizzle e frontend React/TypeScript, com correção direta dos achados críticos, altos e médios:
+
+| ID | Severidade | Achado Identificado & Correção Aplicada |
+| :--- | :---: | :--- |
+| **AUD-V7-01** | Crítico | **CSRF `EXEMPT_PATHS` quebrado:** `app.use('/api', csrfProtection)` removia o prefixo `/api` de `req.path`, bloqueando `POST /api/auth/login`, `POST /api/leads` e webhooks com 403. Corrigido com `${req.baseUrl}${req.path}` e isenção restrita a `POST /api/leads`. |
+| **AUD-V7-02** | Crítico | **Webhooks WhatsApp sem verificação de assinatura:** Adicionada validação HMAC-SHA256 (`X-Hub-Signature-256`) para Meta Cloud API via `rawBody` e validação `timingSafeEqual` de API Key para WA-AKG. |
+| **AUD-V7-03** | Crítico | **Credenciais de desenvolvimento expostas no bundle e em produção:** Removida senha hardcoded do `LoginView` e bloqueado seed/fallback em memória em `NODE_ENV=production` (`userRepository.ts`, `connection.ts`). |
+| **AUD-V7-04** | Crítico | **Bypass do Portão Fabril A.3.2 no frontend:** Removido botão fake "Confirmar Sinal" no PCP e checkboxes manuais de sinal/arte no `NewOrderModal`; liquidação agora ocorre exclusivamente no Financeiro com comprovante + URL S3. |
+| **AUD-V7-05** | Alto | **Falhas de RBAC e Mass Assignment:** Adicionado `requirePermission` em criação/edição/conversão de propostas, aprovação de arte, CRUD de clientes/estoque, ajustes de inventário e gestão/templates WhatsApp; aplicada allowlist de campos em `PUT /clients/:id` e `PUT /orders/:id`. |
+| **AUD-V7-06** | Alto | **Persistência e UUIDs canônicos:** Preservados UUIDs reais do backend no `App.tsx` (exibindo `orderNumber`, `quoteNumber`, `transactionNumber` e `code`); migrados `auditService` e `migrationRoutes` para PostgreSQL/Drizzle; corrigido `DELETE /clients/:id` (antes gravava `totalOrdersCount: -1`) e criados endpoints `POST/PUT /orders` e `PUT/DELETE /inventory/items/:id`. |
+| **AUD-V7-07** | Alto | **Motor de Preços e Sequências:** Corrigido `materialUnitCost` sobrescrito por `directUnitCost` e markup fixo `50.0` em `quotesRoutes.ts`; clamped custos `>= 0` em `pricingEngine.ts`; sequências PostgreSQL inicializadas em `connection.ts` e chamadas assíncronas em todas as rotas. |
+| **AUD-V7-08** | Alto | **Estoque (PRD §3.2) e Financeiro:** Exibidos os 3 saldos (Físico Próprio, Alocado em OPs, Em Facções) na `InventoryView`, substituídos botões cegos `-10/+50` por modal de movimentação auditada e bloqueada exclusão de item com saldo em facções; liquidação do saldo de entrega atualiza `order.financialStatus = 'quitado'` e rejeita baixa duplicada com `409`. |
+| **AUD-V7-09** | Médio | **Segregação do Portal Público e Higiene de UI:** Portal público sem autenticação isolado da sidebar interna; removidos todos os `window.alert`/`window.confirm` (substituídos por Toast e modais in-app); corrigidos `UniformCategory` e markup médio real no `DashboardView`, `freightPerUnit` no `NewQuoteModal`, status real do Gate na ficha impressa e padrões regionais de São Luís/MA. |
+| **AUD-V7-10** | Médio | **Cabeçalhos de Segurança e Suíte de Testes:** Adicionados `trust proxy`, remoção de `X-Powered-By`, headers defensivos (`nosniff`, `SAMEORIGIN`, `no-referrer`) e handler global de erro no `server.ts`; corrigidos testes anônimos em `foundationTests.ts` (`credentials: 'omit'`). |
+
+### Evidências de Verificação Pós-Auditoria V7
+- **TypeScript (`npm run lint` / `tsc --noEmit`):** 0 erros.
+- **Build de Produção (`npm run build`):** Sucesso.
+- **Testes HTTP ao Vivo (`/api/*`):**
+  - `GET /api/health` → `200`, `X-Content-Type-Options: nosniff`, sem `X-Powered-By` e contagens reais dos repositórios.
+  - `GET /api/quotes` sem sessão e `GET /api/orders` com `x-user-role: admin` forjado → `401`.
+  - `POST /api/leads` anônimo sem cookie CSRF → `201`.
+  - Mutação autenticada sem `X-CSRF-Token` → `403`.
+  - `POST /api/orders/:id/advance-stage` (`corte`) sem sinal/arte → `422` (Gate A.3.2).
+  - `POST /api/inventory/movements`: `remessa_parceiro` → `201`, retorno acima da custódia → `400`, retorno válido → `201`.
+  - `POST /api/quotes` como `vendedor` abaixo do sugerido → `403 DISCOUNT_REQUIRES_ADMIN_APPROVAL`.
+  - `GET /api/audit/logs` → `200` com registros identificados por UUID válido.
+
+

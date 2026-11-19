@@ -23,17 +23,22 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
   const actor = req.user!;
   const payload = req.body;
 
-  const trxNumber = sequenceService.nextFinanceNumber();
+  const amount = Number(payload.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'O valor do lançamento financeiro deve ser maior que zero.' });
+  }
+
+  const trxNumber = await sequenceService.nextFinanceNumberAsync();
   const newTrx: FinancialTransactionEntity = {
     id: crypto.randomUUID(),
     transactionNumber: trxNumber,
     productionOrderId: payload.productionOrderId,
     quoteId: payload.quoteId,
-    type: payload.type || 'receber',
+    type: payload.type === 'pagar' ? 'pagar' : 'receber',
     subType: payload.subType || 'entrada_pedido',
     description: payload.description || 'Lançamento Financeiro',
     category: payload.category || 'Venda de Uniformes',
-    amount: Number(payload.amount || 0),
+    amount: Math.round(amount * 100) / 100,
     dueDate: payload.dueDate || new Date().toISOString().split('T')[0],
     status: 'pendente',
     paymentMethod: payload.paymentMethod || 'pix',
@@ -67,10 +72,16 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
     return res.status(404).json({ error: 'Lançamento financeiro não encontrado' });
   }
 
+  if (trx.status === 'pago') {
+    return res.status(409).json({
+      error: `O título ${trx.transactionNumber} já foi liquidado anteriormente (Comprovante: ${trx.receiptVoucherNumber || 'N/A'}).`,
+    });
+  }
+
   const { receiptVoucherNumber, receiptEvidenceUrl, confirmationNotes } = req.body;
 
   // Invariante P0-004 / AUD-05: Rejeitar dados fictícios e exigir comprovante real
-  if (!receiptVoucherNumber || !receiptEvidenceUrl) {
+  if (!receiptVoucherNumber?.trim() || !receiptEvidenceUrl?.trim()) {
     return res.status(422).json({
       error: 'Invariante violada: A confirmação de pagamento exige número de autenticação bancária e URL do comprovante real. Dados fictícios são proibidos.',
     });
@@ -79,8 +90,8 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
   // Registrar quitação na transação
   trx.status = 'pago';
   trx.paidDate = new Date().toISOString().split('T')[0];
-  trx.receiptVoucherNumber = receiptVoucherNumber;
-  trx.receiptEvidenceUrl = receiptEvidenceUrl;
+  trx.receiptVoucherNumber = receiptVoucherNumber.trim();
+  trx.receiptEvidenceUrl = receiptEvidenceUrl.trim();
   trx.confirmedById = actor.id;
   trx.confirmedByName = `${actor.fullName} (${actor.role})`;
   trx.confirmationNotes = confirmationNotes || 'Comprovante bancário conferido e autenticado.';
@@ -91,9 +102,8 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
   let linkedOrderUpdated = false;
   let updatedOrder = null;
 
-  // PONTE DO PORTÃO (GATE BRIDGE): Se for entrada de pedido (sinal de 50%), liberar a Ordem de Produção!
-  if (trx.subType === 'entrada_pedido' && (trx.productionOrderId || trx.referenceId)) {
-    // Buscar OP pelo productionOrderId ou pelo orderNumber/referenceId
+  // PONTE DO PORTÃO (GATE BRIDGE): Atualizar estado financeiro da OP vinculada
+  if ((trx.subType === 'entrada_pedido' || trx.subType === 'saldo_entrega') && (trx.productionOrderId || trx.referenceId)) {
     let order = trx.productionOrderId ? await orderRepository.findById(trx.productionOrderId) : null;
     if (!order && trx.referenceId) {
       const orders = await orderRepository.findAll();
@@ -101,34 +111,60 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
     }
 
     if (order) {
-      order.entryPaymentConfirmed = true;
-      order.financialStatus = 'entrada_confirmada';
-      order.entryReceiptUrl = trx.receiptEvidenceUrl;
-      order.entryReceiptReference = trx.receiptVoucherNumber;
-      order.entryVerifiedById = actor.id;
-      order.entryVerificationDate = new Date().toISOString();
-      order.updatedAt = new Date().toISOString();
+      if (trx.subType === 'entrada_pedido') {
+        order.entryPaymentConfirmed = true;
+        order.financialStatus = 'entrada_confirmada';
+        order.entryReceiptUrl = trx.receiptEvidenceUrl;
+        order.entryReceiptReference = trx.receiptVoucherNumber;
+        order.entryVerifiedById = actor.id;
+        order.entryVerificationDate = new Date().toISOString();
+        order.updatedAt = new Date().toISOString();
 
-      await orderRepository.save(order);
+        await orderRepository.save(order);
+        linkedOrderUpdated = true;
+        updatedOrder = order;
 
-      linkedOrderUpdated = true;
-      updatedOrder = order;
+        auditService.log({
+          actorId: actor.id,
+          actorName: actor.fullName,
+          actorRole: actor.role,
+          entityName: 'producao.production_orders',
+          entityId: order.orderNumber,
+          action: 'DOWNPAYMENT_CONFIRMED',
+          newData: {
+            orderNumber: order.orderNumber,
+            financialStatus: order.financialStatus,
+            entryPaymentConfirmed: true,
+            voucher: trx.receiptVoucherNumber,
+          },
+          notes: `Sinal de 50% confirmado com comprovante ${trx.receiptVoucherNumber}. Portão de pagamento da OP ${order.orderNumber} liberado com sucesso!`,
+        });
+      } else if (trx.subType === 'saldo_entrega') {
+        const allTransactions = await financeRepository.findAll();
+        const orderReceivables = allTransactions.filter(
+          (t) => t.type === 'receber' && (t.productionOrderId === order!.id || t.referenceId === order!.orderNumber)
+        );
+        const allSettled = orderReceivables.length > 0 && orderReceivables.every((t) => t.status === 'pago');
 
-      auditService.log({
-        actorId: actor.id,
-        actorName: actor.fullName,
-        actorRole: actor.role,
-        entityName: 'producao.production_orders',
-        entityId: order.orderNumber,
-        action: 'DOWNPAYMENT_CONFIRMED',
-        newData: {
-          orderNumber: order.orderNumber,
-          financialStatus: order.financialStatus,
-          entryPaymentConfirmed: true,
-          voucher: trx.receiptVoucherNumber,
-        },
-        notes: `Sinal de 50% confirmado com comprovante ${trx.receiptVoucherNumber}. Portão de pagamento da OP ${order.orderNumber} liberado com sucesso!`,
-      });
+        if (allSettled) {
+          order.financialStatus = 'quitado';
+          order.updatedAt = new Date().toISOString();
+          await orderRepository.save(order);
+          linkedOrderUpdated = true;
+          updatedOrder = order;
+
+          auditService.log({
+            actorId: actor.id,
+            actorName: actor.fullName,
+            actorRole: actor.role,
+            entityName: 'producao.production_orders',
+            entityId: order.orderNumber,
+            action: 'ORDER_FINANCIALLY_SETTLED',
+            newData: { orderNumber: order.orderNumber, financialStatus: 'quitado', voucher: trx.receiptVoucherNumber },
+            notes: `Saldo de entrega quitado. Status financeiro da OP ${order.orderNumber} atualizado para 'quitado'.`,
+          });
+        }
+      }
     }
   }
 

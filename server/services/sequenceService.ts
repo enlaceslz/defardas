@@ -2,7 +2,7 @@
  * DE FARDAS ERP — Atomic Sequence Service
  * Correção P1-001: Sequenciamento persistente com sequences do PostgreSQL.
  * Fornece numeração segura contra concorrência e idempotente para orçamentos,
- * pedidos (OPs), clientes, lançamentos financeiros e materiais.
+ * pedidos (OPs), clientes, lançamentos financeiros, movimentações e materiais.
  */
 import { pool } from '../db/index';
 
@@ -12,16 +12,45 @@ class SequenceService {
 
   constructor() {
     this.currentYear = new Date().getFullYear();
+    // Inicia acima dos registros demonstrativos sem colidir com seeds (ORC-1001, OP-0101, CLI-0201/0202, FIN-5001, MAT-0301/0302, LEAD-0101)
     this.inMemoryFallback = new Map<string, number>([
-      ['quote', 1001],
-      ['order', 101],
-      ['client', 201],
-      ['finance', 5001],
-      ['inventory', 301],
-      ['lead', 101],
+      ['quote', 1003],
+      ['order', 102],
+      ['client', 203],
+      ['finance', 5002],
+      ['inventory', 303],
+      ['lead', 102],
       ['movement', 101],
       ['partner', 101],
     ]);
+  }
+
+  /**
+   * Garante existência das sequences atômicas no schema core do PostgreSQL
+   * (complementa a migração Drizzle caso sequences manuais não tenham sido criadas).
+   */
+  public async ensurePostgresSequences(): Promise<void> {
+    const definitions: [string, number][] = [
+      ['seq_quote_number', 1003],
+      ['seq_order_number', 102],
+      ['seq_client_number', 203],
+      ['seq_finance_number', 5002],
+      ['seq_inventory_number', 303],
+      ['seq_lead_number', 102],
+      ['seq_movement_number', 101],
+      ['seq_partner_number', 101],
+    ];
+
+    try {
+      await pool.query('CREATE SCHEMA IF NOT EXISTS core');
+      for (const [seqName, startWith] of definitions) {
+        await pool.query(
+          `CREATE SEQUENCE IF NOT EXISTS core.${seqName} START WITH ${startWith} INCREMENT BY 1`
+        );
+      }
+    } catch {
+      // Ignora silenciosamente quando PostgreSQL não estiver acessível no ambiente local
+    }
   }
 
   /**
@@ -34,7 +63,7 @@ class SequenceService {
         return parseInt(result.rows[0].nextval, 10);
       }
     } catch {
-      // Se a sequence ainda não existir ou banco estiver em inicialização, avança fallback atômico local
+      // Se a sequence ainda não existir ou banco estiver offline, avança fallback atômico local
     }
     const current = this.inMemoryFallback.get(fallbackKey) || 1000;
     this.inMemoryFallback.set(fallbackKey, current + 1);
@@ -75,7 +104,13 @@ class SequenceService {
     return `LEAD-${this.currentYear}-${padded}`;
   }
 
-  // Métodos síncronos mantidos para compatibilidade com código existente
+  public async nextMovementNumberAsync(): Promise<string> {
+    const val = await this.getNextSequenceValue('seq_movement_number', 'movement');
+    const padded = String(val).padStart(4, '0');
+    return `MOV-${this.currentYear}-${padded}`;
+  }
+
+  // Métodos síncronos mantidos apenas para retrocompatibilidade
   public nextQuoteNumber(): string {
     const nextVal = this.increment('quote');
     return `ORC-${this.currentYear}-${nextVal}`;

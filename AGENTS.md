@@ -77,25 +77,36 @@ O custo-base de cada item deve discriminar:
 
 ## 4. Diretrizes de Implementação Técnica
 
-### 4.1. Stack Atual e Fronteiras
-- **Frontend:** React 19 SPA com TypeScript, Tailwind CSS v4, Lucide React, Motion.
-- **Top Bar Contract & Sidebar:** Menu lateral (Sidebar) persistente como navegação principal; top header contextual de zona única com breadcrumbs e botão de ação primária.
-- **Persistência:** LocalStorage com versionamento schema `v2`, suporte a exportação/importação JSON de backup e restauração de dados demonstrativos.
-- **Banco de Produção:** PostgreSQL próprio contratado para a DE FARDAS (não utilizar serviços de terceiros sem autorização).
-- **Armazenamento:** Provedor S3-compatível para armazenamento privado de arquivos de artes, fichas e comprovantes com URLs assinadas temporárias.
+### 4.1. Arquitetura Homologada e Fronteiras
+- **Frontend:** React 19 SPA com TypeScript, Vite, Tailwind CSS v4, Lucide React e Motion.
+- **Navegação e Isolamento:** Menu lateral (Sidebar) persistente no ERP interno; Portal Público desautenticado isolado sem montagem da navegação interna. Proibido uso de `window.alert`, `window.confirm` e `window.open` (usar notificações Toast e modais in-app).
+- **Backend:** Node.js + TypeScript + Express (`server.ts`) com rotas modulares em `server/routes/*`, serviços de domínio em `server/services/*` e repositórios tipados em `server/repositories/*`.
+- **Banco de Produção (Fonte Única de Verdade):** PostgreSQL próprio da DE FARDAS com **Drizzle ORM** e migrações via **Drizzle Kit** (`drizzle/`), estruturado nos schemas `core`, `crm`, `producao`, `estoque`, `financeiro` e `communication`. Proibido introduzir Prisma, Sequelize ou TypeORM no domínio do ERP.
+- **Armazenamento Privado:** Provedor compatível com S3 para artes, fichas técnicas e comprovantes bancários com evidência auditável (`receiptEvidenceUrl`).
+- **Comunicação Omnichannel:** Central WhatsApp nativa multiprovedor suportando **Meta WhatsApp Business Cloud API** e **WA-AKG (QR Code)** em container Docker isolado.
+- **Infraestrutura:** Docker multi-stage (`Dockerfile`) + Docker Compose (`compose.yaml` / `compose.dev.yaml`) com PostgreSQL 16, Redis 7, ERP e WA-AKG, além de scripts de backup/restore (`scripts/backup.sh`, `scripts/restore.sh`).
 
-### 4.2. Fluxo de Trabalho do Agente (Verificação Obrigatória)
+### 4.2. Invariantes de Segurança Obrigatórios
+1. **Autenticação e Sessões:** Senhas com `bcrypt` (12 rounds); sessões CSPRNG persistidas em `core.sessions` com cookie `HttpOnly` + `SameSite=Lax`. Cabeçalhos forjados pelo cliente (`x-user-role`, `x-user-id`) devem ser sempre ignorados.
+2. **Proteção CSRF:** Double-Submit Cookie (`X-CSRF-Token` comparado com `crypto.timingSafeEqual`) obrigatório em todas as mutações (`POST`, `PUT`, `PATCH`, `DELETE`), avaliando `${req.baseUrl}${req.path}`. Apenas `POST /api/leads`, autenticação inicial e webhooks validados são isentos.
+3. **RBAC e Allowlist:** Toda rota interna exige `requireAuth` e `requirePermission(...)` compatível com a matriz em `server/auth/rbac.ts`. Rotas `PUT`/`PATCH` devem usar *allowlist* explícita de campos editáveis (sem *mass assignment* e sem permitir bypass do Gate A.3.2).
+4. **Webhooks Assinados:** Webhooks da Meta Cloud API exigem verificação HMAC-SHA256 (`X-Hub-Signature-256` sobre `rawBody`) quando `META_WA_APP_SECRET` estiver definido; webhooks WA-AKG exigem validação `timingSafeEqual` via `WA_AKG_API_KEY`.
+5. **Blindagem de Produção:** Em `NODE_ENV=production`, seeds de desenvolvimento, endpoint `/api/auth/dev-credentials` e fallback em memória são terminantemente desativados. Nunca embutir senhas ou credenciais de teste no bundle do frontend.
+6. **Identificadores Canônicos:** Todas as chaves primárias e eventos de auditoria utilizam `crypto.randomUUID()`. Códigos legíveis (`OP-2026-XXXX`, `ORC-2026-XXXX`, `FIN-2026-XXXX`, `CLI-XXXX`) são gerados por sequenciadores PostgreSQL (`sequenceService`) e mantidos separados do UUID.
+
+### 4.3. Fluxo de Trabalho do Agente (Verificação Obrigatória)
 Ao executar modificações no código:
-1. Faça a leitura prévia do arquivo antes de editar.
+1. Faça a leitura prévia do arquivo antes de editar e preserve a identidade visual própria da DE FARDAS.
 2. Não introduza estilos CSS inline nem frameworks CSS conflitantes com Tailwind v4.
-3. Garanta que todos os botões e abas tenham handlers reais e funcionais (proibido dead clicks ou mock stubs).
-4. Execute `npm run lint` (`tsc --noEmit`) para validar tipagem estática e ausência de erros.
-5. Execute `compile_applet` para assegurar que a compilação de produção não quebre.
+3. Garanta que todos os botões, modais e abas tenham handlers reais integrados à API (proibido *dead clicks* ou *mock stubs*).
+4. Execute `npm run lint` (`tsc --noEmit`) para validar tipagem estática com 0 erros.
+5. Execute `npm run build` (`compile_applet`) e valide as rotas afetadas antes de concluir a entrega.
 
 ---
 
 ## 5. Matriz de Autorizações e Alçadas (Pendente vs. Proposto)
 
-- **Alçada de Preço:** A proposta técnica do PRD estabelece que qualquer preço abaixo do sugerido exige autorização explícita com registro do responsável (`authorizerName`). A resolução final de se apenas o administrador ou também o gerente comercial tem alçada de aprovação continua pendente de decisão formal da diretoria da DE FARDAS.
+- **Alçada de Preço:** A proposta técnica do PRD (Adendo B.2.5) estabelece que qualquer preço negociado abaixo do sugerido exige autorização explícita de Administrador com registro do responsável (`authorizerName`), validada no backend (`HTTP 403 DISCOUNT_REQUIRES_ADMIN_APPROVAL`). A eventual extensão dessa alçada ao gerente comercial continua pendente de decisão formal da diretoria da DE FARDAS.
 - **Comissões:** A estrutura de dados suporta cálculo de comissões, mas a ativação do cálculo automático deve permanecer desativada até assinatura da política oficial (base bruta vs. líquida de frete e regras de cancelamento).
 - **Emissão Fiscal:** Nenhuma emissão de documento fiscal (NF-e/NFS-e) deve ser automatizada em produção sem prévia homologação técnica e validação formal do contador da empresa.
+

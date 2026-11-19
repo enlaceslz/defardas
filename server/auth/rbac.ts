@@ -54,6 +54,10 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
   // CRM & Clientes
   'crm:manage_clients': ['admin', 'gerente_comercial', 'vendedor'],
   'crm:view_leads': ['admin', 'gerente_comercial', 'vendedor'],
+
+  // Comunicação & WhatsApp Omnichannel
+  'communication:manage_channels': ['admin', 'gerente_comercial'],
+  'communication:send_template': ['admin', 'gerente_comercial', 'vendedor', 'financeiro'],
   
   // Auditoria e Migração
   'system:view_audit': ['admin'],
@@ -67,7 +71,7 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
  * NUNCA aceita 'x-user-role' ou 'x-user-id'.
  * NUNCA atribui administrador por padrão.
  */
-export function authMiddleware(req: RequestWithUser, _res: Response, next: NextFunction) {
+export async function authMiddleware(req: RequestWithUser, _res: Response, next: NextFunction) {
   let token: string | undefined;
 
   // 1. Tentar ler do cookie seguro HttpOnly
@@ -82,7 +86,7 @@ export function authMiddleware(req: RequestWithUser, _res: Response, next: NextF
   }
 
   if (token) {
-    const session = sessionStore.getSession(token);
+    const session = await sessionStore.getSessionAsync(token);
     if (session) {
       req.user = session.user;
       req.sessionToken = token;

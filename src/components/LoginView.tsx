@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Lock, 
   Mail, 
@@ -13,10 +13,16 @@ import {
   CheckCircle2,
   Users
 } from 'lucide-react';
-import { useAuth, UserRole, AVAILABLE_ROLES } from '../api/authContext';
+import { useAuth } from '../api/authContext';
+import { api } from '../api/client';
 
 interface LoginViewProps {
   onGoToPortal?: () => void;
+}
+
+interface DevCredentialsPayload {
+  defaultPassword?: string;
+  users?: Array<{ email: string; role: string; fullName: string }>;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
@@ -27,6 +33,19 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDevCredentials, setShowDevCredentials] = useState(false);
+  const [devCredentials, setDevCredentials] = useState<DevCredentialsPayload | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.getDevCredentials().then((res) => {
+      if (active && res.status === 200 && res.data?.users?.length) {
+        setDevCredentials(res.data);
+      }
+    }).catch(() => {
+      // Endpoint indisponível em produção (HTTP 404) — manter oculto
+    });
+    return () => { active = false; };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +70,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
 
   const handleQuickFill = (demoEmail: string) => {
     setEmail(demoEmail);
-    setPassword('DeFardas@2026!');
+    setPassword(devCredentials?.defaultPassword || '');
     setErrorMessage(null);
   };
 
@@ -180,63 +199,56 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
             </button>
           </form>
 
-          {/* Quick Credential Helper (Dev & Test Mode) */}
-          <div className="mt-6 pt-5 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => setShowDevCredentials(!showDevCredentials)}
-              className="w-full flex items-center justify-between text-xs text-slate-400 hover:text-blue-400 transition-colors cursor-pointer py-1"
-            >
-              <span className="flex items-center gap-1.5 font-medium">
-                <Users className="w-3.5 h-3.5 text-blue-400" />
-                Perfis Pré-Cadastrados para Teste (Seed RBAC)
-              </span>
-              <span className="text-[11px] font-mono text-slate-500">
-                {showDevCredentials ? '▲ Ocultar' : '▼ Ver'}
-              </span>
-            </button>
+          {/* Quick Credential Helper (Only rendered when backend exposes dev-only endpoint) */}
+          {devCredentials && devCredentials.users && devCredentials.users.length > 0 && (
+            <div className="mt-6 pt-5 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowDevCredentials(!showDevCredentials)}
+                className="w-full flex items-center justify-between text-xs text-slate-400 hover:text-blue-400 transition-colors cursor-pointer py-1"
+              >
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Users className="w-3.5 h-3.5 text-blue-400" />
+                  Perfis Pré-Cadastrados (Ambiente de Desenvolvimento)
+                </span>
+                <span className="text-[11px] font-mono text-slate-500">
+                  {showDevCredentials ? '▲ Ocultar' : '▼ Ver'}
+                </span>
+              </button>
 
-            {showDevCredentials && (
-              <div className="mt-3 space-y-2 animate-fadeIn">
-                <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 text-[11px] text-slate-400">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-slate-300 font-semibold">Credenciais de Teste Homologadas:</span>
-                    <span className="font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800/60">
-                      Senha: DeFardas@2026!
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
-                    {AVAILABLE_ROLES.map((r) => {
-                      const emailMap: Record<UserRole, string> = {
-                        admin: 'admin@defardas.com.br',
-                        vendedor: 'vendas@defardas.com.br',
-                        pcp_producao: 'pcp@defardas.com.br',
-                        financeiro: 'financeiro@defardas.com.br',
-                        gerente_comercial: 'gerente@defardas.com.br',
-                        expedicao_qualidade: 'qualidade@defardas.com.br',
-                      };
-                      const userEmail = emailMap[r.role];
-                      return (
+              {showDevCredentials && (
+                <div className="mt-3 space-y-2 animate-fadeIn">
+                  <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 text-[11px] text-slate-400">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-slate-300 font-semibold">Credenciais de Teste (Dev):</span>
+                      {devCredentials.defaultPassword && (
+                        <span className="font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800/60">
+                          Senha: {devCredentials.defaultPassword}
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
+                      {devCredentials.users.map((u) => (
                         <button
-                          key={r.role}
+                          key={u.email}
                           type="button"
-                          onClick={() => handleQuickFill(userEmail)}
+                          onClick={() => handleQuickFill(u.email)}
                           className="text-left p-2 rounded-lg bg-slate-900 hover:bg-slate-800/80 border border-slate-800 hover:border-blue-700/60 transition-all cursor-pointer group"
                         >
                           <div className="font-medium text-slate-200 group-hover:text-blue-300 truncate text-[11px]">
-                            {r.label}
+                            {u.fullName}
                           </div>
                           <div className="text-[10px] font-mono text-slate-500 truncate">
-                            {userEmail}
+                            {u.email}
                           </div>
                         </button>
-                      );
-                    })}
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Switch to Public Catalog View */}
@@ -256,7 +268,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGoToPortal }) => {
         <div className="mt-6 text-center text-[11px] text-slate-600 font-mono">
           <span>DE FARDAS INDUSTRIAL · SÃO LUÍS - MA</span>
           <br />
-          <span>Sessões protegidas com HttpOnly e SameSite Strict</span>
+          <span>Sessões protegidas com HttpOnly, SameSite Lax e CSRF</span>
         </div>
 
       </div>

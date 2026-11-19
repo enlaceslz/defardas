@@ -35,10 +35,10 @@ export class PricingEngine {
    * Calcula o preço unitário e a margem com arredondamento contábil em 2 casas decimais.
    */
   public static calculateItemPricing(input: PricingInput): PricingResult {
-    const material = Number(input.materialUnitCost || 0);
-    const sewing = Number(input.outsourcedSewingUnitCost || 0);
-    const customization = Number(input.customizationUnitCost || 0);
-    const freight = Number(input.freightUnitCost || 0);
+    const material = Math.max(0, Number(input.materialUnitCost || 0));
+    const sewing = Math.max(0, Number(input.outsourcedSewingUnitCost || 0));
+    const customization = Math.max(0, Number(input.customizationUnitCost || 0));
+    const freight = Math.max(0, Number(input.freightUnitCost || 0));
     const lossPct = Math.max(0, Number(input.technicalLossPercentage || 0));
     const markupPct = Math.max(0, Number(input.markupPercentage || 0));
 

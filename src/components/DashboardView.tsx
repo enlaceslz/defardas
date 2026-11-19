@@ -98,12 +98,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   const getCategoryGroup = (cat: UniformCategory): string => {
-    if (['linha_operacional_pesada', 'brim_industrial'].includes(cat)) return 'operacional';
-    if (['administrativo_executivo', 'social_alfaiataria'].includes(cat)) return 'administrativo';
-    if (['linha_hospitalar_saude'].includes(cat)) return 'saude_branca';
-    if (['linha_escolar'].includes(cat)) return 'escolar';
-    if (['camisaria_fina_polo'].includes(cat)) return 'camisaria';
-    if (['nr10_retardante_chama'].includes(cat)) return 'seguranca_epi';
+    if (['operacional', 'calcas', 'macacoes'].includes(cat)) return 'operacional';
+    if (['linha_social'].includes(cat)) return 'administrativo';
+    if (['linha_hospitalar', 'jalecos'].includes(cat)) return 'saude_branca';
+    if (['polos', 'camisetas'].includes(cat)) return 'camisaria';
+    if (['coletes'].includes(cat)) return 'seguranca_epi';
+    if (['aventais_batas'].includes(cat)) return 'outros';
     return 'outros';
   };
 
@@ -131,6 +131,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   let sumBaseCost = 0;
   let sumSuggestedPrice = 0;
   let sumNegotiatedPrice = 0;
+  let sumMarkupPct = 0;
   let pricedCount = 0;
 
   orders.forEach((o) => {
@@ -138,16 +139,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sumBaseCost += o.costBreakdown.calculatedBaseCost;
       sumSuggestedPrice += o.costBreakdown.suggestedUnitPrice;
       sumNegotiatedPrice += (o.costBreakdown.negotiatedUnitPrice || o.costBreakdown.suggestedUnitPrice);
+      sumMarkupPct += (o.costBreakdown.markupPercentage || 0);
       pricedCount += 1;
     }
   });
 
-  const avgBaseCost = pricedCount > 0 ? (sumBaseCost / pricedCount) : 48.50;
-  const avgSuggestedPrice = pricedCount > 0 ? (sumSuggestedPrice / pricedCount) : 77.60;
-  const avgNegotiatedPrice = pricedCount > 0 ? (sumNegotiatedPrice / pricedCount) : 76.20;
+  if (pricedCount === 0) {
+    quotes.forEach((q) => {
+      q.items.forEach((it) => {
+        if (it.costBreakdown && it.costBreakdown.calculatedBaseCost > 0) {
+          sumBaseCost += it.costBreakdown.calculatedBaseCost;
+          sumSuggestedPrice += it.costBreakdown.suggestedUnitPrice;
+          sumNegotiatedPrice += (it.costBreakdown.negotiatedUnitPrice || it.costBreakdown.suggestedUnitPrice);
+          sumMarkupPct += (it.costBreakdown.markupPercentage || 0);
+          pricedCount += 1;
+        }
+      });
+    });
+  }
+
+  const avgBaseCost = pricedCount > 0 ? (sumBaseCost / pricedCount) : 0;
+  const avgSuggestedPrice = pricedCount > 0 ? (sumSuggestedPrice / pricedCount) : 0;
+  const avgNegotiatedPrice = pricedCount > 0 ? (sumNegotiatedPrice / pricedCount) : 0;
+  const avgMarkupPercent = pricedCount > 0 ? Math.round((sumMarkupPct / pricedCount) * 10) / 10 : 0;
   const avgEstimatedMargin = avgNegotiatedPrice > 0 
     ? Math.round(((avgNegotiatedPrice - avgBaseCost) / avgNegotiatedPrice) * 100) 
-    : 36;
+    : 0;
 
   // Upcoming priority orders
   const sortedUpcomingOrders = [...activeOrders].sort((a, b) => 
@@ -566,14 +583,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {/* Metric Column 2: Preço Sugerido */}
             <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200/90 space-y-2">
               <div className="flex items-center justify-between text-xs font-medium text-blue-900">
-                <span>Preço Sugerido (Markup k=60%)</span>
+                <span>Preço Sugerido (Markup médio k={avgMarkupPercent}%)</span>
                 <span className="font-mono text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold">Oficial</span>
               </div>
               <div className="text-2xl font-bold font-mono text-blue-950">
                 {formatCurrencyBRL(avgSuggestedPrice)}
               </div>
               <div className="text-[11px] text-blue-800">
-                Fórmula: Custo-Base × (1 + 60/100).
+                Fórmula: Custo-Base × (1 + {avgMarkupPercent}/100).
               </div>
             </div>
 
@@ -741,7 +758,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 return (
                   <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3 px-3 font-mono font-bold text-slate-900">
-                      {order.id}
+                      {order.orderNumber || order.id}
                     </td>
                     <td className="py-3 px-3">
                       <div className="font-semibold text-slate-800">{order.clientName}</div>

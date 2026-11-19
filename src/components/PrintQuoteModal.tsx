@@ -30,7 +30,7 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white no-print">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold">Proposta Comercial Formal</span>
-            <span className="text-xs text-slate-400 font-mono">[{quote.id} v{quote.version || 1}]</span>
+            <span className="text-xs text-slate-400 font-mono">[{quote.quoteNumber || quote.id} v{quote.version || 1}]</span>
           </div>
           <div className="flex items-center gap-3">
             {!isConverted && onApproveAndConvertToOrder && (
@@ -86,7 +86,7 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
                 Proposta Comercial de Fardamento
               </div>
               <div className="text-2xl font-black font-mono text-blue-700">
-                {quote.id} <span className="text-xs text-slate-500">v{quote.version || 1}</span>
+                {quote.quoteNumber || quote.id} <span className="text-xs text-slate-500">v{quote.version || 1}</span>
               </div>
               <div className="text-xs text-slate-600 mt-0.5 font-mono">
                 Data: {formatDateBR(quote.date)} · Válido até: {formatDateBR(quote.validUntil)}

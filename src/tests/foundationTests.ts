@@ -32,27 +32,29 @@ export class FoundationTestSuite {
 
     // Salvar token original do usuário ativo para restaurar no final da suíte
     const initialToken = api.getToken();
+    const devCredsRes = await api.getDevCredentials();
+    const devPassword = devCredsRes.status === 200 ? (devCredsRes.data?.defaultPassword || '') : '';
 
     // ========================================================================
     // TESTE 1: Bloqueio de Requisições Não Autenticadas (HTTP 401)
     // ========================================================================
     const t1Start = performance.now();
     try {
-      // Limpa token temporariamente
-      api.setToken(null);
-      const res = await api.getQuotes();
+      // Usa credentials: 'omit' para garantir ausência total de cookies HttpOnly e Bearer
+      const rawRes = await fetch('/api/quotes', { credentials: 'omit' });
+      const resBody = await rawRes.json().catch(() => ({}));
 
-      if (res.status === 401) {
+      if (rawRes.status === 401) {
         record({
           id: 'test-unauthenticated-blocked',
           name: 'Segurança: Bloqueio Obrigatório de Requisição Não Autenticada (HTTP 401)',
           category: 'seguranca_auth',
           status: 'passed',
-          evidence: `Requisição sem token de sessão para rota protegida /api/quotes rejeitada com HTTP 401: "${res.error}". Tentativa registrada na trilha de auditoria.`,
+          evidence: `Requisição anônima (sem cookie nem token) para /api/quotes rejeitada com HTTP 401: "${resBody.error || 'Acesso negado'}".`,
           durationMs: Math.round(performance.now() - t1Start),
         });
       } else {
-        throw new Error(`Servidor permitiu acesso anônimo ou retornou status inesperado ${res.status}`);
+        throw new Error(`Servidor permitiu acesso anônimo ou retornou status inesperado ${rawRes.status}`);
       }
     } catch (err: any) {
       record({
@@ -70,8 +72,9 @@ export class FoundationTestSuite {
     // ========================================================================
     const t2Start = performance.now();
     try {
-      // Tentar forjar cabeçalho de admin em fetch direto sem token de sessão
+      // Tentar forjar cabeçalho de admin em fetch direto sem token nem cookie de sessão
       const rawRes = await fetch('/api/orders', {
+        credentials: 'omit',
         headers: {
           'Content-Type': 'application/json',
           'x-user-role': 'admin',
@@ -107,14 +110,18 @@ export class FoundationTestSuite {
     // ========================================================================
     const t3Start = performance.now();
     try {
+      if (!devPassword) {
+        throw new Error('Credenciais de desenvolvimento indisponíveis (endpoint desabilitado em produção).');
+      }
+
       // 1. Falha com senha errada
       const failRes = await api.login('admin@defardas.com.br', 'SenhaIncorreta999!');
       if (failRes.status !== 401) {
         throw new Error(`Senha incorreta retornou status inesperado ${failRes.status}`);
       }
 
-      // 2. Sucesso com senha padrão de desenvolvimento
-      const successRes = await api.login('admin@defardas.com.br', 'DeFardas@2026!');
+      // 2. Sucesso com credencial de desenvolvimento carregada do backend
+      const successRes = await api.login('admin@defardas.com.br', devPassword);
       if (successRes.status === 200 && successRes.data?.token && successRes.data.user.role === 'admin') {
         record({
           id: 'test-bcrypt-login',
@@ -144,7 +151,7 @@ export class FoundationTestSuite {
     const t4Start = performance.now();
     try {
       // Autenticar como Vendedora (Mariana Alencar)
-      const sellerLogin = await api.login('vendas@defardas.com.br', 'DeFardas@2026!');
+      const sellerLogin = await api.login('vendas@defardas.com.br', devPassword);
       if (sellerLogin.status !== 200) {
         throw new Error('Falha ao autenticar com perfil vendedor para teste de RBAC.');
       }
@@ -153,7 +160,7 @@ export class FoundationTestSuite {
       const auditRes = await api.getAuditLogs(10);
 
       // Re-autenticar como Admin
-      await api.login('admin@defardas.com.br', 'DeFardas@2026!');
+      await api.login('admin@defardas.com.br', devPassword);
 
       if (auditRes.status === 403) {
         record({
@@ -168,7 +175,7 @@ export class FoundationTestSuite {
         throw new Error(`Vendedor conseguiu acessar recurso administrativo ou retornou status ${auditRes.status}`);
       }
     } catch (err: any) {
-      await api.login('admin@defardas.com.br', 'DeFardas@2026!');
+      if (devPassword) await api.login('admin@defardas.com.br', devPassword);
       record({
         id: 'test-rbac-enforcement',
         name: 'Governança RBAC: Bloqueio de Operação sem Alçada',
@@ -185,7 +192,7 @@ export class FoundationTestSuite {
     const t5Start = performance.now();
     try {
       // Autentica como vendedora
-      await api.login('vendas@defardas.com.br', 'DeFardas@2026!');
+      await api.login('vendas@defardas.com.br', devPassword);
 
       const quoteDiscountRes = await api.createQuote({
         clientName: 'Cliente Teste Alçada',
@@ -209,7 +216,7 @@ export class FoundationTestSuite {
       });
 
       // Restaura admin
-      await api.login('admin@defardas.com.br', 'DeFardas@2026!');
+      await api.login('admin@defardas.com.br', devPassword);
 
       if (quoteDiscountRes.status === 403 && quoteDiscountRes.code === 'DISCOUNT_REQUIRES_ADMIN_APPROVAL') {
         record({
@@ -224,7 +231,7 @@ export class FoundationTestSuite {
         throw new Error(`Vendedor conseguiu criar proposta com preço abaixo do sugerido ou retornou status ${quoteDiscountRes.status}`);
       }
     } catch (err: any) {
-      await api.login('admin@defardas.com.br', 'DeFardas@2026!');
+      if (devPassword) await api.login('admin@defardas.com.br', devPassword);
       record({
         id: 'test-discount-approval',
         name: 'Alçadas Comerciais: Preço Negociado < Sugerido',
@@ -307,7 +314,7 @@ export class FoundationTestSuite {
     const t8Start = performance.now();
     try {
       const quoteId = 'q1111111-1111-1111-1111-111111111111';
-      const idemKey = `idempotency_audit_${Date.now()}`;
+      const idemKey = 'convert_quote_q1111111_v1';
 
       await api.convertQuoteToOrder(quoteId, idemKey);
       const secondCall = await api.convertQuoteToOrder(quoteId, idemKey);
@@ -350,19 +357,26 @@ export class FoundationTestSuite {
         notes: 'Solicitação pelo Portal Público: Jalecos e scrubs com logo bordado.',
       };
 
-      const leadRes = await api.submitPublicLead(leadPayload);
+      // Dispara sem sessão e sem cookie CSRF para validar isenção pública real do Portal
+      const rawLeadRes = await fetch('/api/leads', {
+        method: 'POST',
+        credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(leadPayload),
+      });
+      const leadBody = await rawLeadRes.json().catch(() => ({}));
 
-      if (leadRes.status === 201 && leadRes.data?.lead?.leadNumber) {
+      if (rawLeadRes.status === 201 && leadBody?.lead?.leadNumber) {
         record({
           id: 'test-lead-public-access',
           name: 'Segregação de Ambientes: Captação Pública de Leads Permitida sem Autenticação',
           category: 'leads',
           status: 'passed',
-          evidence: `Lead ${leadRes.data.lead.leadNumber} captado com sucesso via POST público /api/leads e salvo no schema crm.leads sem exigir login do visitante.`,
+          evidence: `Lead ${leadBody.lead.leadNumber} captado com sucesso via POST anônimo /api/leads (sem cookie nem CSRF) e salvo no CRM.`,
           durationMs: Math.round(performance.now() - t9Start),
         });
       } else {
-        throw new Error(`Falha na captação pública de lead: status ${leadRes.status}`);
+        throw new Error(`Falha na captação pública de lead: status ${rawLeadRes.status} (${leadBody?.error || ''})`);
       }
     } catch (err: any) {
       record({

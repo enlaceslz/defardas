@@ -41,14 +41,17 @@ export class DatabaseManager {
 
   private async initDatabase() {
     const dbUrl = process.env.DATABASE_URL;
+    const isProd = process.env.NODE_ENV === 'production';
+
     if (dbUrl) {
       try {
         const client = await this.pgPool.connect();
         this.isConnectedToPostgres = true;
         client.release();
+        await sequenceService.ensurePostgresSequences();
         console.log('✅ [DATABASE] Conectado com sucesso ao PostgreSQL próprio da DE FARDAS via Drizzle ORM.');
       } catch (err) {
-        if (process.env.NODE_ENV === 'production') {
+        if (isProd) {
           console.error('❌ [DATABASE] Falha crítica de conexão com o PostgreSQL em produção (P0-001):', err);
         } else {
           console.warn('⚠️ [DATABASE] Conexão com PostgreSQL não disponível no ambiente local. Inicializando estrutura transacional de desenvolvimento.', err);
@@ -59,7 +62,10 @@ export class DatabaseManager {
       console.log('ℹ️ [DATABASE] DATABASE_URL não definida. Operando no modo de desenvolvimento transacional.');
     }
 
-    this.seedInitialDemoData();
+    // Nunca injetar dados demonstrativos em memória no ambiente de produção
+    if (!isProd && !this.isConnectedToPostgres) {
+      this.seedInitialDemoData();
+    }
   }
 
   public getDrizzle() {

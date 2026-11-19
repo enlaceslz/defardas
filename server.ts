@@ -1,8 +1,9 @@
 /**
  * DE FARDAS ERP — Full-Stack Server Entry Point
- * Conecta o backend modular Express com PostgreSQL / Data Store e monta o Vite dev server.
+ * Conecta o backend modular Express com PostgreSQL / Drizzle ORM e monta o Vite dev server.
  */
-import express from 'express';
+import 'dotenv/config';
+import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -20,6 +21,14 @@ import { auditRouter } from './server/routes/auditRoutes';
 import { migrationRouter } from './server/routes/migrationRoutes';
 import { communicationRouter } from './server/routes/communicationRoutes';
 import { db } from './server/db/connection';
+import {
+  clientRepository,
+  leadRepository,
+  quoteRepository,
+  orderRepository,
+  financeRepository,
+  inventoryRepository,
+} from './server/repositories/index';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,8 +39,27 @@ const isProd = process.env.NODE_ENV === 'production';
 async function bootstrap() {
   const app = express();
 
-  // Middlewares básicos
-  app.use(express.json({ limit: '10mb' }));
+  // Confiar no primeiro proxy reverso (Docker/Nginx/Cloud Run) para req.ip e cookies seguros
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
+
+  // Cabeçalhos defensivos de segurança HTTP (compatíveis com iframe preview)
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    next();
+  });
+
+  // Middlewares básicos (preserva rawBody para verificação HMAC de webhooks)
+  app.use(
+    express.json({
+      limit: '10mb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(cookieParser());
 
@@ -54,25 +82,55 @@ async function bootstrap() {
   app.use('/api/migration', migrationRouter);
 
   // Endpoint de Saúde e Diagnóstico da Fundação
-  app.get('/api/health', (_req, res) => {
-    res.json({
-      status: 'healthy',
-      app: 'DE FARDAS ERP & PCP Industrial',
-      version: '1.6.0-P0',
-      database: {
-        type: 'PostgreSQL',
-        connectedToRemote: db.isConnected(),
-        mode: db.isConnected() ? 'PostgreSQL Pool Ativo' : 'Transacional Resiliente',
-      },
-      counts: {
-        clients: db.clients.size,
-        leads: db.leads.size,
-        quotes: db.quotes.size,
-        orders: db.orders.size,
-        finance: db.finance.size,
-        inventory: db.inventory.size,
-      },
-      timestamp: new Date().toISOString(),
+  app.get('/api/health', async (_req: Request, res: Response) => {
+    try {
+      const [clientsList, leadsList, quotesList, ordersList, financeList, inventoryList] =
+        await Promise.all([
+          clientRepository.findAll(),
+          leadRepository.findAll(),
+          quoteRepository.findAll(),
+          orderRepository.findAll(),
+          financeRepository.findAll(),
+          inventoryRepository.findAllItems(),
+        ]);
+
+      res.json({
+        status: 'healthy',
+        app: 'DE FARDAS ERP & PCP Industrial',
+        version: '1.6.1',
+        database: {
+          type: 'PostgreSQL',
+          connectedToRemote: db.isConnected(),
+          mode: db.isConnected() ? 'PostgreSQL Pool Ativo (Drizzle ORM)' : 'Transacional Resiliente (Dev)',
+        },
+        counts: {
+          clients: clientsList.length,
+          leads: leadsList.length,
+          quotes: quotesList.length,
+          orders: ordersList.length,
+          finance: financeList.length,
+          inventory: inventoryList.length,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(503).json({
+        status: 'degraded',
+        error: isProd ? 'Erro ao verificar saúde do banco de dados.' : err.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
+  // Tratamento centralizado de erros na API (evita vazamento de stack traces em produção)
+  app.use('/api', (err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('❌ [API ERROR]', err);
+    const statusCode = err.status || err.statusCode || 500;
+    res.status(statusCode).json({
+      error: isProd && statusCode >= 500
+        ? 'Erro interno no servidor DE FARDAS ERP.'
+        : err.message || 'Erro inesperado ao processar requisição.',
+      code: err.code || 'INTERNAL_SERVER_ERROR',
     });
   });
 

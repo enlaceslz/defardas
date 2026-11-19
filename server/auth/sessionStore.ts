@@ -104,7 +104,7 @@ class SessionStore {
   }
 
   /**
-   * Recupera sessão válida pelo token
+   * Recupera sessão válida pelo token (cache em memória)
    */
   public getSession(token: string): SessionRecord | null {
     if (!token) return null;
@@ -119,6 +119,58 @@ class SessionStore {
     }
 
     return session;
+  }
+
+  /**
+   * Recupera sessão válida consultando PostgreSQL em caso de cache miss
+   */
+  public async getSessionAsync(token: string): Promise<SessionRecord | null> {
+    if (!token) return null;
+    const cached = this.getSession(token);
+    if (cached) return cached;
+
+    try {
+      const res = await pool.query<{
+        token: string;
+        user_id: string;
+        user_role: string;
+        user_full_name: string;
+        user_email: string;
+        created_at: Date;
+        expires_at: Date;
+        ip_address: string | null;
+        user_agent: string | null;
+      }>(
+        `SELECT token, user_id, user_role, user_full_name, user_email, created_at, expires_at, ip_address, user_agent
+         FROM core.sessions
+         WHERE token = $1 AND expires_at > NOW()
+         LIMIT 1`,
+        [token]
+      );
+
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        const record: SessionRecord = {
+          token: row.token,
+          user: {
+            id: row.user_id,
+            role: row.user_role as any,
+            fullName: row.user_full_name,
+            email: row.user_email,
+          },
+          createdAt: new Date(row.created_at),
+          expiresAt: new Date(row.expires_at),
+          ipAddress: row.ip_address || undefined,
+          userAgent: row.user_agent || undefined,
+        };
+        this.sessions.set(record.token, record);
+        return record;
+      }
+    } catch {
+      // Banco offline ou tabela não migrada ainda
+    }
+
+    return null;
   }
 
   /**
