@@ -1,4 +1,4 @@
-import { uuid, varchar, text, numeric, boolean, date, timestamp } from 'drizzle-orm/pg-core';
+import { uuid, varchar, text, numeric, integer, boolean, date, timestamp } from 'drizzle-orm/pg-core';
 import { producaoSchema, productionOrders } from './orders';
 import { estoqueSchema, items, movements } from './inventory';
 
@@ -12,12 +12,19 @@ export const partners = producaoSchema.table('partners', {
   email: varchar('email', { length: 150 }),
   address: text('address'),
   city: varchar('city', { length: 80 }).default('São Luís'),
+  state: varchar('state', { length: 2 }).default('MA'),
+  cep: varchar('cep', { length: 12 }),
   partnerType: varchar('partner_type', { length: 40 }).notNull().$type<
     'costura' | 'bordado' | 'silk_screen' | 'acabamento' | 'corte_externo'
   >(),
   capacityPiecesPerMonth: varchar('capacity_pieces_per_month', { length: 20 }),
+  defaultCostPerPiece: numeric('default_cost_per_piece', { precision: 10, scale: 2 }).default('0.00'),
+  leadTimeDays: integer('lead_time_days').notNull().default(5),
+  pixKey: varchar('pix_key', { length: 150 }),
   rating: numeric('rating', { precision: 3, scale: 2 }).default('5.00'),
+  notes: text('notes'),
   active: boolean('active').notNull().default(true),
+  isDemo: boolean('is_demo').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

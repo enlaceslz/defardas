@@ -20,6 +20,8 @@ import { migrationRouter } from './routes/migrationRoutes';
 import { communicationRouter } from './routes/communicationRoutes';
 import { lookupRouter } from './routes/lookupRoutes';
 import { partnersRouter } from './routes/partnersRoutes';
+import { suppliersRouter } from './routes/suppliersRoutes';
+import { notificationsRouter } from './routes/notificationsRoutes';
 import { db } from './db/connection';
 import {
   clientRepository,
@@ -29,6 +31,7 @@ import {
   financeRepository,
   inventoryRepository,
   partnerRepository,
+  supplierRepository,
 } from './repositories/index';
 
 export function createApiApp(): express.Express {
@@ -88,12 +91,14 @@ export function createApiApp(): express.Express {
   app.use('/api/migration', migrationRouter);
   app.use('/api/lookups', lookupRouter);
   app.use('/api/partners', partnersRouter);
+  app.use('/api/suppliers', suppliersRouter);
+  app.use('/api/notifications', notificationsRouter);
 
   // Endpoint de Saúde e Diagnóstico da Fundação
   app.get('/api/health', async (_req: Request, res: Response) => {
     try {
       await db.ensureReady();
-      const [clientsList, leadsList, quotesList, ordersList, financeList, inventoryList, partnersList] =
+      const [clientsList, leadsList, quotesList, ordersList, financeList, inventoryList, partnersList, suppliersList, purchaseOrdersList] =
         await Promise.all([
           clientRepository.findAll(),
           leadRepository.findAll(),
@@ -102,6 +107,8 @@ export function createApiApp(): express.Express {
           financeRepository.findAll(),
           inventoryRepository.findAllItems(),
           partnerRepository.findAll(),
+          supplierRepository.findAll(),
+          supplierRepository.findAllPurchaseOrders(),
         ]);
 
       res.json({
@@ -126,6 +133,8 @@ export function createApiApp(): express.Express {
           finance: financeList.length,
           inventory: inventoryList.length,
           partners: partnersList.length,
+          suppliers: suppliersList.length,
+          purchaseOrders: purchaseOrdersList.length,
         },
         timestamp: new Date().toISOString(),
       });

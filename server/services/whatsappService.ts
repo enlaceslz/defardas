@@ -1,14 +1,17 @@
 /**
  * DE FARDAS ERP — WhatsApp Omnichannel Service
  * Suporta Provedor Oficial (Meta WhatsApp Cloud API) e Provedor QR Code (WA-AKG isolado).
- * Garante idempotência (externalId), normalização DDI +55, validação HTTP real e rastreabilidade com CRM/PCP.
+ * Garante idempotência (externalId), normalização DDI +55, validação de mídia contra SSRF,
+ * diagnóstico real de provedores, vínculo com Clientes/Leads/Parceiros/Fornecedores e templates ERP.
  */
 import crypto from 'crypto';
 import { communicationRepository } from '../repositories/communicationRepository';
 import { clientRepository } from '../repositories/clientRepository';
 import { leadRepository } from '../repositories/leadRepository';
+import { partnerRepository } from '../repositories/partnerRepository';
+import { supplierRepository } from '../repositories/supplierRepository';
 import { auditService } from '../services/auditService';
-import { MessageEntity, ConversationEntity } from '../types/db';
+import { MessageEntity, ConversationEntity, WhatsAppChannelEntity } from '../types/db';
 
 export interface SendMessageOptions {
   conversationId: string;
@@ -21,7 +24,26 @@ export interface SendMessageOptions {
   mediaMimeType?: string;
 }
 
+export interface ChannelDiagnostics {
+  configured: boolean;
+  deliveryMode: 'live' | 'sandbox';
+  webhookPath: string;
+  missingEnvVars: string[];
+  hasWebhookSecret: boolean;
+}
+
 const VALID_CONVERSATION_STATUSES: ConversationEntity['status'][] = ['open', 'pending', 'resolved', 'closed'];
+
+const STAGE_DISPLAY_LABELS: Record<string, string> = {
+  aguardando_liberacao: 'Aguardando Liberação (Gate A.3.2)',
+  corte: 'Corte & Enfesto',
+  bordado_silk: 'Bordado / Silk-Screen',
+  costura: 'Costura & Facção',
+  conferencia_qualidade: 'Conferência de Qualidade',
+  retrabalho: 'Ajuste de Qualidade (Retrabalho)',
+  expedicao: 'Pronto para Expedição / Retirada',
+  entregue: 'Entregue',
+};
 
 /**
  * Normaliza telefones brasileiros para o formato canônico DDI+DDD+Número (ex: 5598988412090),
@@ -54,6 +76,64 @@ export function formatBrPhoneDisplay(rawPhone: string): string {
   return rawPhone.trim();
 }
 
+/**
+ * Valida URLs de mídia (artes, propostas, comprovantes) bloqueando esquemas perigosos
+ * e endereços internos/privados (loopback, RFC-1918 e metadados de nuvem).
+ */
+export function isSafeWhatsAppMediaUrl(url: string): boolean {
+  const trimmed = String(url || '').trim();
+  if (!trimmed || trimmed.length > 2048) return false;
+  if (trimmed.startsWith('/uploads/') && !trimmed.includes('..')) {
+    return true;
+  }
+  if (trimmed.startsWith('s3://') && trimmed.length > 8 && !trimmed.includes('..')) {
+    return true;
+  }
+  if (!trimmed.startsWith('https://') && !trimmed.startsWith('http://')) {
+    return false;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    if (!host) return false;
+    if (
+      host === 'localhost' ||
+      host === '::1' ||
+      host === '[::1]' ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^0\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
+      /^fc00:|^fd00:|^fe80:/i.test(host)
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPublicHttpUrl(url?: string): boolean {
+  if (!url) return false;
+  return (url.startsWith('https://') || url.startsWith('http://')) && isSafeWhatsAppMediaUrl(url);
+}
+
+/** Remove qualquer chave potencialmente sensível antes de retornar config de canal ao frontend */
+export function sanitizeChannelConfig(config?: Record<string, any>): Record<string, any> {
+  if (!config || typeof config !== 'object') return {};
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (/token|secret|key|password|auth/i.test(k)) continue;
+    clean[k] = v;
+  }
+  return clean;
+}
+
 /** Compara telefones tolerando presença ou ausência do DDI 55 */
 function phonesMatch(phoneA: string, phoneB: string): boolean {
   const a = normalizeBrWhatsAppDigits(phoneA);
@@ -69,7 +149,17 @@ function formatBRL(amount: number): string {
   }).format(Number.isFinite(amount) ? amount : 0);
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number = 8000): Promise<globalThis.Response> {
+function formatIsoDateBR(iso?: string): string {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return iso || '';
+  const [y, m, d] = iso.slice(0, 10).split('-');
+  return `${d}/${m}/${y}`;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = 8000
+): Promise<globalThis.Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -81,20 +171,161 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 export class WhatsAppService {
   private get metaToken() {
-    return process.env.META_WA_TOKEN;
+    return process.env.META_WA_TOKEN?.trim() || '';
   }
   private get metaPhoneNumberId() {
-    return process.env.META_WA_PHONE_NUMBER_ID;
+    return process.env.META_WA_PHONE_NUMBER_ID?.trim() || '';
+  }
+  private get metaAppSecret() {
+    return process.env.META_WA_APP_SECRET?.trim() || '';
   }
   private get waAkgEndpoint() {
-    return process.env.WA_AKG_ENDPOINT;
+    return (process.env.WA_AKG_ENDPOINT?.trim() || '').replace(/\/+$/, '');
   }
   private get waAkgApiKey() {
-    return process.env.WA_AKG_API_KEY;
+    return process.env.WA_AKG_API_KEY?.trim() || '';
   }
 
   /**
-   * Localiza ou cria uma conversa com normalização canônica de telefone e vínculo automático ao CRM.
+   * Retorna diagnóstico real do provedor sem expor tokens ou segredos.
+   */
+  public getChannelDiagnostics(channel: WhatsAppChannelEntity): ChannelDiagnostics {
+    if (channel.provider === 'meta_cloud') {
+      const missing: string[] = [];
+      if (!this.metaToken) missing.push('META_WA_TOKEN');
+      if (!this.metaPhoneNumberId) missing.push('META_WA_PHONE_NUMBER_ID');
+      const configured = missing.length === 0;
+      return {
+        configured,
+        deliveryMode: configured ? 'live' : 'sandbox',
+        webhookPath: '/api/communication/webhooks/meta',
+        missingEnvVars: missing,
+        hasWebhookSecret: Boolean(this.metaAppSecret),
+      };
+    }
+
+    const missing: string[] = [];
+    if (!this.waAkgEndpoint) missing.push('WA_AKG_ENDPOINT');
+    const configured = missing.length === 0;
+    return {
+      configured,
+      deliveryMode: configured ? 'live' : 'sandbox',
+      webhookPath: '/api/communication/webhooks/wa-akg',
+      missingEnvVars: missing,
+      hasWebhookSecret: Boolean(this.waAkgApiKey),
+    };
+  }
+
+  /**
+   * Testa a conectividade real com o provedor configurado (Meta Cloud API ou WA-AKG)
+   * e atualiza o status do canal com honestidade (sem simulação falsa de conectado).
+   */
+  public async checkAndReconnectChannel(
+    channel: WhatsAppChannelEntity,
+    actor: { id?: string; fullName: string; role: string }
+  ): Promise<{ channel: WhatsAppChannelEntity; diagnostics: ChannelDiagnostics; message: string }> {
+    const diagnostics = this.getChannelDiagnostics(channel);
+    const nowIso = new Date().toISOString();
+
+    if (!diagnostics.configured) {
+      channel.status = channel.provider === 'wa_akg' ? 'qr_ready' : 'disconnected';
+      channel.updatedAt = nowIso;
+      await communicationRepository.saveChannel(channel);
+
+      auditService.log({
+        actorId: actor.id,
+        actorName: actor.fullName,
+        actorRole: actor.role,
+        entityName: 'communication.channels',
+        entityId: channel.id,
+        action: 'RECONNECT_WHATSAPP_CHANNEL',
+        notes: `Verificação de canal ${channel.channelName}: modo sandbox local (variáveis pendentes: ${diagnostics.missingEnvVars.join(', ')}).`,
+      });
+
+      return {
+        channel,
+        diagnostics,
+        message: `Canal em modo local/sandbox. Configure ${diagnostics.missingEnvVars.join(' e ')} no ambiente do servidor para conexão externa real.`,
+      };
+    }
+
+    let message = 'Canal verificado e conectado com sucesso.';
+    if (channel.provider === 'meta_cloud') {
+      try {
+        const res = await fetchWithTimeout(
+          `https://graph.facebook.com/v21.0/${encodeURIComponent(this.metaPhoneNumberId)}?fields=display_phone_number,verified_name`,
+          {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${this.metaToken}` },
+          },
+          6000
+        );
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          channel.status = 'connected';
+          if (data?.display_phone_number && typeof data.display_phone_number === 'string') {
+            channel.phoneNumber = data.display_phone_number;
+          }
+          message = `Meta Cloud API conectada${data?.verified_name ? ` (${data.verified_name})` : ''}.`;
+        } else {
+          const errData = await res.json().catch(() => null);
+          channel.status = 'error';
+          message = errData?.error?.message || `Meta Cloud API respondeu HTTP ${res.status}.`;
+        }
+      } catch (err: any) {
+        channel.status = 'error';
+        message = `Falha ao contatar Meta Cloud API: ${err?.message || 'tempo esgotado'}.`;
+      }
+    } else {
+      try {
+        const res = await fetchWithTimeout(
+          `${this.waAkgEndpoint}/instance/connectionState`,
+          {
+            method: 'GET',
+            headers: { apikey: this.waAkgApiKey },
+          },
+          5000
+        );
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          const state = String(data?.state || data?.instance?.state || '').toLowerCase();
+          if (state === 'open' || state === 'connected') {
+            channel.status = 'connected';
+            channel.qrCode = undefined;
+            message = 'Container WA-AKG conectado e pronto para envios.';
+          } else {
+            channel.status = 'qr_ready';
+            message = 'Container WA-AKG acessível. Escaneie o QR Code para parear o aparelho.';
+          }
+        } else {
+          channel.status = 'error';
+          message = `Container WA-AKG retornou HTTP ${res.status}.`;
+        }
+      } catch (err: any) {
+        channel.status = 'error';
+        message = `Container WA-AKG inacessível no endpoint configurado (${err?.message || 'timeout'}).`;
+      }
+    }
+
+    channel.updatedAt = new Date().toISOString();
+    await communicationRepository.saveChannel(channel);
+
+    auditService.log({
+      actorId: actor.id,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      entityName: 'communication.channels',
+      entityId: channel.id,
+      action: 'RECONNECT_WHATSAPP_CHANNEL',
+      notes: `Reconexão/diagnóstico do canal ${channel.channelName} (${channel.provider}): status '${channel.status}'.`,
+    });
+
+    return { channel, diagnostics, message };
+  }
+
+  /**
+   * Localiza ou cria uma conversa com normalização canônica de telefone e vínculo automático
+   * ao CRM (Clientes/Leads), Parceiros/Facções e Fornecedores.
    */
   public async startOrFindConversation(params: {
     phone: string;
@@ -113,18 +344,27 @@ export class WhatsAppService {
     const remoteJid = `${canonicalDigits}@s.whatsapp.net`;
     const existing = await communicationRepository.findConversationByRemoteJid(remoteJid);
     if (existing) {
+      let changed = false;
       if (existing.status === 'closed' || existing.status === 'resolved') {
         existing.status = 'open';
+        changed = true;
+      }
+      if (params.clientId && !existing.clientId) {
+        existing.clientId = params.clientId;
+        changed = true;
+      }
+      if (changed) {
         existing.updatedAt = new Date().toISOString();
         await communicationRepository.saveConversation(existing);
       }
       return existing;
     }
 
-    // Vincular cliente / lead automaticamente se não informado
-    const [allClients, allLeads, allChannels] = await Promise.all([
+    const [allClients, allLeads, allPartners, allSuppliers, allChannels] = await Promise.all([
       clientRepository.findAll(),
       leadRepository.findAll(),
+      partnerRepository.findAll(),
+      supplierRepository.findAll(),
       communicationRepository.findAllChannels(),
     ]);
 
@@ -132,15 +372,25 @@ export class WhatsAppService {
       (params.clientId ? allClients.find((c) => c.id === params.clientId) : undefined) ||
       allClients.find((c) => phonesMatch(c.phone, canonicalDigits));
     const matchedLead = allLeads.find((l) => phonesMatch(l.phone, canonicalDigits));
+    const matchedPartner = allPartners.find((p) => phonesMatch(p.phone, canonicalDigits));
+    const matchedSupplier = allSuppliers.find((s) => phonesMatch(s.phone, canonicalDigits));
 
     const targetChannel =
       (params.channelId ? allChannels.find((c) => c.id === params.channelId) : undefined) ||
       allChannels.find((c) => c.isActive && c.status === 'connected') ||
+      allChannels.find((c) => c.isActive) ||
       allChannels[0];
 
     if (!targetChannel) {
       throw new Error('Nenhum canal WhatsApp configurado no ERP.');
     }
+
+    const tags: string[] = [];
+    if (matchedClient) tags.push('cliente_ativo');
+    if (matchedLead) tags.push('lead_crm');
+    if (matchedPartner) tags.push('parceiro_faccao');
+    if (matchedSupplier) tags.push('fornecedor_insumos');
+    if (tags.length === 0) tags.push('atendimento_ativo');
 
     const now = new Date().toISOString();
     const conv: ConversationEntity = {
@@ -150,9 +400,11 @@ export class WhatsAppService {
       leadId: matchedLead?.id,
       remoteJid,
       customerName:
-        params.customerName?.trim() ||
+        params.customerName?.trim().slice(0, 120) ||
         matchedClient?.contactName ||
         matchedClient?.tradeName ||
+        matchedSupplier?.tradeName ||
+        matchedPartner?.tradeName ||
         matchedLead?.clientName ||
         formatBrPhoneDisplay(canonicalDigits),
       customerPhone: formatBrPhoneDisplay(canonicalDigits),
@@ -160,7 +412,7 @@ export class WhatsAppService {
       unreadCount: 0,
       lastMessageText: '',
       lastMessageAt: now,
-      tags: matchedClient ? ['cliente_ativo'] : matchedLead ? ['lead_crm'] : ['atendimento_ativo'],
+      tags,
       createdAt: now,
       updatedAt: now,
     };
@@ -181,12 +433,18 @@ export class WhatsAppService {
   }
 
   /**
-   * Envia mensagem para um contato via canal configurado com validação HTTP real.
+   * Envia mensagem de texto, imagem, documento ou template via canal configurado com validação HTTP real.
    */
   public async sendMessage(options: SendMessageOptions): Promise<MessageEntity> {
     const cleanBody = String(options.body || '').trim();
     if (!cleanBody) {
       throw new Error('O corpo da mensagem não pode estar vazio.');
+    }
+    if (cleanBody.length > 4096) {
+      throw new Error('A mensagem excede o limite de 4.096 caracteres do WhatsApp.');
+    }
+    if (options.mediaUrl && !isSafeWhatsAppMediaUrl(options.mediaUrl)) {
+      throw new Error('URL de mídia não permitida. Use um link público https://, s3:// ou /uploads/.');
     }
 
     const conv = await communicationRepository.findConversationById(options.conversationId);
@@ -205,6 +463,14 @@ export class WhatsAppService {
     const messageId = crypto.randomUUID();
     let externalId = `wa_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const targetDigits = normalizeBrWhatsAppDigits(conv.customerPhone || conv.remoteJid);
+    const cleanMediaUrl = options.mediaUrl?.trim();
+    const resolvedType: MessageEntity['messageType'] =
+      options.messageType ||
+      (cleanMediaUrl
+        ? /\.(png|jpe?g|webp|gif)(\?|$)/i.test(cleanMediaUrl)
+          ? 'image'
+          : 'document'
+        : 'text');
 
     const newMsg: MessageEntity = {
       id: messageId,
@@ -212,9 +478,9 @@ export class WhatsAppService {
       externalId,
       direction: 'outbound',
       senderName: options.senderName || 'Atendimento DE FARDAS',
-      messageType: options.messageType || 'text',
+      messageType: resolvedType,
       body: cleanBody,
-      mediaUrl: options.mediaUrl,
+      mediaUrl: cleanMediaUrl,
       mediaMimeType: options.mediaMimeType,
       status: 'sent',
       createdAt: new Date().toISOString(),
@@ -223,19 +489,41 @@ export class WhatsAppService {
     // Disparo real conforme provedor configurado com validação de resposta HTTP
     if (channel.provider === 'meta_cloud' && this.metaToken && this.metaPhoneNumberId) {
       try {
-        const metaUrl = `https://graph.facebook.com/v21.0/${this.metaPhoneNumberId}/messages`;
+        const metaUrl = `https://graph.facebook.com/v21.0/${encodeURIComponent(this.metaPhoneNumberId)}/messages`;
+        const canSendPublicMedia = Boolean(cleanMediaUrl && isPublicHttpUrl(cleanMediaUrl));
+        let metaPayload: Record<string, any>;
+
+        if (canSendPublicMedia && resolvedType === 'image') {
+          metaPayload = {
+            messaging_product: 'whatsapp',
+            to: targetDigits,
+            type: 'image',
+            image: { link: cleanMediaUrl, caption: cleanBody },
+          };
+        } else if (canSendPublicMedia && resolvedType === 'document') {
+          metaPayload = {
+            messaging_product: 'whatsapp',
+            to: targetDigits,
+            type: 'document',
+            document: { link: cleanMediaUrl, caption: cleanBody },
+          };
+        } else {
+          const composedText = cleanMediaUrl ? `${cleanBody}\n\nAnexo: ${cleanMediaUrl}` : cleanBody;
+          metaPayload = {
+            messaging_product: 'whatsapp',
+            to: targetDigits,
+            type: 'text',
+            text: { body: composedText },
+          };
+        }
+
         const res = await fetchWithTimeout(metaUrl, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${this.metaToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: targetDigits,
-            type: 'text',
-            text: { body: cleanBody },
-          }),
+          body: JSON.stringify(metaPayload),
         });
 
         const payload = await res.json().catch(() => null);
@@ -255,16 +543,27 @@ export class WhatsAppService {
       }
     } else if (channel.provider === 'wa_akg' && this.waAkgEndpoint) {
       try {
-        const res = await fetchWithTimeout(`${this.waAkgEndpoint}/message/sendText`, {
+        const canSendPublicMedia = Boolean(cleanMediaUrl && isPublicHttpUrl(cleanMediaUrl));
+        const endpointPath = canSendPublicMedia ? '/message/sendMedia' : '/message/sendText';
+        const waBody = canSendPublicMedia
+          ? {
+              number: targetDigits,
+              mediatype: resolvedType === 'image' ? 'image' : 'document',
+              media: cleanMediaUrl,
+              caption: cleanBody,
+            }
+          : {
+              number: targetDigits,
+              text: cleanMediaUrl ? `${cleanBody}\n\nAnexo: ${cleanMediaUrl}` : cleanBody,
+            };
+
+        const res = await fetchWithTimeout(`${this.waAkgEndpoint}${endpointPath}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            apikey: this.waAkgApiKey || '',
+            apikey: this.waAkgApiKey,
           },
-          body: JSON.stringify({
-            number: targetDigits,
-            text: cleanBody,
-          }),
+          body: JSON.stringify(waBody),
         });
 
         const payload = await res.json().catch(() => null);
@@ -382,9 +681,18 @@ export class WhatsAppService {
     }
 
     const canonicalDigits = normalizeBrWhatsAppDigits(payload.fromPhone);
+    if (canonicalDigits.length < 10) {
+      throw new Error('Telefone de origem inválido no payload do webhook.');
+    }
+
+    const safeBody = String(payload.body || '').trim().slice(0, 4096) || '[Mídia recebida]';
+    const safeName = String(payload.fromName || '').trim().slice(0, 120);
+    const safeMediaUrl =
+      payload.mediaUrl && isSafeWhatsAppMediaUrl(payload.mediaUrl) ? payload.mediaUrl.trim() : undefined;
+
     const remoteJid = `${canonicalDigits}@s.whatsapp.net`;
 
-    // Resolver canal de destino dinamicamente por ID ou provedor
+    // Resolver canal de destino dinamicamente por ID ou provedor (sempre UUID válido)
     let resolvedChannelId = payload.channelId;
     if (!resolvedChannelId && payload.provider) {
       const ch = await communicationRepository.findChannelByProvider(payload.provider);
@@ -392,18 +700,32 @@ export class WhatsAppService {
     }
     if (!resolvedChannelId) {
       const all = await communicationRepository.findAllChannels();
-      resolvedChannelId = all[0]?.id || 'ch-meta-official';
+      resolvedChannelId = all[0]?.id;
+    }
+    if (!resolvedChannelId) {
+      throw new Error('Nenhum canal WhatsApp cadastrado para receber mensagens.');
     }
 
     let conv = await communicationRepository.findConversationByRemoteJid(remoteJid);
     if (!conv) {
-      const [allClients, allLeads] = await Promise.all([
+      const [allClients, allLeads, allPartners, allSuppliers] = await Promise.all([
         clientRepository.findAll(),
         leadRepository.findAll(),
+        partnerRepository.findAll(),
+        supplierRepository.findAll(),
       ]);
 
       const matchedClient = allClients.find((c) => phonesMatch(c.phone, canonicalDigits));
       const matchedLead = allLeads.find((l) => phonesMatch(l.phone, canonicalDigits));
+      const matchedPartner = allPartners.find((p) => phonesMatch(p.phone, canonicalDigits));
+      const matchedSupplier = allSuppliers.find((s) => phonesMatch(s.phone, canonicalDigits));
+
+      const tags: string[] = [];
+      if (matchedClient) tags.push('cliente_ativo');
+      if (matchedLead) tags.push('lead_crm');
+      if (matchedPartner) tags.push('parceiro_faccao');
+      if (matchedSupplier) tags.push('fornecedor_insumos');
+      if (tags.length === 0) tags.push('novo_contato');
 
       const now = new Date().toISOString();
       conv = {
@@ -413,24 +735,26 @@ export class WhatsAppService {
         leadId: matchedLead?.id,
         remoteJid,
         customerName:
-          payload.fromName?.trim() ||
+          safeName ||
           matchedClient?.contactName ||
           matchedClient?.tradeName ||
+          matchedSupplier?.tradeName ||
+          matchedPartner?.tradeName ||
           matchedLead?.clientName ||
           formatBrPhoneDisplay(canonicalDigits),
         customerPhone: formatBrPhoneDisplay(canonicalDigits),
         status: 'open',
         unreadCount: 1,
-        lastMessageText: payload.body,
+        lastMessageText: safeBody,
         lastMessageAt: now,
-        tags: matchedClient ? ['cliente_ativo'] : matchedLead ? ['lead_crm'] : ['novo_contato'],
+        tags,
         createdAt: now,
         updatedAt: now,
       };
       await communicationRepository.saveConversation(conv);
     } else {
       conv.unreadCount += 1;
-      conv.lastMessageText = payload.body;
+      conv.lastMessageText = safeBody;
       conv.lastMessageAt = new Date().toISOString();
       if (conv.status === 'resolved' || conv.status === 'closed') {
         conv.status = 'open';
@@ -439,7 +763,7 @@ export class WhatsAppService {
       await communicationRepository.saveConversation(conv);
     }
 
-    const messageType: MessageEntity['messageType'] = payload.mediaUrl
+    const messageType: MessageEntity['messageType'] = safeMediaUrl
       ? payload.mediaMimeType?.startsWith('audio/')
         ? 'audio'
         : payload.mediaMimeType?.startsWith('image/')
@@ -452,10 +776,10 @@ export class WhatsAppService {
       conversationId: conv.id,
       externalId: payload.externalId || `in_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
       direction: 'inbound',
-      senderName: payload.fromName || conv.customerName,
+      senderName: safeName || conv.customerName,
       messageType,
-      body: payload.body,
-      mediaUrl: payload.mediaUrl,
+      body: safeBody,
+      mediaUrl: safeMediaUrl,
       mediaMimeType: payload.mediaMimeType,
       status: 'delivered',
       createdAt: new Date().toISOString(),
@@ -464,7 +788,7 @@ export class WhatsAppService {
     await communicationRepository.saveMessage(newMsg);
 
     auditService.log({
-      actorName: payload.fromName || canonicalDigits,
+      actorName: safeName || canonicalDigits,
       actorRole: 'cliente_whatsapp',
       entityName: 'communication.messages',
       entityId: newMsg.id,
@@ -476,7 +800,7 @@ export class WhatsAppService {
   }
 
   /**
-   * Atualiza status de entrega/leitura vindo do webhook da Meta (sent -> delivered -> read -> failed).
+   * Atualiza status de entrega/leitura vindo do webhook da Meta ou WA-AKG (sent -> delivered -> read -> failed).
    */
   public async handleDeliveryStatusUpdate(
     externalId: string,
@@ -495,7 +819,7 @@ export class WhatsAppService {
   }
 
   /**
-   * Template: Envio de Proposta Comercial para o Cliente (valores formatados em pt-BR)
+   * Template 1: Envio de Proposta Comercial para o Cliente
    */
   public async sendQuoteTemplate(
     quoteNumber: string,
@@ -504,12 +828,12 @@ export class WhatsAppService {
     amount: number,
     actor?: { id?: string; fullName: string; role: string }
   ) {
-    const body = `Olá, ${clientName}!\n\nSua proposta comercial *${quoteNumber}* da *DE FARDAS* no valor total de *${formatBRL(amount)}* está pronta!\n\n*Condições:* 50% de Sinal para Liberação de Corte + 50% na Entrega.\n\nPara aprovar ou tirar dúvidas, basta responder a esta mensagem.`;
+    const body = `Olá, ${clientName}!\n\nSua proposta comercial *${quoteNumber}* da *DE FARDAS* no valor total de *${formatBRL(amount)}* está pronta!\n\n*Condições:* 50% de Sinal para Liberação de Corte + 50% na Entrega.\n\nPara aprovar ou solicitar ajustes no layout, basta responder a esta mensagem.`;
     return this.findOrCreateAndSend(clientPhone, clientName, body, 'template', actor);
   }
 
   /**
-   * Template: Notificação de Confirmação de Sinal 50% e Liberação de OP
+   * Template 2: Confirmação de Sinal 50% e Liberação de OP (Gate A.3.2)
    */
   public async sendDownpaymentConfirmedTemplate(
     orderNumber: string,
@@ -518,8 +842,93 @@ export class WhatsAppService {
     voucherNumber: string,
     actor?: { id?: string; fullName: string; role: string }
   ) {
-    const body = `*Comprovante Confirmado — DE FARDAS*\n\nOlá, ${clientName}! Confirmamos o recebimento do sinal de 50% referente à Ordem de Produção *${orderNumber}* (Autenticação: ${voucherNumber}).\n\nSeu pedido foi formalmente liberado para a etapa de *Corte e Produção*! Avisaremos a cada avanço.`;
+    const body = `*Comprovante Confirmado — DE FARDAS*\n\nOlá, ${clientName}! Confirmamos o recebimento do sinal de 50% referente à Ordem de Produção *${orderNumber}* (Autenticação: ${voucherNumber}).\n\nO requisito financeiro do Portão Fabril foi liberado! Avisaremos a cada etapa da produção.`;
     return this.findOrCreateAndSend(clientPhone, clientName, body, 'template', actor);
+  }
+
+  /**
+   * Template 3: Solicitação Formal de Aprovação de Arte / Layout (Gate A.3.2)
+   */
+  public async sendArtApprovalTemplate(params: {
+    clientPhone: string;
+    clientName: string;
+    referenceNumber: string;
+    artVersion?: number;
+    artFileUrl?: string;
+    actor?: { id?: string; fullName: string; role: string };
+  }) {
+    const verLabel = params.artVersion ? ` (v${params.artVersion})` : '';
+    const linkLine = params.artFileUrl ? `\nArquivo da arte: ${params.artFileUrl}\n` : '\n';
+    const body = `*Aprovação de Layout / Arte${verLabel} — DE FARDAS*\n\nOlá, ${params.clientName}! A arte personalizada referente a *${params.referenceNumber}* está disponível para conferência.${linkLine}\nPor favor, responda com *APROVADO* para liberarmos o corte na fábrica (Gate A.3.2), ou informe os ajustes desejados.`;
+    return this.findOrCreateAndSend(
+      params.clientPhone,
+      params.clientName,
+      body,
+      'template',
+      params.actor,
+      params.artFileUrl && isSafeWhatsAppMediaUrl(params.artFileUrl) ? params.artFileUrl : undefined
+    );
+  }
+
+  /**
+   * Template 4: Atualização de Etapa de Produção / Prazo de Entrega (PCP)
+   */
+  public async sendOrderStageUpdateTemplate(params: {
+    clientPhone: string;
+    clientName: string;
+    orderNumber: string;
+    stage: string;
+    targetDeliveryDate?: string;
+    actor?: { id?: string; fullName: string; role: string };
+  }) {
+    const stageLabel = STAGE_DISPLAY_LABELS[params.stage] || params.stage;
+    const deliveryLine = params.targetDeliveryDate
+      ? `\n*Previsão de entrega:* ${formatIsoDateBR(params.targetDeliveryDate)}`
+      : '';
+    const body = `*Atualização de Produção — DE FARDAS*\n\nOlá, ${params.clientName}! Sua Ordem de Produção *${params.orderNumber}* avançou para a etapa: *${stageLabel}*.${deliveryLine}\n\nQualquer dúvida, nossa equipe está à disposição por aqui!`;
+    return this.findOrCreateAndSend(params.clientPhone, params.clientName, body, 'template', params.actor);
+  }
+
+  /**
+   * Template 5: Envio de Pedido de Compra (PC) ao Fornecedor
+   */
+  public async sendPurchaseOrderTemplate(params: {
+    supplierPhone: string;
+    supplierName: string;
+    poNumber: string;
+    amount: number;
+    expectedDeliveryDate?: string;
+    itemsSummary?: string;
+    actor?: { id?: string; fullName: string; role: string };
+  }) {
+    const deliveryLine = params.expectedDeliveryDate
+      ? `\n*Entrega prevista:* ${formatIsoDateBR(params.expectedDeliveryDate)}`
+      : '';
+    const itemsLine = params.itemsSummary ? `\n*Itens:* ${params.itemsSummary}` : '';
+    const body = `*Pedido de Compra ${params.poNumber} — DE FARDAS*\n\nOlá, ${params.supplierName}! Segue nosso Pedido de Compra *${params.poNumber}* no valor total de *${formatBRL(params.amount)}*.${itemsLine}${deliveryLine}\n\nPor favor, confirme o recebimento, disponibilidade e previsão de faturamento/envio.`;
+    return this.findOrCreateAndSend(params.supplierPhone, params.supplierName, body, 'template', params.actor);
+  }
+
+  /**
+   * Template 6: Lembrete de Pagamento (Sinal 50% ou Saldo na Entrega)
+   */
+  public async sendPaymentReminderTemplate(params: {
+    clientPhone: string;
+    clientName: string;
+    referenceNumber: string;
+    amount: number;
+    dueDate?: string;
+    pixKey?: string;
+    paymentLabel?: string;
+    actor?: { id?: string; fullName: string; role: string };
+  }) {
+    const label = params.paymentLabel || 'Sinal de 50% (Liberação de Produção)';
+    const dueLine = params.dueDate ? `\n*Vencimento:* ${formatIsoDateBR(params.dueDate)}` : '';
+    const pixLine = params.pixKey
+      ? `\n*Chave PIX oficial:* ${params.pixKey}`
+      : '\n*Chave PIX oficial:* CNPJ da DE FARDAS';
+    const body = `*Lembrete Financeiro — DE FARDAS*\n\nOlá, ${params.clientName}! Lembramos que está em aberto o título de *${label}* referente a *${params.referenceNumber}* no valor de *${formatBRL(params.amount)}*.${dueLine}${pixLine}\n\nAssim que efetuar o pagamento, envie o comprovante por aqui para registro e liberação imediata!`;
+    return this.findOrCreateAndSend(params.clientPhone, params.clientName, body, 'template', params.actor);
   }
 
   private async findOrCreateAndSend(
@@ -527,7 +936,8 @@ export class WhatsAppService {
     name: string,
     body: string,
     messageType: 'text' | 'template' = 'template',
-    actor?: { id?: string; fullName: string; role: string }
+    actor?: { id?: string; fullName: string; role: string },
+    mediaUrl?: string
   ) {
     const conv = await this.startOrFindConversation({
       phone,
@@ -537,14 +947,17 @@ export class WhatsAppService {
       actorRole: actor?.role || 'system',
     });
 
-    return this.sendMessage({
+    const msg = await this.sendMessage({
       conversationId: conv.id,
       body,
       messageType,
+      mediaUrl,
       senderId: actor?.id,
       senderName: actor?.fullName || 'DE FARDAS (Sistema ERP)',
       senderRole: actor?.role || 'system',
     });
+
+    return { conversation: conv, message: msg };
   }
 }
 

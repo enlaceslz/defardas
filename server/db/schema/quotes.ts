@@ -42,14 +42,21 @@ export const quotes = crmSchema.table('quotes', {
   paymentTerms: text('payment_terms').notNull().default('50% Sinal (Liberação de Corte) + 50% na Entrega'),
   productionLeadDays: integer('production_lead_days').notNull().default(16),
   
-  // Aceite Formal de Arte
+  // Aceite Formal de Arte e Versionamento de Artes (Desacoplado do Aceite Comercial)
+  artStatus: varchar('art_status', { length: 30 }).notNull().default('pendente').$type<
+    'pendente' | 'enviada_para_cliente' | 'revisao_solicitada' | 'aprovada'
+  >(),
   artApproved: boolean('art_approved').notNull().default(false),
   artApprovedBy: varchar('art_approved_by', { length: 100 }),
   artApprovalDate: timestamp('art_approval_date', { withTimezone: true }),
   artFileUrl: text('art_file_url'),
   artNotes: text('art_notes'),
+  artVersions: jsonb('art_versions').default([]),
+  versionHistory: jsonb('version_history').default([]),
   
-  // Rastreabilidade de Aceite por WhatsApp / Formal
+  // Rastreabilidade de Aceite Comercial por WhatsApp / Formal
+  approvedByName: varchar('approved_by_name', { length: 120 }),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
   acceptanceChannel: varchar('acceptance_channel', { length: 30 }).default('whatsapp').$type<
     'whatsapp' | 'email' | 'presencial'
   >(),

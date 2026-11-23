@@ -18,6 +18,8 @@ import {
   ShieldAlert,
   LogOut,
   Handshake,
+  CalendarClock,
+  Truck,
 } from 'lucide-react';
 import { CompanyProfile } from '../types/erp';
 import { useAuth } from '../api/authContext';
@@ -28,12 +30,16 @@ interface SidebarProps {
   activeOrdersCount: number;
   activePiecesCount: number;
   blockedOrdersCount: number;
+  overdueOrdersCount?: number;
   lowStockCount: number;
+  openPurchaseOrdersCount?: number;
+  delayedPurchaseOrdersCount?: number;
   openCustodyCount?: number;
   newLeadsCount?: number;
   pendingQuotesCount: number;
   pendingDownpaymentsCount: number;
   overdueFinanceCount: number;
+  whatsappUnreadCount?: number;
   profile: CompanyProfile;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -65,12 +71,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeOrdersCount,
   activePiecesCount,
   blockedOrdersCount,
+  overdueOrdersCount = 0,
   lowStockCount,
+  openPurchaseOrdersCount = 0,
+  delayedPurchaseOrdersCount = 0,
   openCustodyCount = 0,
   newLeadsCount = 0,
   pendingQuotesCount,
   pendingDownpaymentsCount,
   overdueFinanceCount,
+  whatsappUnreadCount = 0,
   profile,
   isCollapsed,
   onToggleCollapse,
@@ -86,6 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Permissões alinhadas estritamente com server/auth/rbac.ts
   const canCreateOrder = ['admin', 'gerente_comercial', 'pcp_producao'].includes(role);
   const canCreateQuote = ['admin', 'gerente_comercial', 'vendedor'].includes(role);
+  const canViewSuppliers = ['admin', 'pcp_producao', 'financeiro', 'gerente_comercial'].includes(role);
   const canViewPartners = ['admin', 'gerente_comercial', 'pcp_producao', 'expedicao_qualidade', 'financeiro'].includes(role);
   const canViewFinance = ['admin', 'financeiro', 'gerente_comercial'].includes(role);
   const canViewWhatsApp = ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role);
@@ -150,12 +161,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: 'orders',
           label: 'Ordens de Produção',
           icon: Factory,
-          badge: activeOrdersCount > 0 ? `${activeOrdersCount} OPs` : null,
+          badge:
+            overdueOrdersCount > 0
+              ? `${overdueOrdersCount} atras.`
+              : activeOrdersCount > 0
+                ? `${activeOrdersCount} OPs`
+                : null,
           badgeStyle:
-            blockedOrdersCount > 0
+            overdueOrdersCount > 0 || blockedOrdersCount > 0
               ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold'
               : 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
-          isAlertDot: blockedOrdersCount > 0,
+          isAlertDot: blockedOrdersCount > 0 || overdueOrdersCount > 0,
           dotColor: 'bg-rose-400',
         },
         {
@@ -167,6 +183,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
           isAlertDot: lowStockCount > 0,
           dotColor: 'bg-amber-400',
         },
+        ...(canViewSuppliers
+          ? [
+              {
+                id: 'suppliers',
+                label: 'Fornecedores & Compras',
+                icon: Truck,
+                badge:
+                  delayedPurchaseOrdersCount > 0
+                    ? `${delayedPurchaseOrdersCount} atras.`
+                    : openPurchaseOrdersCount > 0
+                      ? `${openPurchaseOrdersCount} ${openPurchaseOrdersCount === 1 ? 'PC' : 'PCs'}`
+                      : null,
+                badgeStyle:
+                  delayedPurchaseOrdersCount > 0
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold'
+                    : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold',
+                isAlertDot: delayedPurchaseOrdersCount > 0,
+                dotColor: 'bg-rose-400',
+              },
+            ]
+          : []),
         ...(canViewPartners
           ? [
               {
@@ -203,8 +240,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 id: 'whatsapp',
                 label: 'Central WhatsApp',
                 icon: MessageSquare,
-                badge: null,
-                badgeStyle: '',
+                badge:
+                  whatsappUnreadCount > 0
+                    ? `${whatsappUnreadCount} ${whatsappUnreadCount === 1 ? 'nova' : 'novas'}`
+                    : null,
+                badgeStyle:
+                  'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold',
+                isAlertDot: whatsappUnreadCount > 0,
+                dotColor: 'bg-emerald-400',
               },
             ]
           : []),
@@ -445,6 +488,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>{capacityTotal.toLocaleString('pt-BR')} pçs/mês</span>
             </div>
           </div>
+        )}
+
+        {/* Overdue Production Orders Callout (Expanded only) */}
+        {!isCollapsed && overdueOrdersCount > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              onSelectTab('orders');
+              onCloseMobile();
+            }}
+            className="w-full p-2 bg-rose-950/60 border border-rose-700/70 rounded-lg text-xs cursor-pointer hover:bg-rose-900/50 transition-colors text-left"
+          >
+            <div className="flex items-center justify-between font-bold text-rose-200 text-[11px]">
+              <div className="flex items-center gap-1.5">
+                <CalendarClock className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                <span>
+                  {overdueOrdersCount} {overdueOrdersCount === 1 ? 'OP em atraso' : 'OPs em atraso'}
+                </span>
+              </div>
+              <span className="text-[10px] text-rose-400">&rarr;</span>
+            </div>
+          </button>
         )}
 
         {/* Gate A.3.2 Blocked Orders Callout (Expanded only) */}

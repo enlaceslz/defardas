@@ -10,3 +10,4 @@ export * from './financeRepository';
 export * from './inventoryRepository';
 export * from './communicationRepository';
 export * from './partnerRepository';
+export * from './supplierRepository';

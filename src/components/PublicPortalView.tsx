@@ -148,9 +148,19 @@ export const PublicPortalView: React.FC<PublicPortalViewProps> = ({
               <ArrowRight className="w-4 h-4" />
             </button>
             <a
-              href={`https://wa.me/5598981354130?text=Olá,%20gostaria%20de%20solicitar%20um%20orçamento%20de%20uniformes%20da%20DE%20FARDAS`}
+              href={(() => {
+                const rawDigits = String(profile.phone || '').replace(/\D/g, '');
+                const waDigits =
+                  rawDigits.length >= 12
+                    ? rawDigits
+                    : rawDigits.length >= 10
+                      ? `55${rawDigits}`
+                      : '5598981354130';
+                const msg = `Olá, gostaria de solicitar um orçamento de uniformes da ${profile.tradeName || 'DE FARDAS'}`;
+                return `https://wa.me/${waDigits}?text=${encodeURIComponent(msg)}`;
+              })()}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg border border-slate-700 transition-colors"
             >
               <MessageSquare className="w-4 h-4 text-emerald-400" />

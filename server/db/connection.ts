@@ -14,7 +14,9 @@ import {
   InventoryItemEntity, 
   StockMovementEntity,
   PartnerEntity,
-  PartnerCustodyEntity
+  PartnerCustodyEntity,
+  SupplierEntity,
+  PurchaseOrderEntity
 } from '../types/db';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
@@ -36,6 +38,8 @@ export class DatabaseManager {
   public movements: Map<string, StockMovementEntity> = new Map();
   public partners: Map<string, PartnerEntity> = new Map();
   public partnerCustodies: Map<string, PartnerCustodyEntity> = new Map();
+  public suppliers: Map<string, SupplierEntity> = new Map();
+  public purchaseOrders: Map<string, PurchaseOrderEntity> = new Map();
   public channels: Map<string, any> = new Map();
   public conversations: Map<string, any> = new Map();
   public messages: Map<string, any> = new Map();
@@ -139,7 +143,99 @@ export class DatabaseManager {
     this.clients.set(c1.id, c1);
     this.clients.set(c2.id, c2);
 
-    // 2. Estoque
+    // 2. Fornecedores Homologados (Tecidos, Malhas & Aviamentos)
+    const sup1: SupplierEntity = {
+      id: 'sup11111-1111-1111-1111-111111111111',
+      code: 'FOR-2026-0001',
+      companyName: 'CIA. DE TECIDOS SANTANENSE S/A',
+      tradeName: 'Malharia Santanense',
+      cnpj: '21.255.567/0001-89',
+      stateRegistration: '062.019.442.00-88',
+      contactName: 'Roberto Nogueira (Rep. Nordeste)',
+      phone: '(98) 98210-7740',
+      email: 'pedidos.nordeste@santanense.com.br',
+      address: 'Av. Industrial, 1450 - Distrito Industrial',
+      city: 'Itaúna',
+      state: 'MG',
+      cep: '35680-000',
+      category: 'tecidos_malhas',
+      paymentTerms: '28/56 dias no boleto',
+      paymentTermsDays: 28,
+      defaultPaymentMethod: 'boleto',
+      pixKey: '21.255.567/0001-89',
+      bankDetails: 'Banco do Brasil · Ag 0412-X · CC 44812-0',
+      leadTimeDays: 10,
+      minOrderValue: 2500.00,
+      rating: 4.9,
+      notes: 'Fornecedor principal de Malha Piquet PA 50/50, PV anti-pilling e tecidos profissionais Workwear.',
+      active: true,
+      isDemo: true,
+      createdAt: '2026-01-05T08:00:00Z',
+      updatedAt: '2026-10-18T09:00:00Z',
+    };
+    const sup2: SupplierEntity = {
+      id: 'sup22222-2222-2222-2222-222222222222',
+      code: 'FOR-2026-0002',
+      companyName: 'CIA. DE FIAÇÃO E TECIDOS CEDRO E CACHOEIRA',
+      tradeName: 'Cedro Têxtil Workwear',
+      cnpj: '17.245.234/0001-00',
+      stateRegistration: '062.001.298.00-41',
+      contactName: 'Juliana Peixoto',
+      phone: '(31) 99144-6020',
+      email: 'comercial.workwear@cedro.com.br',
+      address: 'Av. Afonso Pena, 867 - Centro',
+      city: 'Belo Horizonte',
+      state: 'MG',
+      cep: '30130-905',
+      category: 'tecidos_malhas',
+      paymentTerms: '30/60 dias',
+      paymentTermsDays: 30,
+      defaultPaymentMethod: 'boleto',
+      pixKey: '17.245.234/0001-00',
+      bankDetails: 'Itaú Empresas · Ag 0910 · CC 88120-5',
+      leadTimeDays: 12,
+      minOrderValue: 3500.00,
+      rating: 4.85,
+      notes: 'Linha Brim Pesado 100% Algodão, Sarja Profissional e tecidos antichama NR-10.',
+      active: true,
+      isDemo: true,
+      createdAt: '2026-01-08T08:30:00Z',
+      updatedAt: '2026-10-10T11:00:00Z',
+    };
+    const sup3: SupplierEntity = {
+      id: 'sup33333-3333-3333-3333-333333333333',
+      code: 'FOR-2026-0003',
+      companyName: 'CASA DOS AVIAMENTOS MARANHÃO DISTRIBUIDORA LTDA',
+      tradeName: 'Casa dos Aviamentos MA',
+      cnpj: '11.842.309/0001-52',
+      stateRegistration: '12.388.912-1',
+      contactName: 'Cláudio Henrique Lima',
+      phone: '(98) 98834-5599',
+      email: 'vendas@aviamentosma.com.br',
+      address: 'Rua Oswaldo Cruz, 610 - Centro',
+      city: 'São Luís',
+      state: 'MA',
+      cep: '65020-280',
+      category: 'aviamentos',
+      paymentTerms: '15 dias ou PIX à vista (5% desc.)',
+      paymentTermsDays: 15,
+      defaultPaymentMethod: 'pix',
+      pixKey: '11.842.309/0001-52',
+      bankDetails: 'Bradesco · Ag 1094 · CC 20194-2',
+      leadTimeDays: 2,
+      minOrderValue: 300.00,
+      rating: 4.95,
+      notes: 'Entrega rápida em São Luís: linhas de costura industrial, botões, zíperes, entretelas e faixas refletivas 3M.',
+      active: true,
+      isDemo: true,
+      createdAt: '2026-01-12T09:00:00Z',
+      updatedAt: '2026-10-19T14:00:00Z',
+    };
+    this.suppliers.set(sup1.id, sup1);
+    this.suppliers.set(sup2.id, sup2);
+    this.suppliers.set(sup3.id, sup3);
+
+    // 2b. Estoque (vinculado aos fornecedores homologados)
     const m1: InventoryItemEntity = {
       id: 'm1111111-1111-1111-1111-111111111111',
       code: 'MAT-2026-0301',
@@ -151,7 +247,8 @@ export class DatabaseManager {
       inPartnersCustodyStock: 60.00,
       minStock: 100.00,
       unitCostPrice: 36.50,
-      supplier: 'Malharia Santanense',
+      supplierId: sup1.id,
+      supplier: sup1.tradeName,
       location: 'Prateleira A1 - Rolo Master',
       lastRestocked: '2026-10-18',
       isDemo: true,
@@ -169,7 +266,8 @@ export class DatabaseManager {
       inPartnersCustodyStock: 180.00,
       minStock: 200.00,
       unitCostPrice: 22.80,
-      supplier: 'Cedro Têxtil Workwear',
+      supplierId: sup2.id,
+      supplier: sup2.tradeName,
       location: 'Prateleira B2 - Enfesto',
       lastRestocked: '2026-10-10',
       isDemo: true,
@@ -288,6 +386,7 @@ export class DatabaseManager {
           description: 'Bordado logomarca alta definição no peito',
           location: 'Peito Esquerdo',
           unitCost: 6.50,
+          partnerName: 'Bordados São Luís',
         }
       ],
       commercialStatus: 'aprovado',
@@ -316,6 +415,8 @@ export class DatabaseManager {
       transactionNumber: 'FIN-2026-5001',
       productionOrderId: op1.id,
       quoteId: q1.id,
+      clientId: op1.clientId,
+      clientName: op1.clientName,
       type: 'receber',
       subType: 'entrada_pedido',
       description: 'Sinal 50% - Proposta ORC-2026-1001 (Hospital Guará)',
@@ -331,23 +432,25 @@ export class DatabaseManager {
     };
     this.finance.set(fin1.id, fin1);
 
-    // 7. Canais WhatsApp (Meta WhatsApp Cloud API e WA-AKG QR Code)
+    // 7. Canais WhatsApp (Meta WhatsApp Cloud API e WA-AKG QR Code) — UUIDs canônicos compatíveis com PostgreSQL
+    const hasMetaConfigured = Boolean(process.env.META_WA_TOKEN && process.env.META_WA_PHONE_NUMBER_ID);
+    const hasWaAkgConfigured = Boolean(process.env.WA_AKG_ENDPOINT);
     const ch1 = {
-      id: 'ch-meta-official',
+      id: 'a1111111-1111-4111-8111-111111111111',
       provider: 'meta_cloud',
       channelName: 'DE FARDAS — WhatsApp Business Cloud (Oficial)',
       phoneNumber: '+55 98 98841-2090',
-      status: 'connected',
+      status: hasMetaConfigured ? 'connected' : 'disconnected',
       isActive: true,
       createdAt: '2026-10-01T08:00:00Z',
       updatedAt: '2026-10-01T08:00:00Z',
     };
     const ch2 = {
-      id: 'ch-wa-akg-qr',
+      id: 'a2222222-2222-4222-8222-222222222222',
       provider: 'wa_akg',
       channelName: 'DE FARDAS — WA-AKG (Conexão QR Code)',
       phoneNumber: '+55 98 98123-4567',
-      status: 'connected',
+      status: hasWaAkgConfigured ? 'connected' : 'qr_ready',
       qrCode: null,
       isActive: true,
       createdAt: '2026-10-01T08:00:00Z',
@@ -358,7 +461,7 @@ export class DatabaseManager {
 
     // Conversa demonstrativa do Hospital Guará
     const conv1 = {
-      id: 'conv-hospital-guara',
+      id: 'b1111111-1111-4111-8111-111111111111',
       channelId: ch1.id,
       clientId: c1.id,
       remoteJid: '5598988412090@s.whatsapp.net',
@@ -375,7 +478,7 @@ export class DatabaseManager {
     this.conversations.set(conv1.id, conv1);
 
     const msg1 = {
-      id: 'msg-001',
+      id: 'd1111111-1111-4111-8111-111111111111',
       conversationId: conv1.id,
       direction: 'outbound',
       senderName: 'Atendimento DE FARDAS',
@@ -385,7 +488,7 @@ export class DatabaseManager {
       createdAt: '2026-10-20T10:15:00Z',
     };
     const msg2 = {
-      id: 'msg-002',
+      id: 'd2222222-2222-4222-8222-222222222222',
       conversationId: conv1.id,
       direction: 'inbound',
       senderName: 'Dra. Camila Vasconcelos',
@@ -516,6 +619,70 @@ export class DatabaseManager {
       updatedAt: '2026-10-21T09:30:00Z',
     };
     this.partnerCustodies.set(cust1.id, cust1);
+
+    // 10. Pedido de Compra demonstrativo (PC-2026-0001) integrado ao Estoque & Financeiro
+    const po1: PurchaseOrderEntity = {
+      id: 'po111111-1111-1111-1111-111111111111',
+      poNumber: 'PC-2026-0001',
+      supplierId: sup1.id,
+      supplierName: sup1.tradeName,
+      relatedOrderId: op1.id,
+      relatedOrderNumber: op1.orderNumber,
+      status: 'confirmado',
+      orderDate: '2026-11-15',
+      expectedDeliveryDate: '2026-11-25',
+      items: [
+        {
+          id: 'poi-1111',
+          itemId: m1.id,
+          itemCode: m1.code,
+          itemName: m1.name,
+          unit: m1.unit,
+          quantity: 120,
+          receivedQuantity: 0,
+          unitCost: 36.50,
+          subtotal: 4380.00,
+        },
+      ],
+      subtotalAmount: 4380.00,
+      freightCost: 220.00,
+      discountAmount: 0,
+      totalAmount: 4600.00,
+      paymentTerms: sup1.paymentTerms,
+      paymentMethod: sup1.defaultPaymentMethod,
+      dueDate: '2026-12-15',
+      notes: 'Reposição programada de Malha Piquet PA Azul Marinho com frete CIF São Luís.',
+      createdByName: 'Carlos Eduardo Silva',
+      isDemo: true,
+      createdAt: '2026-11-15T10:00:00Z',
+      updatedAt: '2026-11-16T09:00:00Z',
+    };
+    this.purchaseOrders.set(po1.id, po1);
+
+    // Provisão de Contas a Pagar vinculada ao Pedido de Compra PC-2026-0001
+    const finPo1: FinancialTransactionEntity = {
+      id: 'fin-forn-1',
+      transactionNumber: 'FIN-2026-5002',
+      productionOrderId: op1.id,
+      supplierId: sup1.id,
+      supplierName: sup1.tradeName,
+      purchaseOrderId: po1.id,
+      purchaseOrderNumber: po1.poNumber,
+      type: 'pagar',
+      subType: 'compra_tecido',
+      description: `Compra ${po1.poNumber} · ${sup1.tradeName} (120 kg Malha Piquet PA)`,
+      category: 'Matéria-Prima & Tecidos',
+      amount: 4600.00,
+      dueDate: '2026-12-15',
+      status: 'pendente',
+      paymentMethod: 'boleto',
+      referenceId: po1.poNumber,
+      isProvision: true,
+      isDemo: true,
+      createdAt: '2026-11-16T09:00:00Z',
+      updatedAt: '2026-11-16T09:00:00Z',
+    };
+    this.finance.set(finPo1.id, finPo1);
   }
 }
 

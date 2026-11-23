@@ -268,12 +268,42 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
                 <span className="font-semibold text-slate-700">Status da Arte/Layout: </span>
                 <span
                   className={`font-semibold ${
-                    quote.artApproved ? 'text-emerald-700' : 'text-amber-700'
+                    quote.artApproved
+                      ? 'text-emerald-700'
+                      : quote.artStatus === 'revisao_solicitada'
+                      ? 'text-amber-800'
+                      : 'text-amber-700'
                   }`}
                 >
-                  {quote.artApproved ? 'Aprovada' : 'Pendente de aprovação formal'}
+                  {quote.artApproved
+                    ? `Aprovada${quote.artApprovedBy ? ` por ${quote.artApprovedBy}` : ''}`
+                    : quote.artStatus === 'revisao_solicitada'
+                    ? 'Em revisão solicitada pelo cliente (corte retido até aprovação final)'
+                    : quote.artStatus === 'enviada_para_cliente'
+                    ? 'Enviada ao cliente — aguardando aceite formal'
+                    : 'Pendente de envio e aprovação formal'}
                 </span>
               </div>
+              {quote.approvedByName && (
+                <div>
+                  <span className="font-semibold text-slate-700">Aceite Comercial: </span>
+                  <span className="text-emerald-700 font-semibold">
+                    {quote.approvedByName} ({quote.acceptanceChannel || 'whatsapp'})
+                  </span>
+                </div>
+              )}
+              {quote.artFileUrl && quote.artFileUrl.startsWith('data:image/') && (
+                <div className="pt-2">
+                  <span className="text-[10px] font-semibold uppercase text-slate-500 block mb-1">
+                    Referência Visual da Arte Armazenada:
+                  </span>
+                  <img
+                    src={quote.artFileUrl}
+                    alt={`Arte da proposta ${quote.quoteNumber || quote.id}`}
+                    className="max-h-24 rounded border border-slate-200 bg-white p-1 object-contain"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col justify-between text-xs space-y-2">

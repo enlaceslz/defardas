@@ -3,9 +3,15 @@ import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { financeRepository } from '../repositories/financeRepository';
 import { orderRepository } from '../repositories/orderRepository';
+import { partnerRepository } from '../repositories/partnerRepository';
+import { supplierRepository } from '../repositories/supplierRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { FinancialTransactionEntity } from '../types/db';
+import {
+  buildGlobalPartnerForecast,
+  computePartnerOrderAssignment,
+} from '../services/partnerFinanceService';
 
 export const financeRouter = Router();
 
@@ -62,17 +68,46 @@ function withEffectiveStatus(trx: FinancialTransactionEntity, todayISO = getToda
 // Exigir autenticação para todas as rotas financeiras
 financeRouter.use(requireAuth);
 
-// Listar transações financeiras com detecção de vencidos
+// Listar transações financeiras com detecção de vencidos e enriquecimento de OP/Cliente/Parceiro
 financeRouter.get('/transactions', requirePermission('finance:view'), async (_req: RequestWithUser, res: Response) => {
   const todayISO = getTodayISO();
-  const allTrx = await financeRepository.findAll();
-  res.json(allTrx.map((t) => withEffectiveStatus(t, todayISO)));
+  const [allTrx, ordersList, partnersList] = await Promise.all([
+    financeRepository.findAll(),
+    orderRepository.findAll(),
+    partnerRepository.findAll(),
+  ]);
+
+  const orderById = new Map(ordersList.map((o) => [o.id, o]));
+  const orderByNumber = new Map(ordersList.map((o) => [o.orderNumber, o]));
+  const partnerById = new Map(partnersList.map((p) => [p.id, p]));
+
+  res.json(
+    allTrx.map((raw) => {
+      const t = withEffectiveStatus(raw, todayISO);
+      const linkedOrder =
+        (t.productionOrderId ? orderById.get(t.productionOrderId) : undefined) ||
+        (t.referenceId ? orderByNumber.get(t.referenceId) : undefined);
+      const linkedPartner = t.partnerId ? partnerById.get(t.partnerId) : undefined;
+      return {
+        ...t,
+        partnerName: t.partnerName || linkedPartner?.tradeName,
+        clientId: t.clientId || linkedOrder?.clientId,
+        clientName: t.clientName || linkedOrder?.clientName,
+        orderNumber: linkedOrder?.orderNumber || t.referenceId,
+      };
+    })
+  );
 });
 
-// Resumo executivo autoritativo do Fluxo de Caixa (Controladoria)
+// Resumo executivo autoritativo do Fluxo de Caixa (Controladoria + Provisão de Parceiros CP)
 financeRouter.get('/summary', requirePermission('finance:view'), async (_req: RequestWithUser, res: Response) => {
   const todayISO = getTodayISO();
-  const allTrx = (await financeRepository.findAll()).map((t) => withEffectiveStatus(t, todayISO));
+  const [rawTrx, partnersList, ordersList] = await Promise.all([
+    financeRepository.findAll(),
+    partnerRepository.findAll(),
+    orderRepository.findAll(),
+  ]);
+  const allTrx = rawTrx.map((t) => withEffectiveStatus(t, todayISO));
 
   let receivablesPending = 0;
   let receivablesOverdue = 0;
@@ -119,6 +154,10 @@ financeRouter.get('/summary', requirePermission('finance:view'), async (_req: Re
 
   const realizedCashBalance = round2(totalReceived - totalPaidOut);
   const projectedNetBalance = round2(realizedCashBalance + receivablesPending - payablesPending);
+  const partnerForecast = buildGlobalPartnerForecast(partnersList, ordersList, rawTrx, todayISO);
+  const projectedNetWithPartnerProvisions = round2(
+    projectedNetBalance - partnerForecast.summary.totalUnbilledProvision
+  );
 
   res.json({
     asOfDate: todayISO,
@@ -130,10 +169,12 @@ financeRouter.get('/summary', requirePermission('finance:view'), async (_req: Re
     totalPaidOut: round2(totalPaidOut),
     realizedCashBalance,
     projectedNetBalance,
+    projectedNetWithPartnerProvisions,
     pendingDownpaymentsCount,
     pendingDownpaymentsAmount: round2(pendingDownpaymentsAmount),
     reversedCount,
     reversedAmount: round2(reversedAmount),
+    partnerPayables: partnerForecast.summary,
   });
 });
 
@@ -180,9 +221,10 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
 
   let productionOrderId: string | undefined = payload.productionOrderId || undefined;
   let referenceId: string | undefined = payload.referenceId ? String(payload.referenceId).trim() : undefined;
+  let linkedOrder = undefined;
 
   if (productionOrderId) {
-    const linkedOrder = await orderRepository.findById(productionOrderId);
+    linkedOrder = (await orderRepository.findById(productionOrderId)) || undefined;
     if (!linkedOrder) {
       return res.status(404).json({ error: 'Ordem de Produção vinculada não encontrada.' });
     }
@@ -191,12 +233,82 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
     }
   }
 
+  let partnerId: string | undefined =
+    typeof payload.partnerId === 'string' && payload.partnerId.trim() ? payload.partnerId.trim() : undefined;
+  let partnerName: string | undefined =
+    typeof payload.partnerName === 'string' && payload.partnerName.trim() ? payload.partnerName.trim() : undefined;
+  let linkedPartner = undefined;
+
+  if (partnerId) {
+    linkedPartner = (await partnerRepository.findById(partnerId)) || undefined;
+    if (!linkedPartner) {
+      return res.status(404).json({ error: 'Parceiro terceirizado vinculado não encontrado.' });
+    }
+    partnerName = linkedPartner.tradeName;
+  }
+
+  let supplierId: string | undefined =
+    typeof payload.supplierId === 'string' && payload.supplierId.trim() ? payload.supplierId.trim() : undefined;
+  let supplierName: string | undefined =
+    typeof payload.supplierName === 'string' && payload.supplierName.trim() ? payload.supplierName.trim() : undefined;
+  let purchaseOrderId: string | undefined =
+    typeof payload.purchaseOrderId === 'string' && payload.purchaseOrderId.trim() ? payload.purchaseOrderId.trim() : undefined;
+  let purchaseOrderNumber: string | undefined =
+    typeof payload.purchaseOrderNumber === 'string' && payload.purchaseOrderNumber.trim()
+      ? payload.purchaseOrderNumber.trim()
+      : undefined;
+
+  if (purchaseOrderId) {
+    const linkedPO = await supplierRepository.findPurchaseOrderById(purchaseOrderId);
+    if (!linkedPO) {
+      return res.status(404).json({ error: 'Pedido de Compra vinculado não encontrado.' });
+    }
+    purchaseOrderNumber = linkedPO.poNumber;
+    supplierId = supplierId || linkedPO.supplierId;
+    supplierName = supplierName || linkedPO.supplierName;
+    if (!referenceId) referenceId = linkedPO.invoiceNumber || linkedPO.poNumber;
+  }
+
+  if (supplierId) {
+    const linkedSupplier = await supplierRepository.findById(supplierId);
+    if (!linkedSupplier) {
+      return res.status(404).json({ error: 'Fornecedor vinculado não encontrado.' });
+    }
+    supplierName = linkedSupplier.tradeName;
+  }
+
+  const clientId: string | undefined =
+    linkedOrder?.clientId ||
+    (typeof payload.clientId === 'string' && payload.clientId.trim() ? payload.clientId.trim() : undefined);
+  const clientName: string | undefined =
+    linkedOrder?.clientName ||
+    (typeof payload.clientName === 'string' && payload.clientName.trim() ? payload.clientName.trim() : undefined);
+
+  const computedAssignment =
+    linkedPartner && linkedOrder ? computePartnerOrderAssignment(linkedPartner, linkedOrder) : null;
+  const serviceReference: string | undefined =
+    (typeof payload.serviceReference === 'string' && payload.serviceReference.trim()) ||
+    computedAssignment?.serviceReference ||
+    undefined;
+
+  const isProvision = Boolean(payload.isProvision);
+
   const trxNumber = await sequenceService.nextFinanceNumberAsync();
   const newTrx: FinancialTransactionEntity = {
     id: crypto.randomUUID(),
     transactionNumber: trxNumber,
     productionOrderId,
-    quoteId: payload.quoteId || undefined,
+    quoteId: payload.quoteId || linkedOrder?.quoteId || undefined,
+    partnerId,
+    partnerName,
+    supplierId,
+    supplierName,
+    purchaseOrderId,
+    purchaseOrderNumber,
+    clientId,
+    clientName,
+    serviceReference,
+    isProvision,
     type,
     subType,
     description,
@@ -221,7 +333,7 @@ financeRouter.post('/transactions', requirePermission('finance:create_transactio
     entityId: newTrx.transactionNumber,
     action: 'CREATE_TRANSACTION',
     newData: newTrx,
-    notes: `Lançamento ${newTrx.transactionNumber} (${newTrx.type}/${newTrx.subType}) de R$ ${newTrx.amount.toFixed(2)} cadastrado.`,
+    notes: `Lançamento ${newTrx.transactionNumber} (${newTrx.type}/${newTrx.subType}) de R$ ${newTrx.amount.toFixed(2)} cadastrado${partnerName ? ` — Parceiro: ${partnerName}` : ''}${clientName ? ` — Cliente: ${clientName}` : ''}.`,
   });
 
   res.status(201).json(withEffectiveStatus(newTrx));

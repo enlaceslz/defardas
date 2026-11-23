@@ -40,9 +40,15 @@ export const productionOrders = producaoSchema.table('production_orders', {
   >(),
   
   // Portão Rígido de Liberação Fabril (Gate A.3.2)
+  artStatus: varchar('art_status', { length: 30 }).notNull().default('pendente').$type<
+    'pendente' | 'enviada_para_cliente' | 'revisao_solicitada' | 'aprovada'
+  >(),
   artApproved: boolean('art_approved').notNull().default(false),
   artApprovalDate: timestamp('art_approval_date', { withTimezone: true }),
   artApprovedBy: varchar('art_approved_by', { length: 100 }),
+  artFileUrl: text('art_file_url'),
+  artVersionNumber: integer('art_version_number'),
+  artRevisionNotes: text('art_revision_notes'),
   
   entryPaymentConfirmed: boolean('entry_payment_confirmed').notNull().default(false),
   entryReceiptUrl: text('entry_receipt_url'),
@@ -54,6 +60,7 @@ export const productionOrders = producaoSchema.table('production_orders', {
   creationDate: date('creation_date').notNull(),
   targetDeliveryDate: date('target_delivery_date').notNull(),
   completionDate: date('completion_date'),
+  stageSchedule: jsonb('stage_schedule').default([]),
   
   outsourcedPartner: varchar('outsourced_partner', { length: 100 }),
   partnerCostPerPiece: numeric('partner_cost_per_piece', { precision: 10, scale: 2 }).default('0.00'),

@@ -6,6 +6,7 @@ export * from './leads';
 export * from './quotes';
 export * from './orders';
 export * from './inventory';
+export * from './suppliers';
 export * from './partners';
 export * from './finance';
 export * from './communication';

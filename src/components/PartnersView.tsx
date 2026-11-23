@@ -31,10 +31,12 @@ import {
   Partner,
   PartnerCustody,
   PartnerDetailResponse,
+  PartnerFinancialForecastResponse,
+  PartnerForecastRow,
   PartnerServiceCategory,
+  EnrichedPartnerOrder,
   InventoryItem,
   ProductionOrder,
-  FinancialTransaction,
 } from '../types/erp';
 import { formatCurrencyBRL, formatDateBR, getStageLabel } from '../utils/formatters';
 import {
@@ -52,6 +54,7 @@ import { api } from '../api/client';
 interface PartnersViewProps {
   partners: Partner[];
   custodyList: PartnerCustody[];
+  forecast?: PartnerFinancialForecastResponse | null;
   inventory: InventoryItem[];
   orders: ProductionOrder[];
   onSavePartner: (payload: Partial<Partner>, existingId?: string) => Promise<boolean>;
@@ -74,7 +77,21 @@ interface PartnersViewProps {
       notes?: string;
     }
   ) => Promise<boolean>;
-  onCreateServicePayable: (trx: FinancialTransaction) => Promise<void>;
+  onCreatePartnerProvision: (
+    partnerId: string,
+    payload: {
+      productionOrderId?: string;
+      clientId?: string;
+      clientName?: string;
+      serviceReference?: string;
+      description?: string;
+      category?: string;
+      amount: number;
+      dueDate: string;
+      paymentMethod: 'pix' | 'boleto' | 'transferencia' | 'cartao';
+      isProvision?: boolean;
+    }
+  ) => Promise<boolean>;
   onOpenWhatsApp: (partner: Partner) => Promise<void>;
   onNavigateTab: (tab: string) => void;
 }
@@ -142,16 +159,43 @@ const CUSTODY_STATUS_META: Record<
   },
 };
 
+const FORECAST_STATUS_META: Record<
+  PartnerForecastRow['paymentStatus'],
+  { label: string; badgeClass: string }
+> = {
+  atrasado: {
+    label: 'CP Atrasado',
+    badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
+  },
+  a_provisionar: {
+    label: 'A Provisionar',
+    badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  },
+  parcial_cp: {
+    label: 'Parcial / A Provisionar',
+    badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+  },
+  cp_lancado: {
+    label: 'CP Lançado',
+    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
+  },
+  quitado: {
+    label: 'Quitado',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  },
+};
+
 export const PartnersView: React.FC<PartnersViewProps> = ({
   partners,
   custodyList,
+  forecast,
   inventory,
   orders,
   onSavePartner,
   onDeletePartner,
   onDispatchCustody,
   onReturnCustody,
-  onCreateServicePayable,
+  onCreatePartnerProvision,
   onOpenWhatsApp,
   onNavigateTab,
 }) => {
@@ -159,16 +203,18 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
   const role = user?.role || '';
 
   const canManage = ['admin', 'gerente_comercial', 'pcp_producao'].includes(role);
-  const canManageCustody = ['admin', 'pcp_producao', 'expedicao_qualidade'].includes(role);
+  const canManageCustody = ['admin', 'pcp_producao'].includes(role);
   const canDelete = role === 'admin';
-  const canCreatePayable = ['admin', 'financeiro'].includes(role);
+  const canProvisionPayable = ['admin', 'financeiro', 'pcp_producao', 'gerente_comercial'].includes(role);
+  const canViewFinance = ['admin', 'financeiro', 'gerente_comercial'].includes(role);
   const canWhatsApp = ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role);
 
-  const [activeSection, setActiveSection] = useState<'partners' | 'custody'>('partners');
+  const [activeSection, setActiveSection] = useState<'partners' | 'forecast' | 'custody'>('partners');
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | PartnerServiceCategory>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('active');
   const [custodyFilter, setCustodyFilter] = useState<'open' | 'all'>('open');
+  const [forecastFilter, setForecastFilter] = useState<'open' | 'all' | 'atrasado' | 'a_provisionar' | 'quitado'>('open');
 
   // Create / Edit Partner Modal
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -218,15 +264,23 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
   const [returnSubmitting, setReturnSubmitting] = useState(false);
   const [returnError, setReturnError] = useState('');
 
-  // Quick Service Payable Modal
+  // Provision / Service Payable Modal
   const [payablePartner, setPayablePartner] = useState<Partner | null>(null);
   const [payableOrderId, setPayableOrderId] = useState('');
+  const [payableClientName, setPayableClientName] = useState('');
+  const [payableServiceRef, setPayableServiceRef] = useState('');
   const [payableDescription, setPayableDescription] = useState('');
   const [payableAmount, setPayableAmount] = useState<number>(0);
   const [payableDueDate, setPayableDueDate] = useState(
     new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0]
   );
   const [payableMethod, setPayableMethod] = useState<'pix' | 'transferencia' | 'boleto'>('pix');
+  const [payableContext, setPayableContext] = useState<{
+    contractedAmount: number;
+    paidAmount: number;
+    pendingCpAmount: number;
+    unbilledProvisionAmount: number;
+  } | null>(null);
   const [payableSubmitting, setPayableSubmitting] = useState(false);
 
   // KPIs
@@ -248,11 +302,27 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
       (c) => c.status === 'em_custodia' || c.status === 'devolvido_parcial'
     );
     const totalOpenCustodyQty = openCustodies.reduce((sum, c) => sum + (c.pendingQuantity || 0), 0);
-    const pendingPayables = partners.reduce(
-      (sum, p) => sum + (p.metrics?.pendingPayablesAmount || 0),
-      0
-    );
-    const paidServices = partners.reduce((sum, p) => sum + (p.metrics?.paidServicesAmount || 0), 0);
+
+    const totalContracted =
+      forecast?.summary.totalContracted ??
+      partners.reduce((sum, p) => sum + (p.metrics?.totalContractedAmount || 0), 0);
+    const paidServices =
+      forecast?.summary.totalPaid ??
+      partners.reduce((sum, p) => sum + (p.metrics?.paidServicesAmount || 0), 0);
+    const pendingPayables =
+      forecast?.summary.totalPendingCP ??
+      partners.reduce((sum, p) => sum + (p.metrics?.pendingPayablesAmount || 0), 0);
+    const overduePayables =
+      forecast?.summary.totalOverdueCP ??
+      partners.reduce((sum, p) => sum + (p.metrics?.overduePayablesAmount || 0), 0);
+    const unbilledProvision =
+      forecast?.summary.totalUnbilledProvision ??
+      partners.reduce((sum, p) => sum + (p.metrics?.unbilledProvisionAmount || 0), 0);
+    const totalRemaining =
+      forecast?.summary.totalRemaining ??
+      partners.reduce((sum, p) => sum + (p.metrics?.totalRemainingAmount || 0), 0);
+    const nextPaymentDate = forecast?.summary.nextPaymentDate ?? null;
+    const openObligationsCount = forecast?.summary.openObligationsCount ?? 0;
 
     return {
       activeCount: activePartners.length,
@@ -262,10 +332,16 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
       totalPiecesAssigned,
       openCustodyCount: openCustodies.length,
       totalOpenCustodyQty: Math.round(totalOpenCustodyQty * 100) / 100,
-      pendingPayables,
+      totalContracted,
       paidServices,
+      pendingPayables,
+      overduePayables,
+      unbilledProvision,
+      totalRemaining,
+      nextPaymentDate,
+      openObligationsCount,
     };
-  }, [partners, custodyList]);
+  }, [partners, custodyList, forecast]);
 
   const filteredPartners = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
@@ -296,10 +372,31 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
         (c.partnerName || '').toLowerCase().includes(q) ||
         (c.itemName || '').toLowerCase().includes(q) ||
         (c.orderNumber || '').toLowerCase().includes(q) ||
+        (c.clientName || '').toLowerCase().includes(q) ||
         (c.notes || '').toLowerCase().includes(q)
       );
     });
   }, [custodyList, custodyFilter, searchTerm]);
+
+  const filteredForecastRows = useMemo(() => {
+    const rows = forecast?.rows || [];
+    const q = searchTerm.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (forecastFilter === 'open' && r.remainingTotalAmount <= 0) return false;
+      if (forecastFilter === 'atrasado' && r.paymentStatus !== 'atrasado') return false;
+      if (forecastFilter === 'a_provisionar' && r.unbilledProvisionAmount <= 0) return false;
+      if (forecastFilter === 'quitado' && r.paymentStatus !== 'quitado') return false;
+      if (!q) return true;
+      return (
+        r.partnerName.toLowerCase().includes(q) ||
+        r.partnerCode.toLowerCase().includes(q) ||
+        r.clientName.toLowerCase().includes(q) ||
+        (r.orderNumber || '').toLowerCase().includes(q) ||
+        r.serviceReference.toLowerCase().includes(q) ||
+        (r.itemTitle || '').toLowerCase().includes(q)
+      );
+    });
+  }, [forecast, forecastFilter, searchTerm]);
 
   const openCreateModal = () => {
     setEditingPartner(null);
@@ -517,24 +614,77 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
     }
   };
 
-  const openPayableModal = (partner: Partner, preselectedOrder?: ProductionOrder) => {
+  const openProvisionModal = (
+    partner: Partner,
+    preselected?: {
+      order?: ProductionOrder | EnrichedPartnerOrder;
+      forecastRow?: PartnerForecastRow;
+    }
+  ) => {
+    const op = preselected?.order;
+    const row = preselected?.forecastRow;
+    const matchedForecastRow =
+      row ||
+      (op
+        ? forecast?.rows.find(
+            (r) => r.partnerId === partner.id && r.productionOrderId === op.id
+          )
+        : undefined);
+
+    const opFin = op && 'financials' in op ? op.financials : undefined;
+    const catLabel = PARTNER_CATEGORY_META[partner.partnerType].label;
+
+    const contracted =
+      opFin?.contractedAmount ??
+      matchedForecastRow?.contractedAmount ??
+      (op
+        ? Math.round(
+            op.totalPieces * (op.partnerCostPerPiece || partner.defaultCostPerPiece || 0) * 100
+          ) / 100
+        : 0);
+    const paid = opFin?.paidAmount ?? matchedForecastRow?.paidAmount ?? 0;
+    const pendingCp = opFin?.pendingCpAmount ?? matchedForecastRow?.pendingCpAmount ?? 0;
+    const unbilled =
+      opFin?.unbilledProvisionAmount ??
+      matchedForecastRow?.unbilledProvisionAmount ??
+      Math.max(0, Math.round((contracted - paid - pendingCp) * 100) / 100);
+
+    const suggestedAmount = unbilled > 0 ? unbilled : contracted > 0 ? contracted : 0;
+    const targetClientName = op?.clientName || matchedForecastRow?.clientName || '';
+    const orderNum = op?.orderNumber || matchedForecastRow?.orderNumber || '';
+    const defaultServiceRef =
+      opFin?.serviceReference ||
+      matchedForecastRow?.serviceReference ||
+      `${catLabel}${op ? ` — ${op.itemTitle} (${op.totalPieces} pçs)` : ` — ${partner.tradeName}`}`;
+
+    const defaultDue =
+      opFin?.forecastDueDate ||
+      matchedForecastRow?.forecastDueDate ||
+      op?.targetDeliveryDate ||
+      new Date(Date.now() + (partner.leadTimeDays || 5) * 86400000).toISOString().split('T')[0];
+
     setPayablePartner(partner);
-    setPayableOrderId(preselectedOrder?.id || '');
-    const estAmount = preselectedOrder
-      ? Math.round(
-          preselectedOrder.totalPieces *
-            (preselectedOrder.partnerCostPerPiece || partner.defaultCostPerPiece || 0) *
-            100
-        ) / 100
-      : 0;
-    setPayableAmount(estAmount);
+    setPayableOrderId(op?.id || matchedForecastRow?.productionOrderId || '');
+    setPayableClientName(targetClientName);
+    setPayableServiceRef(defaultServiceRef);
+    setPayableAmount(suggestedAmount);
     setPayableDescription(
-      `Serviço ${PARTNER_CATEGORY_META[partner.partnerType].shortLabel} — ${partner.tradeName}${
-        preselectedOrder ? ` (${preselectedOrder.orderNumber || preselectedOrder.id})` : ''
+      `${catLabel} (${partner.tradeName})${orderNum ? ` · ${orderNum}` : ''}${
+        targetClientName ? ` · Cliente: ${targetClientName}` : ''
       }`
     );
-    setPayableDueDate(new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0]);
+    setPayableDueDate(defaultDue);
     setPayableMethod(partner.pixKey ? 'pix' : 'transferencia');
+    setPayableContext(
+      contracted > 0 || paid > 0 || pendingCp > 0
+        ? {
+            contractedAmount: contracted,
+            paidAmount: paid,
+            pendingCpAmount: pendingCp,
+            unbilledProvisionAmount: unbilled,
+          }
+        : null
+    );
   };
 
   const handlePayableSubmit = async (e: React.FormEvent) => {
@@ -543,25 +693,26 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
 
     const linkedOrder = orders.find((o) => o.id === payableOrderId);
     setPayableSubmitting(true);
-    await onCreateServicePayable({
-      id: `fin-partner-${Date.now()}`,
-      type: 'pagar',
-      subType: 'servico_terceirizado',
+    const ok = await onCreatePartnerProvision(payablePartner.id, {
+      productionOrderId: linkedOrder?.id,
+      clientId: linkedOrder?.clientId,
+      clientName: linkedOrder?.clientName || payableClientName.trim() || undefined,
+      serviceReference: payableServiceRef.trim() || undefined,
       description: payableDescription.trim(),
       category: `Terceirização · ${PARTNER_CATEGORY_META[payablePartner.partnerType].shortLabel}`,
       amount: payableAmount,
       dueDate: payableDueDate,
-      status: 'pendente',
       paymentMethod: payableMethod,
-      productionOrderId: linkedOrder?.id,
-      referenceId: linkedOrder?.orderNumber || payablePartner.code,
+      isProvision: true,
     });
     setPayableSubmitting(false);
 
-    const pId = payablePartner.id;
-    setPayablePartner(null);
-    if (detailData?.partner.id === pId) {
-      loadPartnerDetail(pId);
+    if (ok) {
+      const pId = payablePartner.id;
+      setPayablePartner(null);
+      if (detailData?.partner.id === pId) {
+        loadPartnerDetail(pId);
+      }
     }
   };
 
@@ -588,8 +739,8 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="inline-flex bg-slate-200/70 p-1 rounded-lg text-xs font-semibold">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex flex-wrap bg-slate-200/70 p-1 rounded-lg text-xs font-semibold">
             <button
               type="button"
               onClick={() => setActiveSection('partners')}
@@ -603,6 +754,22 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => setActiveSection('forecast')}
+              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'forecast'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Provisão &amp; Contas a Pagar (CP)</span>
+              {kpis.openObligationsCount > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-emerald-600 text-white">
+                  {kpis.openObligationsCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveSection('custody')}
               className={`px-3 py-1.5 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeSection === 'custody'
@@ -610,7 +777,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <span>Custódia de Materiais</span>
+              <span>Custódia</span>
               {kpis.openCustodyCount > 0 && (
                 <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-indigo-600 text-white">
                   {kpis.openCustodyCount}
@@ -636,62 +803,48 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs">
           <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-            <span>Parceiros Homologados</span>
-            <Handshake className="w-4 h-4 text-blue-600" />
+            <span>Parceiros &amp; OPs Ativas</span>
+            <Factory className="w-4 h-4 text-blue-600" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-slate-900 font-mono">
               {kpis.activeCount}
             </span>
-            <span className="text-xs text-slate-400">ativos de {kpis.totalCount}</span>
-          </div>
-          <div className="mt-1.5 text-[11px] text-slate-500">
-            Capacidade somada:{' '}
-            <strong className="text-slate-700 font-mono">
-              {kpis.totalCapacity.toLocaleString('pt-BR')} pçs/mês
-            </strong>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-            <span>OPs em Terceirização (PCP)</span>
-            <Factory className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-900 font-mono">
-              {kpis.activeOutsourcedOrders}
+            <span className="text-xs text-slate-400">
+              ativos · {kpis.activeOutsourcedOrders} OP(s)
             </span>
-            <span className="text-xs text-slate-400">ordens ativas</span>
           </div>
           <div className="mt-1.5 text-[11px] text-slate-500">
             Volume alocado:{' '}
-            <strong className="text-emerald-700 font-mono">
-              {kpis.totalPiecesAssigned.toLocaleString('pt-BR')} peças
+            <strong className="text-slate-700 font-mono">
+              {kpis.totalPiecesAssigned.toLocaleString('pt-BR')} pçs
+            </strong>{' '}
+            · Custódia:{' '}
+            <strong className="text-indigo-700 font-mono">{kpis.openCustodyCount}</strong>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+            <span>Valor Já Pago a Parceiros</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-emerald-700 font-mono">
+              {formatCurrencyBRL(kpis.paidServices)}
+            </span>
+          </div>
+          <div className="mt-1.5 text-[11px] text-slate-500">
+            Total contratado em OPs:{' '}
+            <strong className="text-slate-800 font-mono">
+              {formatCurrencyBRL(kpis.totalContracted)}
             </strong>
           </div>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs">
           <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-            <span>Custódia de Terceiros</span>
-            <Package className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-slate-900 font-mono">
-              {kpis.openCustodyCount}
-            </span>
-            <span className="text-xs text-slate-400">remessas em aberto</span>
-          </div>
-          <div className="mt-1.5 text-[11px] text-slate-500">
-            Saldo pendente rastreado:{' '}
-            <strong className="text-indigo-700 font-mono">{kpis.totalOpenCustodyQty} unid.</strong>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-            <span>Serviços Terceirizados</span>
+            <span>Restante CP (Lançado em Aberto)</span>
             <Wallet className="w-4 h-4 text-amber-600" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -700,9 +853,37 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
             </span>
           </div>
           <div className="mt-1.5 text-[11px] text-slate-500">
-            A pagar · Já quitado:{' '}
-            <strong className="text-emerald-700 font-mono">
-              {formatCurrencyBRL(kpis.paidServices)}
+            {kpis.overduePayables > 0 ? (
+              <span className="text-rose-600 font-semibold font-mono">
+                {formatCurrencyBRL(kpis.overduePayables)} vencido(s)
+              </span>
+            ) : kpis.nextPaymentDate ? (
+              <span>
+                Próx. previsão:{' '}
+                <strong className="text-slate-800 font-mono">
+                  {formatDateBR(kpis.nextPaymentDate)}
+                </strong>
+              </span>
+            ) : (
+              <span>Nenhum CP vencido</span>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+            <span>A Provisionar no Financeiro</span>
+            <Clock className="w-4 h-4 text-indigo-600" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-indigo-700 font-mono">
+              {formatCurrencyBRL(kpis.unbilledProvision)}
+            </span>
+          </div>
+          <div className="mt-1.5 text-[11px] text-slate-500">
+            Restante total (CP + Provisão):{' '}
+            <strong className="text-slate-800 font-mono">
+              {formatCurrencyBRL(kpis.totalRemaining)}
             </strong>
           </div>
         </div>
@@ -719,7 +900,9 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
             placeholder={
               activeSection === 'partners'
                 ? 'Buscar por nome, código FAC, CNPJ, cidade ou especialidade...'
-                : 'Buscar remessa por parceiro, tecido ou número da OP...'
+                : activeSection === 'forecast'
+                  ? 'Buscar por parceiro, cliente, serviço ou número da OP...'
+                  : 'Buscar remessa por parceiro, tecido, cliente ou número da OP...'
             }
             className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
           />
@@ -767,6 +950,31 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
               <option value="inactive">Inativos</option>
               <option value="all">Todos</option>
             </select>
+          </div>
+        ) : activeSection === 'forecast' ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(
+              [
+                ['open', 'Em Aberto / A Provisionar'],
+                ['a_provisionar', 'A Provisionar'],
+                ['atrasado', 'CP Atrasado'],
+                ['quitado', 'Quitados'],
+                ['all', `Todos (${forecast?.rows.length || 0})`],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setForecastFilter(key)}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border cursor-pointer ${
+                  forecastFilter === key
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         ) : (
           <div className="flex items-center gap-2">
@@ -906,33 +1114,50 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                         </span>
                       </div>
 
-                      {/* Cross-Module Integration Counters */}
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-[11px]">
+                      {/* Cross-Module Integration & Financial Tracking Counters */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-100 text-[11px]">
                         <div className="p-2 rounded-lg bg-blue-50/50 border border-blue-100">
-                          <span className="text-[10px] text-blue-700 font-semibold block">PCP · OPs</span>
+                          <span className="text-[10px] text-blue-700 font-semibold block">PCP &amp; Custódia</span>
                           <span className="font-mono font-bold text-slate-900">
-                            {metrics?.activeOrdersCount || 0} ativas
+                            {metrics?.activeOrdersCount || 0} OP · {metrics?.openCustodyCount || 0} cust.
                           </span>
                           <span className="text-[10px] text-slate-500 block">
                             {(metrics?.totalPiecesAssigned || 0).toLocaleString('pt-BR')} pçs
                           </span>
                         </div>
-                        <div className="p-2 rounded-lg bg-indigo-50/50 border border-indigo-100">
-                          <span className="text-[10px] text-indigo-700 font-semibold block">Estoque · Custódia</span>
-                          <span className="font-mono font-bold text-slate-900">
-                            {metrics?.openCustodyCount || 0} remessas
+                        <div className="p-2 rounded-lg bg-emerald-50/50 border border-emerald-100">
+                          <span className="text-[10px] text-emerald-700 font-semibold block">Já Pago</span>
+                          <span className="font-mono font-bold text-emerald-800">
+                            {formatCurrencyBRL(metrics?.paidServicesAmount || 0)}
                           </span>
                           <span className="text-[10px] text-slate-500 block">
-                            {metrics?.openCustodyQty || 0} unid. em posse
+                            de {formatCurrencyBRL(metrics?.totalContractedAmount || 0)}
                           </span>
                         </div>
-                        <div className="p-2 rounded-lg bg-emerald-50/50 border border-emerald-100">
-                          <span className="text-[10px] text-emerald-700 font-semibold block">Financeiro</span>
-                          <span className="font-mono font-bold text-slate-900">
+                        <div className="p-2 rounded-lg bg-amber-50/60 border border-amber-100">
+                          <span className="text-[10px] text-amber-800 font-semibold block">Restante CP</span>
+                          <span
+                            className={`font-mono font-bold ${
+                              (metrics?.overduePayablesAmount || 0) > 0 ? 'text-rose-700' : 'text-slate-900'
+                            }`}
+                          >
                             {formatCurrencyBRL(metrics?.pendingPayablesAmount || 0)}
                           </span>
                           <span className="text-[10px] text-slate-500 block">
-                            a pagar · pago {formatCurrencyBRL(metrics?.paidServicesAmount || 0)}
+                            {(metrics?.overduePayablesAmount || 0) > 0
+                              ? `${formatCurrencyBRL(metrics?.overduePayablesAmount || 0)} venc.`
+                              : metrics?.nextPaymentDate
+                                ? `Próx: ${formatDateBR(metrics.nextPaymentDate)}`
+                                : 'Sem título aberto'}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-indigo-50/50 border border-indigo-100">
+                          <span className="text-[10px] text-indigo-700 font-semibold block">A Provisionar</span>
+                          <span className="font-mono font-bold text-indigo-800">
+                            {formatCurrencyBRL(metrics?.unbilledProvisionAmount || 0)}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block">
+                            Rest. tot.: {formatCurrencyBRL(metrics?.totalRemainingAmount || 0)}
                           </span>
                         </div>
                       </div>
@@ -961,14 +1186,14 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                           </button>
                         )}
 
-                        {canCreatePayable && (
+                        {canProvisionPayable && partner.active && (
                           <button
                             type="button"
-                            onClick={() => openPayableModal(partner)}
+                            onClick={() => openProvisionModal(partner)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-semibold rounded-lg transition-colors cursor-pointer text-[11px]"
                           >
                             <Wallet className="w-3.5 h-3.5" />
-                            <span>Pagar Serviço</span>
+                            <span>Provisionar CP</span>
                           </button>
                         )}
 
@@ -1000,7 +1225,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                           <button
                             type="button"
                             onClick={() => onDeletePartner(partner.id)}
-                            title="Excluir parceiro (bloqueado se houver custódia ou OP ativa)"
+                            title="Excluir parceiro (bloqueado se houver custódia, OP ativa ou histórico financeiro)"
                             className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1014,6 +1239,168 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
             </div>
           )}
         </>
+      )}
+
+      {/* SECTION 2: PROVISION & ACCOUNTS PAYABLE FORECAST LEDGER */}
+      {activeSection === 'forecast' && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                Provisão, Valores Pagos &amp; Previsão de Pagamentos a Parceiros (CP)
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                Conciliação por parceiro, serviço terceirizado, OP e cliente: acompanhe o contratado, o já liquidado, o restante em CP e o saldo ainda não provisionado no Financeiro.
+              </p>
+            </div>
+            {canViewFinance && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab('finance')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold rounded-lg cursor-pointer"
+              >
+                <Wallet className="w-3.5 h-3.5" />
+                <span>Abrir Contas a Pagar no Financeiro</span>
+              </button>
+            )}
+          </div>
+
+          {filteredForecastRows.length === 0 ? (
+            <div className="p-10 text-center text-xs text-slate-500">
+              Nenhuma obrigação de serviço terceirizado encontrada para o filtro selecionado.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase text-slate-500">
+                    <th className="px-4 py-2.5">Parceiro</th>
+                    <th className="px-4 py-2.5">Serviço / OP &amp; Cliente</th>
+                    <th className="px-4 py-2.5 text-right">Contratado</th>
+                    <th className="px-4 py-2.5 text-right">Já Pago</th>
+                    <th className="px-4 py-2.5 text-right">Restante CP</th>
+                    <th className="px-4 py-2.5 text-right">A Provisionar</th>
+                    <th className="px-4 py-2.5">Previsão Pgto</th>
+                    <th className="px-4 py-2.5">Status</th>
+                    <th className="px-4 py-2.5 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredForecastRows.map((row) => {
+                    const st = FORECAST_STATUS_META[row.paymentStatus];
+                    const cat = PARTNER_CATEGORY_META[row.partnerType] || PARTNER_CATEGORY_META.costura;
+                    const partnerObj = partners.find((p) => p.id === row.partnerId);
+                    return (
+                      <tr
+                        key={row.rowKey}
+                        className={`hover:bg-slate-50/80 ${
+                          row.paymentStatus === 'atrasado' ? 'bg-rose-50/30' : ''
+                        }`}
+                      >
+                        <td className="px-4 py-3">
+                          <div className="font-semibold text-slate-900">{row.partnerName}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[10px] font-mono text-slate-400">{row.partnerCode}</span>
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border ${cat.badgeClass}`}>
+                              {cat.shortLabel}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 max-w-xs">
+                          <div className="font-medium text-slate-800 leading-snug">
+                            {row.serviceReference}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px]">
+                            {row.orderNumber && (
+                              <span className="font-mono font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                                {row.orderNumber}
+                              </span>
+                            )}
+                            <span className="font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
+                              Cliente: {row.clientName}
+                            </span>
+                            {row.orderStage && (
+                              <span className="text-slate-500">({getStageLabel(row.orderStage as any)})</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
+                          {formatCurrencyBRL(row.contractedAmount)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap">
+                          {formatCurrencyBRL(row.paidAmount)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
+                          <span
+                            className={`font-bold ${
+                              row.overdueCpAmount > 0
+                                ? 'text-rose-700'
+                                : row.pendingCpAmount > 0
+                                  ? 'text-amber-800'
+                                  : 'text-slate-400'
+                            }`}
+                          >
+                            {formatCurrencyBRL(row.pendingCpAmount)}
+                          </span>
+                          {row.overdueCpAmount > 0 && (
+                            <div className="text-[10px] text-rose-600 font-semibold">
+                              Venc: {formatCurrencyBRL(row.overdueCpAmount)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
+                          <span
+                            className={`font-bold ${
+                              row.unbilledProvisionAmount > 0 ? 'text-indigo-700' : 'text-slate-400'
+                            }`}
+                          >
+                            {formatCurrencyBRL(row.unbilledProvisionAmount)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono whitespace-nowrap">
+                          <div className={row.overdueCpAmount > 0 ? 'text-rose-700 font-bold' : 'text-slate-700'}>
+                            {formatDateBR(row.forecastDueDate)}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            {row.nextDueDate ? 'Venc. CP lançado' : 'Prev. entrega OP'}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded border ${st.badgeClass}`}>
+                            {st.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            {canProvisionPayable && partnerObj?.active && row.unbilledProvisionAmount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => openProvisionModal(partnerObj, { forecastRow: row })}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold rounded-lg cursor-pointer"
+                              >
+                                <Wallet className="w-3 h-3" />
+                                <span>Provisionar CP</span>
+                              </button>
+                            )}
+                            {partnerObj && (
+                              <button
+                                type="button"
+                                onClick={() => loadPartnerDetail(partnerObj.id)}
+                                className="px-2 py-1 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-[11px] font-semibold cursor-pointer"
+                              >
+                                360°
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {/* SECTION 2: CUSTODY LEDGER TABLE */}
@@ -1472,14 +1859,14 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                           <span>Enviar Material</span>
                         </button>
                       )}
-                      {canCreatePayable && (
+                      {canProvisionPayable && detailData.partner.active && (
                         <button
                           type="button"
-                          onClick={() => openPayableModal(detailData.partner)}
+                          onClick={() => openProvisionModal(detailData.partner)}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-semibold rounded-lg cursor-pointer"
                         >
                           <Wallet className="w-3.5 h-3.5" />
-                          <span>Lançar Pagamento</span>
+                          <span>Provisionar CP</span>
                         </button>
                       )}
                       {canWhatsApp && (
@@ -1499,8 +1886,46 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                     </div>
                   </div>
 
+                  {/* Financial Reconciliation Strip inside 360° Modal */}
+                  {detailData.financialSummary && (
+                    <div className="px-6 py-3 bg-white border-b border-slate-200 grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px]">
+                      <div className="p-2 rounded-lg bg-slate-50 border border-slate-200">
+                        <span className="text-[10px] text-slate-500 block">Total Contratado</span>
+                        <strong className="font-mono text-slate-900">
+                          {formatCurrencyBRL(detailData.financialSummary.totalContractedAmount)}
+                        </strong>
+                      </div>
+                      <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200">
+                        <span className="text-[10px] text-emerald-700 block">Já Pago</span>
+                        <strong className="font-mono text-emerald-800">
+                          {formatCurrencyBRL(detailData.financialSummary.paidServicesAmount)}
+                        </strong>
+                      </div>
+                      <div className="p-2 rounded-lg bg-amber-50 border border-amber-200">
+                        <span className="text-[10px] text-amber-800 block">Restante CP</span>
+                        <strong className="font-mono text-amber-900">
+                          {formatCurrencyBRL(detailData.financialSummary.pendingPayablesAmount)}
+                        </strong>
+                      </div>
+                      <div className="p-2 rounded-lg bg-indigo-50 border border-indigo-200">
+                        <span className="text-[10px] text-indigo-700 block">A Provisionar</span>
+                        <strong className="font-mono text-indigo-800">
+                          {formatCurrencyBRL(detailData.financialSummary.unbilledProvisionAmount)}
+                        </strong>
+                      </div>
+                      <div className="p-2 rounded-lg bg-slate-50 border border-slate-200">
+                        <span className="text-[10px] text-slate-500 block">Próx. Previsão</span>
+                        <strong className="font-mono text-slate-900">
+                          {detailData.financialSummary.nextPaymentDate
+                            ? formatDateBR(detailData.financialSummary.nextPaymentDate)
+                            : '—'}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Tab Body */}
-                  <div className="p-6 max-h-[60vh] overflow-y-auto text-xs space-y-4">
+                  <div className="p-6 max-h-[56vh] overflow-y-auto text-xs space-y-4">
                     {detailData.partner.notes && (
                       <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-600">
                         <strong className="text-slate-800">Notas técnicas: </strong>
@@ -1517,51 +1942,77 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                           </p>
                         ) : (
                           detailData.orders.map((op) => {
-                            const unitLabor =
-                              op.partnerCostPerPiece ?? detailData.partner.defaultCostPerPiece ?? 0;
-                            const estTotal = Math.round(op.totalPieces * unitLabor * 100) / 100;
+                            const fin = op.financials;
+                            const stMeta = fin ? FORECAST_STATUS_META[fin.paymentStatus] : FORECAST_STATUS_META.a_provisionar;
                             return (
                               <div
                                 key={op.id}
-                                className="p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50"
+                                className="p-3.5 rounded-xl border border-slate-200 space-y-2.5 hover:bg-slate-50/70"
                               >
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-mono font-bold text-blue-700">
-                                      {op.orderNumber || op.id}
-                                    </span>
-                                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px]">
-                                      {getStageLabel(op.stage)}
-                                    </span>
+                                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="font-mono font-bold text-blue-700">
+                                        {op.orderNumber || op.id}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px]">
+                                        {getStageLabel(op.stage)}
+                                      </span>
+                                      <span className={`px-2 py-0.5 rounded border font-bold text-[10px] ${stMeta.badgeClass}`}>
+                                        {stMeta.label}
+                                      </span>
+                                    </div>
+                                    <div className="font-semibold text-slate-900 mt-1">
+                                      {fin?.serviceReference || `${op.itemTitle} (${op.totalPieces} pçs)`}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Cliente: <strong className="text-slate-800">{op.clientName}</strong> ·{' '}
+                                      {op.totalPieces} pçs ({formatCurrencyBRL(fin?.unitCost || 0)}/pç) · Previsão Pgto:{' '}
+                                      <strong className="font-mono text-slate-700">
+                                        {formatDateBR(fin?.forecastDueDate || op.targetDeliveryDate)}
+                                      </strong>
+                                    </div>
                                   </div>
-                                  <div className="font-semibold text-slate-900 mt-1">
-                                    {op.itemTitle} — <span className="text-slate-500">{op.clientName}</span>
-                                  </div>
-                                  <div className="text-[11px] text-slate-500 mt-0.5">
-                                    {op.totalPieces} peças · Entrega prometida: {formatDateBR(op.targetDeliveryDate)}
-                                  </div>
-                                </div>
 
-                                <div className="flex items-center gap-3 shrink-0">
-                                  <div className="text-right">
-                                    <span className="text-[10px] text-slate-400 block">Serviço Estimado</span>
-                                    <strong className="font-mono text-slate-900">
-                                      {formatCurrencyBRL(estTotal)}
-                                    </strong>
-                                    <span className="text-[10px] text-slate-500 block font-mono">
-                                      ({formatCurrencyBRL(unitLabor)}/pç)
-                                    </span>
-                                  </div>
-                                  {canCreatePayable && (
+                                  {canProvisionPayable && detailData.partner.active && (fin?.unbilledProvisionAmount ?? 1) > 0 && (
                                     <button
                                       type="button"
-                                      onClick={() => openPayableModal(detailData.partner, op)}
-                                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold text-[11px] cursor-pointer"
+                                      onClick={() => openProvisionModal(detailData.partner, { order: op })}
+                                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold text-[11px] cursor-pointer shrink-0"
                                     >
-                                      Gerar Pagamento
+                                      Provisionar CP
                                     </button>
                                   )}
                                 </div>
+
+                                {fin && (
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-100 text-[11px]">
+                                    <div>
+                                      <span className="text-[10px] text-slate-400 block">Contratado</span>
+                                      <strong className="font-mono text-slate-900">
+                                        {formatCurrencyBRL(fin.contractedAmount)}
+                                      </strong>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-emerald-700 block">Já Pago</span>
+                                      <strong className="font-mono text-emerald-700">
+                                        {formatCurrencyBRL(fin.paidAmount)}
+                                      </strong>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-amber-700 block">Restante CP</span>
+                                      <strong className={`font-mono ${fin.overdueCpAmount > 0 ? 'text-rose-700' : 'text-amber-800'}`}>
+                                        {formatCurrencyBRL(fin.pendingCpAmount)}
+                                      </strong>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-indigo-700 block">A Provisionar</span>
+                                      <strong className="font-mono text-indigo-700">
+                                        {formatCurrencyBRL(fin.unbilledProvisionAmount)}
+                                      </strong>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             );
                           })
@@ -1594,6 +2045,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                                   <div className="text-[11px] text-slate-500 mt-1">
                                     Enviado em {formatDateBR(c.sentDate)}
                                     {c.orderNumber ? ` · OP ${c.orderNumber}` : ''}
+                                    {c.clientName ? ` · Cliente: ${c.clientName}` : ''}
                                   </div>
                                   <div className="text-[11px] font-mono text-slate-600 mt-0.5">
                                     Remetido: {c.sentQuantity} {c.unit} · Baixado: {c.returnedQuantity} {c.unit} · Perda: {c.lostQuantity} {c.unit}
@@ -1630,16 +2082,16 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                         {detailData.payables.length === 0 ? (
                           <div className="text-center py-8 space-y-2">
                             <p className="text-slate-500">
-                              Nenhum pagamento de serviço terceirizado lançado para este parceiro.
+                              Nenhuma provisão ou título CP lançado no Financeiro para este parceiro ainda.
                             </p>
-                            {canCreatePayable && (
+                            {canProvisionPayable && detailData.partner.active && (
                               <button
                                 type="button"
-                                onClick={() => openPayableModal(detailData.partner)}
+                                onClick={() => openProvisionModal(detailData.partner)}
                                 className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold cursor-pointer"
                               >
                                 <Plus className="w-3.5 h-3.5" />
-                                <span>Lançar Pagamento de Serviço</span>
+                                <span>Provisionar Pagamento (CP)</span>
                               </button>
                             )}
                           </div>
@@ -1648,29 +2100,52 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                             {detailData.payables.map((f) => (
                               <div
                                 key={f.id}
-                                className="p-3.5 rounded-xl border border-slate-200 flex items-center justify-between gap-3"
+                                className="p-3.5 rounded-xl border border-slate-200 flex items-start justify-between gap-3"
                               >
                                 <div>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex flex-wrap items-center gap-1.5">
                                     <span className="font-mono font-bold text-slate-700">
                                       {f.transactionNumber || f.id}
                                     </span>
                                     <span
-                                      className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                                      className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${
                                         f.status === 'pago'
-                                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                           : f.status === 'atrasado'
-                                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                            : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                            : f.status === 'estornado'
+                                              ? 'bg-slate-100 text-slate-600 border-slate-200'
+                                              : 'bg-amber-50 text-amber-800 border-amber-200'
                                       }`}
                                     >
                                       {f.status}
                                     </span>
+                                    {f.isProvision && f.status !== 'pago' && f.status !== 'estornado' && (
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                        PROVISÃO CP
+                                      </span>
+                                    )}
+                                    {f.orderNumber && (
+                                      <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
+                                        {f.orderNumber}
+                                      </span>
+                                    )}
+                                    {f.clientName && (
+                                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                                        Cliente: {f.clientName}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="font-semibold text-slate-900 mt-1">{f.description}</div>
-                                  <div className="text-[11px] text-slate-500">
-                                    Vencimento: {formatDateBR(f.dueDate)} · Meio: {f.paymentMethod.toUpperCase()}
-                                    {f.paidDate ? ` · Pago em ${formatDateBR(f.paidDate)}` : ''}
+                                  {f.serviceReference && (
+                                    <div className="text-[11px] text-slate-600 mt-0.5">
+                                      Serviço: {f.serviceReference}
+                                    </div>
+                                  )}
+                                  <div className="text-[11px] text-slate-500 mt-0.5">
+                                    Previsão / Vencimento: <strong className="font-mono">{formatDateBR(f.dueDate)}</strong> · Meio:{' '}
+                                    {f.paymentMethod.toUpperCase()}
+                                    {f.paidDate ? ` · Liquidado em ${formatDateBR(f.paidDate)}` : ''}
                                   </div>
                                 </div>
                                 <strong className="font-mono text-sm text-slate-900 shrink-0">
@@ -1678,18 +2153,20 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                                 </strong>
                               </div>
                             ))}
-                            <div className="pt-2 text-right">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDetailData(null);
-                                  onNavigateTab('finance');
-                                }}
-                                className="text-blue-600 hover:text-blue-700 font-semibold cursor-pointer"
-                              >
-                                Abrir módulo Financeiro completo &rarr;
-                              </button>
-                            </div>
+                            {canViewFinance && (
+                              <div className="pt-2 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDetailData(null);
+                                    onNavigateTab('finance');
+                                  }}
+                                  className="text-blue-600 hover:text-blue-700 font-semibold cursor-pointer"
+                                >
+                                  Abrir e liquidar no módulo Financeiro &rarr;
+                                </button>
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
@@ -1955,16 +2432,21 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 5: QUICK SERVICE PAYABLE */}
+      {/* MODAL 5: PROVISION & PAYMENT FORECAST (CP) */}
       {payablePartner && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+          <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full overflow-hidden border border-slate-200">
             <div className="px-6 py-4 bg-emerald-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Wallet className="w-5 h-5 text-emerald-300" />
-                <h3 className="text-sm font-bold">
-                  Lançar Pagamento — {payablePartner.tradeName}
-                </h3>
+                <div>
+                  <h3 className="text-sm font-bold">
+                    Provisionar / Prever Pagamento (CP) — {payablePartner.tradeName}
+                  </h3>
+                  <p className="text-[11px] text-emerald-200">
+                    Integra diretamente ao Contas a Pagar do Financeiro com referência de serviço e cliente
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
@@ -1985,33 +2467,146 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                 </div>
               )}
 
+              {payableContext && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">Contratado</span>
+                      <strong className="font-mono text-slate-900">
+                        {formatCurrencyBRL(payableContext.contractedAmount)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-emerald-700 block">Já Pago</span>
+                      <strong className="font-mono text-emerald-700">
+                        {formatCurrencyBRL(payableContext.paidAmount)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-amber-700 block">CP em Aberto</span>
+                      <strong className="font-mono text-amber-800">
+                        {formatCurrencyBRL(payableContext.pendingCpAmount)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-indigo-700 block">A Provisionar</span>
+                      <strong className="font-mono text-indigo-700">
+                        {formatCurrencyBRL(payableContext.unbilledProvisionAmount)}
+                      </strong>
+                    </div>
+                  </div>
+                  {payableContext.unbilledProvisionAmount > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200">
+                      <span className="text-[10px] font-semibold text-slate-500">Atalhos de valor:</span>
+                      <button
+                        type="button"
+                        onClick={() => setPayableAmount(payableContext.unbilledProvisionAmount)}
+                        className="px-2 py-0.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 rounded font-semibold text-[10px] cursor-pointer"
+                      >
+                        100% Saldo ({formatCurrencyBRL(payableContext.unbilledProvisionAmount)})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPayableAmount(
+                            Math.round((payableContext.unbilledProvisionAmount / 2) * 100) / 100
+                          )
+                        }
+                        className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded font-semibold text-[10px] cursor-pointer"
+                      >
+                        50% Adiantamento ({formatCurrencyBRL(Math.round((payableContext.unbilledProvisionAmount / 2) * 100) / 100)})
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Ordem de Produção Vinculada
+                  </label>
+                  <select
+                    value={payableOrderId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setPayableOrderId(nextId);
+                      const op = orders.find((o) => o.id === nextId);
+                      const catLabel = PARTNER_CATEGORY_META[payablePartner.partnerType].label;
+                      if (op) {
+                        const row = forecast?.rows.find(
+                          (r) => r.partnerId === payablePartner.id && r.productionOrderId === op.id
+                        );
+                        const contracted =
+                          row?.contractedAmount ??
+                          Math.round(
+                            op.totalPieces *
+                              (op.partnerCostPerPiece || payablePartner.defaultCostPerPiece || 0) *
+                              100
+                          ) / 100;
+                        const paid = row?.paidAmount ?? 0;
+                        const pendingCp = row?.pendingCpAmount ?? 0;
+                        const unbilled =
+                          row?.unbilledProvisionAmount ??
+                          Math.max(0, Math.round((contracted - paid - pendingCp) * 100) / 100);
+                        setPayableClientName(op.clientName);
+                        setPayableServiceRef(
+                          row?.serviceReference || `${catLabel} — ${op.itemTitle} (${op.totalPieces} pçs)`
+                        );
+                        setPayableDescription(
+                          `${catLabel} (${payablePartner.tradeName}) · ${op.orderNumber || op.id} · Cliente: ${op.clientName}`
+                        );
+                        setPayableAmount(unbilled > 0 ? unbilled : contracted);
+                        if (row?.forecastDueDate || op.targetDeliveryDate) {
+                          setPayableDueDate(row?.forecastDueDate || op.targetDeliveryDate);
+                        }
+                        setPayableContext({
+                          contractedAmount: contracted,
+                          paidAmount: paid,
+                          pendingCpAmount: pendingCp,
+                          unbilledProvisionAmount: unbilled,
+                        });
+                      } else {
+                        setPayableContext(null);
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
+                  >
+                    <option value="">Serviço avulso / consolidado</option>
+                    {orders.map((op) => (
+                      <option key={op.id} value={op.id}>
+                        {op.orderNumber || op.id} — {op.clientName} ({op.totalPieces} pçs)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Cliente de Referência
+                  </label>
+                  <input
+                    type="text"
+                    value={payableClientName}
+                    onChange={(e) => setPayableClientName(e.target.value)}
+                    placeholder="Preenchido pela OP ou informe o cliente"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  Vincular à Ordem de Produção (opcional)
+                  Referência do Serviço Executado *
                 </label>
-                <select
-                  value={payableOrderId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    setPayableOrderId(nextId);
-                    const op = orders.find((o) => o.id === nextId);
-                    if (op) {
-                      const unit = op.partnerCostPerPiece ?? payablePartner.defaultCostPerPiece ?? 0;
-                      setPayableAmount(Math.round(op.totalPieces * unit * 100) / 100);
-                      setPayableDescription(
-                        `Serviço ${PARTNER_CATEGORY_META[payablePartner.partnerType].shortLabel} — ${payablePartner.tradeName} (${op.orderNumber || op.id})`
-                      );
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
-                >
-                  <option value="">Serviço avulso / consolidado</option>
-                  {orders.map((op) => (
-                    <option key={op.id} value={op.id}>
-                      {op.orderNumber || op.id} — {op.clientName} ({op.totalPieces} pçs)
-                    </option>
-                  ))}
-                </select>
+                <input
+                  type="text"
+                  required
+                  value={payableServiceRef}
+                  onChange={(e) => setPayableServiceRef(e.target.value)}
+                  placeholder="Ex: Facção de Costura — Camisa Polo Piquet (130 pçs)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
+                />
               </div>
 
               <div>
@@ -2029,11 +2624,11 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Valor (R$) *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Valor da Provisão (R$) *</label>
                   <CurrencyInput value={payableAmount} onChange={setPayableAmount} required />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Vencimento *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Previsão de Pagamento *</label>
                   <DateInputBR value={payableDueDate} onChange={setPayableDueDate} required />
                 </div>
                 <div>
@@ -2063,9 +2658,10 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                 <button
                   type="submit"
                   disabled={payableSubmitting || payableAmount <= 0}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold rounded-lg cursor-pointer"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold rounded-lg cursor-pointer inline-flex items-center gap-1.5"
                 >
-                  Lançar no Financeiro
+                  {payableSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Registrar Provisão no Financeiro</span>
                 </button>
               </div>
             </form>

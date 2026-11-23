@@ -6,11 +6,17 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { communicationRepository } from '../repositories/communicationRepository';
-import { whatsAppService } from '../services/whatsappService';
-import { auditService } from '../services/auditService';
+import {
+  whatsAppService,
+  isSafeWhatsAppMediaUrl,
+  sanitizeChannelConfig,
+} from '../services/whatsappService';
 
 export const communicationRouter = Router();
 const isProd = process.env.NODE_ENV === 'production';
+
+// Token efêmero em memória apenas para testes locais em desenvolvimento quando a env var não estiver definida
+const DEV_EPHEMERAL_VERIFY_TOKEN = !isProd ? crypto.randomBytes(16).toString('hex') : '';
 
 const ALLOWED_MESSAGE_TYPES = new Set(['text', 'image', 'document', 'template']);
 const ALLOWED_STATUSES = new Set(['open', 'pending', 'resolved', 'closed']);
@@ -31,14 +37,49 @@ function escapeXml(text: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function isSafeMediaUrl(url: string): boolean {
-  const trimmed = url.trim();
-  return (
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('s3://') ||
-    trimmed.startsWith('/uploads/')
-  );
+function extractMetaMessageText(msg: any): { body: string; mediaMimeType?: string } {
+  if (msg?.text?.body) return { body: String(msg.text.body) };
+  if (msg?.image) {
+    return {
+      body: msg.image.caption ? `[Imagem] ${msg.image.caption}` : '[Imagem recebida via WhatsApp]',
+      mediaMimeType: msg.image.mime_type || 'image/jpeg',
+    };
+  }
+  if (msg?.document) {
+    const fname = msg.document.filename ? ` (${msg.document.filename})` : '';
+    return {
+      body: msg.document.caption
+        ? `[Documento${fname}] ${msg.document.caption}`
+        : `[Documento recebido${fname}]`,
+      mediaMimeType: msg.document.mime_type || 'application/pdf',
+    };
+  }
+  if (msg?.audio) {
+    return {
+      body: '[Áudio recebido via WhatsApp]',
+      mediaMimeType: msg.audio.mime_type || 'audio/ogg',
+    };
+  }
+  if (msg?.video) {
+    return {
+      body: msg.video.caption ? `[Vídeo] ${msg.video.caption}` : '[Vídeo recebido via WhatsApp]',
+      mediaMimeType: msg.video.mime_type || 'video/mp4',
+    };
+  }
+  if (msg?.button?.text) {
+    return { body: `[Botão] ${msg.button.text}` };
+  }
+  if (msg?.interactive?.button_reply?.title) {
+    return { body: `[Resposta Rápida] ${msg.interactive.button_reply.title}` };
+  }
+  if (msg?.interactive?.list_reply?.title) {
+    return { body: `[Seleção de Lista] ${msg.interactive.list_reply.title}` };
+  }
+  if (msg?.location) {
+    const locName = msg.location.name || msg.location.address || `${msg.location.latitude}, ${msg.location.longitude}`;
+    return { body: `[Localização] ${locName}` };
+  }
+  return { body: '[Mídia ou mensagem recebida]' };
 }
 
 // ==============================================================================
@@ -51,7 +92,7 @@ communicationRouter.get('/webhooks/meta', (req: Request, res: Response) => {
   const token = String(req.query['hub.verify_token'] || '');
   const challenge = String(req.query['hub.challenge'] || '');
 
-  const configuredToken = process.env.META_WA_WEBHOOK_VERIFY_TOKEN;
+  const configuredToken = process.env.META_WA_WEBHOOK_VERIFY_TOKEN?.trim() || '';
   if (isProd && !configuredToken) {
     return res.status(503).json({
       error: 'META_WA_WEBHOOK_VERIFY_TOKEN não configurado em produção.',
@@ -59,11 +100,21 @@ communicationRouter.get('/webhooks/meta', (req: Request, res: Response) => {
     });
   }
 
-  const verifyToken = configuredToken || 'defardas_wa_webhook_secret_2026';
+  const verifyToken = configuredToken || DEV_EPHEMERAL_VERIFY_TOKEN;
+  if (!verifyToken) {
+    return res.sendStatus(403);
+  }
 
-  if (mode === 'subscribe' && token && safeCompare(token, verifyToken)) {
+  // Valida formato do challenge e força text/plain para impedir reflexão HTML/XSS
+  if (
+    mode === 'subscribe' &&
+    token &&
+    challenge.length > 0 &&
+    challenge.length <= 256 &&
+    safeCompare(token, verifyToken)
+  ) {
     console.log('✅ [WhatsApp Webhook] Meta Cloud API verificado com sucesso.');
-    return res.status(200).send(challenge);
+    return res.type('text/plain; charset=utf-8').status(200).send(challenge);
   }
 
   return res.sendStatus(403);
@@ -72,7 +123,7 @@ communicationRouter.get('/webhooks/meta', (req: Request, res: Response) => {
 // Recebimento de mensagens e status da Meta WhatsApp Cloud API
 communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) => {
   try {
-    const appSecret = process.env.META_WA_APP_SECRET;
+    const appSecret = process.env.META_WA_APP_SECRET?.trim() || '';
     if (isProd && !appSecret) {
       return res.status(503).json({
         error: 'META_WA_APP_SECRET obrigatório em produção para validação HMAC-SHA256.',
@@ -104,12 +155,9 @@ communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) =
           if (Array.isArray(value?.messages)) {
             for (const msg of value.messages) {
               const fromPhone = String(msg.from || '').trim();
-              if (!fromPhone) continue;
-              const textBody =
-                msg.text?.body ||
-                msg.image?.caption ||
-                msg.document?.caption ||
-                (msg.button?.text ? `[Botão] ${msg.button.text}` : '[Mídia recebida]');
+              if (fromPhone.replace(/\D/g, '').length < 10) continue;
+
+              const extracted = extractMetaMessageText(msg);
               const contactMatch = Array.isArray(value.contacts)
                 ? value.contacts.find((c: any) => c.wa_id === fromPhone) || value.contacts[0]
                 : undefined;
@@ -119,8 +167,9 @@ communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) =
                 provider: 'meta_cloud',
                 fromPhone,
                 fromName: contactName,
-                body: textBody,
-                externalId: msg.id,
+                body: extracted.body,
+                externalId: msg.id ? String(msg.id) : undefined,
+                mediaMimeType: extracted.mediaMimeType,
               });
             }
           }
@@ -130,7 +179,7 @@ communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) =
             for (const st of value.statuses) {
               if (st?.id && ['sent', 'delivered', 'read', 'failed'].includes(st.status)) {
                 const errDetail = st.errors?.[0]?.title || st.errors?.[0]?.message;
-                await whatsAppService.handleDeliveryStatusUpdate(st.id, st.status, errDetail);
+                await whatsAppService.handleDeliveryStatusUpdate(String(st.id), st.status, errDetail);
               }
             }
           }
@@ -145,10 +194,10 @@ communicationRouter.post('/webhooks/meta', async (req: Request, res: Response) =
   }
 });
 
-// Recebimento de mensagens do container isolado WA-AKG
+// Recebimento de mensagens e status do container isolado WA-AKG
 communicationRouter.post('/webhooks/wa-akg', async (req: Request, res: Response) => {
   try {
-    const configuredKey = process.env.WA_AKG_API_KEY;
+    const configuredKey = process.env.WA_AKG_API_KEY?.trim() || '';
     if (isProd && !configuredKey) {
       return res.status(503).json({
         error: 'WA_AKG_API_KEY obrigatório em produção.',
@@ -163,19 +212,34 @@ communicationRouter.post('/webhooks/wa-akg', async (req: Request, res: Response)
       }
     }
 
-    const { from, senderName, text, id, mediaUrl, mediaType } = req.body || {};
-    const bodyText = String(text || '').trim() || (mediaUrl ? '[Mídia recebida]' : '');
-    if (from && bodyText) {
+    const { event, from, senderName, text, id, mediaUrl, mediaType, status, errorMessage } = req.body || {};
+
+    // Atualização de status de entrega (ACK) vindo do container WA-AKG
+    if (event === 'message.status' && id && ['sent', 'delivered', 'read', 'failed'].includes(status)) {
+      await whatsAppService.handleDeliveryStatusUpdate(
+        String(id),
+        status,
+        typeof errorMessage === 'string' ? errorMessage.slice(0, 300) : undefined
+      );
+      return res.json({ success: true });
+    }
+
+    const cleanPhone = String(from || '').trim();
+    const safeMedia = typeof mediaUrl === 'string' && isSafeWhatsAppMediaUrl(mediaUrl) ? mediaUrl.trim() : undefined;
+    const bodyText = String(text || '').trim() || (safeMedia ? '[Mídia recebida]' : '');
+
+    if (cleanPhone.replace(/\D/g, '').length >= 10 && bodyText) {
       await whatsAppService.handleInboundMessage({
         provider: 'wa_akg',
-        fromPhone: String(from),
-        fromName: String(senderName || from),
+        fromPhone: cleanPhone,
+        fromName: String(senderName || cleanPhone),
         body: bodyText,
         externalId: id ? String(id) : undefined,
-        mediaUrl: typeof mediaUrl === 'string' && isSafeMediaUrl(mediaUrl) ? mediaUrl : undefined,
-        mediaMimeType: typeof mediaType === 'string' ? mediaType : undefined,
+        mediaUrl: safeMedia,
+        mediaMimeType: typeof mediaType === 'string' ? mediaType.slice(0, 80) : undefined,
       });
     }
+
     return res.json({ success: true });
   } catch (err: any) {
     console.error('❌ [WhatsApp Webhook] Erro ao processar webhook WA-AKG:', err);
@@ -189,10 +253,33 @@ communicationRouter.post('/webhooks/wa-akg', async (req: Request, res: Response)
 communicationRouter.use(requireAuth);
 communicationRouter.use(requirePermission('communication:view'));
 
-// Listar canais configurados
+// Resumo leve de mensagens não lidas (para badge da Sidebar)
+communicationRouter.get('/unread-summary', async (_req: RequestWithUser, res: Response) => {
+  const [conversationsList, channelsList] = await Promise.all([
+    communicationRepository.findAllConversations(),
+    communicationRepository.findAllChannels(),
+  ]);
+  const totalUnread = conversationsList.reduce((acc, c) => acc + (c.unreadCount || 0), 0);
+  const openCount = conversationsList.filter((c) => c.status === 'open' || c.status === 'pending').length;
+  const anyLiveConfigured = channelsList.some((ch) => whatsAppService.getChannelDiagnostics(ch).configured);
+
+  return res.json({
+    totalUnread,
+    openConversationsCount: openCount,
+    totalConversationsCount: conversationsList.length,
+    anyLiveConfigured,
+  });
+});
+
+// Listar canais configurados (com diagnóstico real e config sanitizada)
 communicationRouter.get('/channels', async (_req: RequestWithUser, res: Response) => {
   const channelsList = await communicationRepository.findAllChannels();
-  res.json(channelsList);
+  const enriched = channelsList.map((ch) => ({
+    ...ch,
+    config: sanitizeChannelConfig(ch.config),
+    diagnostics: whatsAppService.getChannelDiagnostics(ch),
+  }));
+  res.json(enriched);
 });
 
 // Obter QR code atualizado para o canal WA-AKG (sem vazar IDs a serviços externos)
@@ -204,15 +291,16 @@ communicationRouter.get('/channels/:id/qr', async (req: RequestWithUser, res: Re
 
   let qrCode = channel.qrCode;
   let mode: 'live' | 'simulated' = qrCode ? 'live' : 'simulated';
+  const waEndpoint = (process.env.WA_AKG_ENDPOINT?.trim() || '').replace(/\/+$/, '');
 
   // Se houver endpoint WA-AKG configurado, tenta obter QR code em tempo real do container
-  if (!qrCode && channel.provider === 'wa_akg' && process.env.WA_AKG_ENDPOINT) {
+  if (!qrCode && channel.provider === 'wa_akg' && waEndpoint) {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 4000);
-      const qrRes = await fetch(`${process.env.WA_AKG_ENDPOINT}/instance/qr`, {
+      const qrRes = await fetch(`${waEndpoint}/instance/qr`, {
         signal: controller.signal,
-        headers: { apikey: process.env.WA_AKG_API_KEY || '' },
+        headers: { apikey: process.env.WA_AKG_API_KEY?.trim() || '' },
       });
       clearTimeout(timer);
       if (qrRes.ok) {
@@ -261,10 +349,11 @@ communicationRouter.get('/channels/:id/qr', async (req: RequestWithUser, res: Re
     status: channel.status,
     mode,
     qrCode,
+    diagnostics: whatsAppService.getChannelDiagnostics(channel),
   });
 });
 
-// Solicitar reconexão de canal (restrito a Admin / Gerente Comercial)
+// Verificar conectividade e reconectar canal (restrito a Admin / Gerente Comercial)
 communicationRouter.post(
   '/channels/:id/reconnect',
   requirePermission('communication:manage_channels'),
@@ -275,31 +364,16 @@ communicationRouter.post(
       return res.status(404).json({ error: 'Canal não encontrado' });
     }
 
-    channel.status = 'connecting';
-    channel.updatedAt = new Date().toISOString();
-    await communicationRepository.saveChannel(channel);
-
-    auditService.log({
-      actorId: actor.id,
-      actorName: actor.fullName,
-      actorRole: actor.role,
-      entityName: 'communication.channels',
-      entityId: channel.id,
-      action: 'RECONNECT_WHATSAPP_CHANNEL',
-      notes: `Reconexão solicitada para o canal ${channel.channelName} (${channel.provider}).`,
+    const result = await whatsAppService.checkAndReconnectChannel(channel, actor);
+    return res.json({
+      success: true,
+      message: result.message,
+      channel: {
+        ...result.channel,
+        config: sanitizeChannelConfig(result.channel.config),
+        diagnostics: result.diagnostics,
+      },
     });
-
-    setTimeout(async () => {
-      try {
-        channel.status = 'connected';
-        channel.updatedAt = new Date().toISOString();
-        await communicationRepository.saveChannel(channel);
-      } catch (err) {
-        console.error('Erro ao finalizar reconexão do canal:', err);
-      }
-    }, 1500);
-
-    return res.json({ success: true, message: 'Tentativa de reconexão iniciada.', channel });
   }
 );
 
@@ -389,7 +463,7 @@ communicationRouter.post(
   requirePermission('communication:send_message'),
   async (req: RequestWithUser, res: Response) => {
     const actor = req.user!;
-    const { body, mediaUrl, messageType } = req.body || {};
+    const { body, mediaUrl, mediaMimeType, messageType } = req.body || {};
 
     if (typeof body !== 'string' || body.trim().length === 0) {
       return res.status(400).json({ error: 'O corpo da mensagem é obrigatório.' });
@@ -397,14 +471,16 @@ communicationRouter.post(
     if (body.trim().length > 4096) {
       return res.status(400).json({ error: 'A mensagem excede o limite de 4.096 caracteres do WhatsApp.' });
     }
-    if (mediaUrl && (typeof mediaUrl !== 'string' || !isSafeMediaUrl(mediaUrl))) {
-      return res.status(400).json({ error: 'URL de mídia inválida. Use https://, http://, s3:// ou /uploads/.' });
+    if (mediaUrl && (typeof mediaUrl !== 'string' || !isSafeWhatsAppMediaUrl(mediaUrl))) {
+      return res.status(400).json({
+        error: 'URL de mídia inválida ou não permitida. Use um link público https://, s3:// ou /uploads/.',
+      });
     }
 
     const safeType =
       typeof messageType === 'string' && ALLOWED_MESSAGE_TYPES.has(messageType)
         ? (messageType as 'text' | 'image' | 'document' | 'template')
-        : 'text';
+        : undefined;
 
     try {
       const sentMsg = await whatsAppService.sendMessage({
@@ -414,6 +490,7 @@ communicationRouter.post(
         senderName: actor.fullName,
         senderRole: actor.role,
         mediaUrl: mediaUrl ? mediaUrl.trim() : undefined,
+        mediaMimeType: typeof mediaMimeType === 'string' ? mediaMimeType.trim().slice(0, 80) : undefined,
         messageType: safeType,
       });
       return res.status(201).json(sentMsg);
@@ -423,21 +500,38 @@ communicationRouter.post(
   }
 );
 
-// Disparo de templates automáticos de ERP
+// Disparo de templates automáticos de ERP (Comercial, PCP, Financeiro e Compras)
 communicationRouter.post(
   '/send-template',
   requirePermission('communication:send_template'),
   async (req: RequestWithUser, res: Response) => {
     const actor = req.user!;
-    const { templateType, clientPhone, clientName, quoteNumber, orderNumber, amount, voucherNumber } =
-      req.body || {};
+    const {
+      templateType,
+      clientPhone,
+      clientName,
+      quoteNumber,
+      orderNumber,
+      poNumber,
+      amount,
+      voucherNumber,
+      artVersion,
+      artFileUrl,
+      stage,
+      targetDeliveryDate,
+      expectedDeliveryDate,
+      itemsSummary,
+      dueDate,
+      pixKey,
+      paymentLabel,
+    } = req.body || {};
 
     if (!clientPhone || !clientName) {
       return res.status(400).json({ error: 'clientPhone e clientName são obrigatórios.' });
     }
 
     try {
-      let result;
+      let result: { conversation: any; message: any };
       if (templateType === 'quote_ready') {
         result = await whatsAppService.sendQuoteTemplate(
           quoteNumber || 'ORC-2026',
@@ -454,14 +548,60 @@ communicationRouter.post(
           voucherNumber || 'AUT-000',
           actor
         );
+      } else if (templateType === 'art_approval') {
+        result = await whatsAppService.sendArtApprovalTemplate({
+          clientPhone,
+          clientName,
+          referenceNumber: orderNumber || quoteNumber || 'PEDIDO',
+          artVersion: artVersion !== undefined ? Number(artVersion) : undefined,
+          artFileUrl: typeof artFileUrl === 'string' ? artFileUrl : undefined,
+          actor,
+        });
+      } else if (templateType === 'order_stage_update') {
+        result = await whatsAppService.sendOrderStageUpdateTemplate({
+          clientPhone,
+          clientName,
+          orderNumber: orderNumber || 'OP-2026',
+          stage: String(stage || 'corte'),
+          targetDeliveryDate: typeof targetDeliveryDate === 'string' ? targetDeliveryDate : undefined,
+          actor,
+        });
+      } else if (templateType === 'purchase_order') {
+        result = await whatsAppService.sendPurchaseOrderTemplate({
+          supplierPhone: clientPhone,
+          supplierName: clientName,
+          poNumber: poNumber || 'PC-2026',
+          amount: Number(amount || 0),
+          expectedDeliveryDate: typeof expectedDeliveryDate === 'string' ? expectedDeliveryDate : undefined,
+          itemsSummary: typeof itemsSummary === 'string' ? itemsSummary : undefined,
+          actor,
+        });
+      } else if (templateType === 'payment_reminder') {
+        result = await whatsAppService.sendPaymentReminderTemplate({
+          clientPhone,
+          clientName,
+          referenceNumber: orderNumber || quoteNumber || 'PEDIDO',
+          amount: Number(amount || 0),
+          dueDate: typeof dueDate === 'string' ? dueDate : undefined,
+          pixKey: typeof pixKey === 'string' ? pixKey : undefined,
+          paymentLabel: typeof paymentLabel === 'string' ? paymentLabel : undefined,
+          actor,
+        });
       } else {
-        return res
-          .status(400)
-          .json({ error: 'templateType inválido. Permitidos: quote_ready, downpayment_confirmed.' });
+        return res.status(400).json({
+          error:
+            'templateType inválido. Permitidos: quote_ready, downpayment_confirmed, art_approval, order_stage_update, purchase_order, payment_reminder.',
+        });
       }
-      return res.json({ success: true, message: result });
+
+      return res.json({
+        success: result.message?.status !== 'failed',
+        conversationId: result.conversation.id,
+        conversation: result.conversation,
+        message: result.message,
+      });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Falha ao disparar template.' });
+      return res.status(400).json({ error: err.message || 'Falha ao disparar template.' });
     }
   }
 );

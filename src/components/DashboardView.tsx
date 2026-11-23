@@ -25,6 +25,7 @@ import {
   ArrowUpRight,
   Filter,
   Printer,
+  CalendarClock,
 } from 'lucide-react';
 import {
   CompanyProfile,
@@ -37,6 +38,7 @@ import {
 } from '../types/erp';
 import { formatCurrencyBRL, formatDateBR, getStageLabel, getPriorityBadge } from '../utils/formatters';
 import { PrintReportModal } from './PrintReportModal';
+import { getDeliveryStatusBadge, getStageDeadlineBadge } from './OrderScheduleModal';
 import { useAuth } from '../api/authContext';
 
 interface DashboardViewProps {
@@ -49,6 +51,7 @@ interface DashboardViewProps {
   onOpenNewOrderModal: () => void;
   onOpenNewQuoteModal: () => void;
   onSelectOrderForTicket: (order: ProductionOrder) => void;
+  onOpenOrderSchedule?: (order: ProductionOrder) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -61,6 +64,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenNewOrderModal,
   onOpenNewQuoteModal,
   onSelectOrderForTicket,
+  onOpenOrderSchedule,
 }) => {
   const { user } = useAuth();
   // Active filter tab for dashboard views
@@ -102,6 +106,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       stageCounts[o.stage].piecesCount += o.totalPieces;
     }
   });
+
+  // Monitoramento real de prazos de entrega e prazos por etapa (SLA)
+  const overdueDeliveryCount = activeOrders.filter(
+    (o) => o.deadlineSummary?.deliveryStatus === 'atrasada'
+  ).length;
+  const dueSoonDeliveryCount = activeOrders.filter(
+    (o) =>
+      o.deadlineSummary?.deliveryStatus === 'critica_hoje' ||
+      o.deadlineSummary?.deliveryStatus === 'atencao'
+  ).length;
+  const stageAlertCount = activeOrders.filter((o) => {
+    const summary = o.deadlineSummary;
+    if (!summary) return false;
+    return (
+      summary.isCurrentStageOverdue ||
+      summary.isCurrentStageDueSoon ||
+      summary.delayedStagesCount > 0 ||
+      summary.currentStageItem?.status === 'em_andamento_atrasada' ||
+      summary.currentStageItem?.status === 'em_andamento_alerta'
+    );
+  }).length;
+  const onTrackCount = activeOrders.filter(
+    (o) =>
+      o.deadlineSummary?.deliveryStatus === 'no_prazo' &&
+      !o.deadlineSummary?.isCurrentStageOverdue &&
+      (o.deadlineSummary?.delayedStagesCount ?? 0) === 0
+  ).length;
+
+  // Gargalo dinâmico real calculado a partir das células fabris
+  const cellLoadList = [
+    { stage: 'corte' as OperationalStage, label: 'Corte & Enfesto', pieces: stageCounts.corte.piecesCount },
+    { stage: 'bordado_silk' as OperationalStage, label: 'Bordado & Silk', pieces: stageCounts.bordado_silk.piecesCount },
+    { stage: 'costura' as OperationalStage, label: 'Costura & Montagem', pieces: stageCounts.costura.piecesCount },
+    { stage: 'conferencia_qualidade' as OperationalStage, label: 'Qualidade', pieces: stageCounts.conferencia_qualidade.piecesCount },
+    { stage: 'expedicao' as OperationalStage, label: 'Expedição', pieces: stageCounts.expedicao.piecesCount },
+  ];
+  const topBottleneckCell = cellLoadList.reduce(
+    (max, cur) => (cur.pieces > max.pieces ? cur : max),
+    cellLoadList[0]
+  );
 
   // Category distribution analysis
   const categoryStats: Record<string, { count: number; pieces: number; totalValue: number; color: string }> = {
@@ -390,6 +434,109 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       </div>
 
+      {/* Monitor de Prazos de Entrega & Etapas (SLA) */}
+      {activeOrders.length > 0 && (
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <CalendarClock className="w-4 h-4 text-blue-600" />
+                Monitor de Prazos de Entrega &amp; Etapas (SLA Fabril)
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Acompanhamento em tempo real do cumprimento das datas por etapa e entrega final ao cliente
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSelectTab('orders')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer self-start sm:self-auto"
+            >
+              <span>Abrir Cronograma Completo</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div
+              onClick={() => onSelectTab('orders')}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                overdueDeliveryCount > 0
+                  ? 'bg-rose-50/70 border-rose-200 hover:border-rose-300'
+                  : 'bg-slate-50 border-slate-200/80 hover:border-slate-300'
+              }`}
+            >
+              <div className="text-[11px] font-semibold text-slate-600">Entregas em Atraso</div>
+              <div
+                className={`mt-1 text-xl font-bold font-mono ${
+                  overdueDeliveryCount > 0 ? 'text-rose-700' : 'text-slate-900'
+                }`}
+              >
+                {overdueDeliveryCount}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {overdueDeliveryCount > 0 ? 'Ação imediata necessária' : 'Nenhuma entrega vencida'}
+              </div>
+            </div>
+
+            <div
+              onClick={() => onSelectTab('orders')}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                stageAlertCount > 0
+                  ? 'bg-amber-50/70 border-amber-200 hover:border-amber-300'
+                  : 'bg-slate-50 border-slate-200/80 hover:border-slate-300'
+              }`}
+            >
+              <div className="text-[11px] font-semibold text-slate-600">Etapas em Alerta / Atraso</div>
+              <div
+                className={`mt-1 text-xl font-bold font-mono ${
+                  stageAlertCount > 0 ? 'text-amber-700' : 'text-slate-900'
+                }`}
+              >
+                {stageAlertCount}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {stageAlertCount > 0 ? 'Etapa atual vencida ou ≤ 2d' : 'Etapas dentro do SLA'}
+              </div>
+            </div>
+
+            <div
+              onClick={() => onSelectTab('orders')}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                dueSoonDeliveryCount > 0
+                  ? 'bg-blue-50/70 border-blue-200 hover:border-blue-300'
+                  : 'bg-slate-50 border-slate-200/80 hover:border-slate-300'
+              }`}
+            >
+              <div className="text-[11px] font-semibold text-slate-600">Entregas em até 3 dias</div>
+              <div
+                className={`mt-1 text-xl font-bold font-mono ${
+                  dueSoonDeliveryCount > 0 ? 'text-blue-700' : 'text-slate-900'
+                }`}
+              >
+                {dueSoonDeliveryCount}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                Prioridade de expedição
+              </div>
+            </div>
+
+            <div
+              onClick={() => onSelectTab('orders')}
+              className="p-3.5 rounded-xl border bg-emerald-50/60 border-emerald-200/90 hover:border-emerald-300 cursor-pointer transition-all"
+            >
+              <div className="text-[11px] font-semibold text-emerald-900">OPs no Prazo</div>
+              <div className="mt-1 text-xl font-bold font-mono text-emerald-700">
+                {onTrackCount}
+              </div>
+              <div className="text-[10px] text-emerald-700/90 mt-0.5">
+                de {activeOrders.length} OPs em andamento
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Visual Charts Row: Operational Cells + Category Distribution */}
       {(dashboardTab === 'all' || dashboardTab === 'production') && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -407,7 +554,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </p>
               </div>
               <span className="text-xs font-mono font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded">
-                Capacidade: 5.000 pçs/mês
+                Capacidade: {monthlyCapacity.toLocaleString('pt-BR')} pçs/mês
               </span>
             </div>
 
@@ -498,8 +645,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {/* Bottom Insight */}
             <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-lg flex items-center justify-between text-xs text-slate-600">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Nenhuma célula em sobrecarga. Gargalo máximo atual em <strong>Costura</strong>.</span>
+                {capacityUsedPercent > 90 || stageAlertCount > 0 ? (
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                )}
+                <span>
+                  {topBottleneckCell && topBottleneckCell.pieces > 0 ? (
+                    <>
+                      {capacityUsedPercent > 90 ? 'Fábrica próxima da capacidade máxima. ' : ''}
+                      Maior concentração atual em <strong>{topBottleneckCell.label}</strong> ({topBottleneckCell.pieces.toLocaleString('pt-BR')} pçs).
+                      {stageAlertCount > 0 ? ` ${stageAlertCount} OP(s) com etapa em alerta.` : ''}
+                    </>
+                  ) : (
+                    'Nenhuma célula em sobrecarga no momento.'
+                  )}
+                </span>
               </div>
               <button
                 onClick={() => onSelectTab('orders')}
@@ -771,55 +932,110 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <th className="py-2.5 px-3">Código OP</th>
                 <th className="py-2.5 px-3">Cliente / Modelo</th>
                 <th className="py-2.5 px-3 text-right">Qtd</th>
-                <th className="py-2.5 px-3">Etapa Operacional</th>
-                <th className="py-2.5 px-3">Portão PRD</th>
-                <th className="py-2.5 px-3">Previsão</th>
-                <th className="py-2.5 px-3 text-right">Ação</th>
+                <th className="py-2.5 px-3">Etapa Atual &amp; Prazo</th>
+                <th className="py-2.5 px-3">Progresso</th>
+                <th className="py-2.5 px-3">Entrega Final</th>
+                <th className="py-2.5 px-3 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {sortedUpcomingOrders.slice(0, 5).map((order) => {
-                const priority = getPriorityBadge(order.priority);
+              {sortedUpcomingOrders.slice(0, 6).map((order) => {
+                const summary = order.deadlineSummary;
+                const currentStageItem = summary?.currentStageItem || null;
+                const deliveryBadge = summary
+                  ? getDeliveryStatusBadge(summary.deliveryStatus, summary.daysToDelivery)
+                  : null;
+                const stageBadge = currentStageItem
+                  ? getStageDeadlineBadge(currentStageItem.status, currentStageItem.daysRemaining)
+                  : null;
+                const completedStages = summary?.completedStagesCount ?? 0;
+                const totalStages = summary?.totalApplicableStagesCount ?? 6;
+                const progressPct = summary?.progressPercent ?? 0;
+
                 return (
                   <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3 px-3 font-mono font-bold text-slate-900">
-                      {order.orderNumber || order.id}
+                    <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
+                      <div>{order.orderNumber || order.id}</div>
+                      {!order.canStartProduction && (
+                        <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 font-sans">
+                          <ShieldAlert className="w-2.5 h-2.5" />
+                          Gate A.3.2
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-3">
                       <div className="font-semibold text-slate-800">{order.clientName}</div>
                       <div className="text-[11px] text-slate-500 truncate max-w-xs">{order.itemTitle}</div>
                     </td>
-                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">
+                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
                       {order.totalPieces} pçs
                     </td>
                     <td className="py-3 px-3">
-                      <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700">
-                        {getStageLabel(order.stage)}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3">
-                      {order.canStartProduction ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Liberado
+                      <div className="flex flex-col gap-1">
+                        <span className="inline-block w-fit px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700">
+                          {getStageLabel(order.stage)}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                          <ShieldAlert className="w-3 h-3" />
-                          Bloqueado
+                        {currentStageItem && stageBadge && (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-mono text-slate-500">
+                              Até {formatDateBR(currentStageItem.plannedEndDate)}
+                            </span>
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${stageBadge.badgeClass}`}>
+                              {stageBadge.label}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 min-w-[110px]">
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-600 mb-1">
+                        <span>{completedStages}/{totalStages} et.</span>
+                        <span className="font-semibold">{progressPct}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            summary?.deliveryStatus === 'atrasada'
+                              ? 'bg-rose-500'
+                              : summary?.isCurrentStageOverdue || (summary?.delayedStagesCount ?? 0) > 0
+                              ? 'bg-amber-500'
+                              : 'bg-blue-600'
+                          }`}
+                          style={{ width: `${Math.max(6, progressPct)}%` }}
+                        />
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <div className="font-mono font-semibold text-slate-800">
+                        {formatDateBR(order.targetDeliveryDate)}
+                      </div>
+                      {deliveryBadge && (
+                        <span className={`mt-1 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border ${deliveryBadge.className}`}>
+                          {deliveryBadge.label}
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-3 font-mono text-slate-700">
-                      {formatDateBR(order.targetDeliveryDate)}
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      <button
-                        onClick={() => onSelectOrderForTicket(order)}
-                        className="px-2.5 py-1 text-[11px] font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors cursor-pointer"
-                      >
-                        Ficha Técnica
-                      </button>
+                    <td className="py-3 px-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5">
+                        {onOpenOrderSchedule && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenOrderSchedule(order)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded transition-colors cursor-pointer"
+                            title="Ver e ajustar prazos por etapa desta OP"
+                          >
+                            <CalendarClock className="w-3 h-3" />
+                            <span>Prazos</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onSelectOrderForTicket(order)}
+                          className="px-2.5 py-1 text-[11px] font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors cursor-pointer"
+                        >
+                          Ficha Técnica
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

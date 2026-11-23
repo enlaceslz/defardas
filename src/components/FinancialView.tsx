@@ -16,8 +16,18 @@ import {
   X,
   Printer,
   Receipt,
+  Handshake,
+  Truck,
+  MessageSquare,
 } from 'lucide-react';
-import { CompanyProfile, FinancialTransaction, ProductionOrder } from '../types/erp';
+import {
+  CompanyProfile,
+  FinancialTransaction,
+  Partner,
+  PartnerFinancialForecastResponse,
+  ProductionOrder,
+  Supplier,
+} from '../types/erp';
 import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
 import { useAuth } from '../api/authContext';
 import { PrintReceiptModal } from './PrintReceiptModal';
@@ -28,6 +38,9 @@ interface FinancialViewProps {
   profile: CompanyProfile;
   transactions: FinancialTransaction[];
   orders?: ProductionOrder[];
+  partners?: Partner[];
+  suppliers?: Supplier[];
+  partnerForecast?: PartnerFinancialForecastResponse | null;
   onSaveTransaction: (trx: FinancialTransaction) => void;
   onDeleteTransaction: (trxId: string) => void;
   onConfirmPaymentWithVoucher?: (
@@ -38,6 +51,8 @@ interface FinancialViewProps {
     paymentMethod?: FinancialTransaction['paymentMethod']
   ) => Promise<boolean> | void;
   onReverseTransaction?: (trxId: string, reason: string) => Promise<boolean> | void;
+  onSendTransactionWhatsApp?: (trx: FinancialTransaction) => Promise<void> | void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 const SUBTYPE_LABELS: Record<FinancialTransaction['subType'], string> = {
@@ -52,10 +67,15 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   profile,
   transactions,
   orders = [],
+  partners = [],
+  suppliers = [],
+  partnerForecast,
   onSaveTransaction,
   onDeleteTransaction,
   onConfirmPaymentWithVoucher,
   onReverseTransaction,
+  onSendTransactionWhatsApp,
+  onNavigateTab,
 }) => {
   const { user } = useAuth();
   const role = user?.role || '';
@@ -65,9 +85,12 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   const canConfirm = ['admin', 'financeiro'].includes(role);
   const canReverse = role === 'admin';
   const canDelete = role === 'admin';
+  const canUseWhatsApp = ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role);
 
   const [typeFilter, setTypeFilter] = useState<'all' | 'receber' | 'pagar'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pendente' | 'atrasado' | 'pago' | 'estornado' | 'sinais_pendentes'>('all');
+  const [statusFilter, setStatusFilter] = useState<
+    'all' | 'pendente' | 'atrasado' | 'pago' | 'estornado' | 'sinais_pendentes' | 'parceiros_cp' | 'fornecedores_cp'
+  >('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Voucher Confirmation Modal
@@ -102,6 +125,10 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   const [dueDate, setDueDate] = useState(new Date().toISOString().split('T')[0]);
   const [paymentMethod, setPaymentMethod] = useState<FinancialTransaction['paymentMethod']>('pix');
   const [linkedOrderId, setLinkedOrderId] = useState('');
+  const [linkedPartnerId, setLinkedPartnerId] = useState('');
+  const [linkedSupplierId, setLinkedSupplierId] = useState('');
+  const [serviceReference, setServiceReference] = useState('');
+  const [isProvision, setIsProvision] = useState(true);
   const [newTrxError, setNewTrxError] = useState('');
 
   if (!canViewFinance) {
@@ -135,12 +162,21 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
         ? true
         : statusFilter === 'sinais_pendentes'
           ? t.type === 'receber' && t.subType === 'entrada_pedido' && (t.status === 'pendente' || t.status === 'atrasado')
-          : t.status === statusFilter;
+          : statusFilter === 'parceiros_cp'
+            ? t.type === 'pagar' && t.subType === 'servico_terceirizado'
+            : statusFilter === 'fornecedores_cp'
+              ? t.type === 'pagar' && (Boolean(t.supplierId) || t.subType === 'compra_tecido')
+              : t.status === statusFilter;
     const matchesSearch =
       t.description.toLowerCase().includes(q) ||
       t.category.toLowerCase().includes(q) ||
       (t.transactionNumber || '').toLowerCase().includes(q) ||
       (t.referenceId || '').toLowerCase().includes(q) ||
+      (t.partnerName || '').toLowerCase().includes(q) ||
+      (t.supplierName || '').toLowerCase().includes(q) ||
+      (t.purchaseOrderNumber || '').toLowerCase().includes(q) ||
+      (t.clientName || '').toLowerCase().includes(q) ||
+      (t.serviceReference || '').toLowerCase().includes(q) ||
       (t.receiptVoucherNumber || '').toLowerCase().includes(q);
     return matchesType && matchesStatus && matchesSearch;
   });
@@ -205,13 +241,32 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
     }
 
     const linkedOrder = linkedOrderId ? orders.find((o) => o.id === linkedOrderId) : undefined;
+    const linkedPartner =
+      type === 'pagar' && subType === 'servico_terceirizado' && linkedPartnerId
+        ? partners.find((p) => p.id === linkedPartnerId)
+        : undefined;
+    const linkedSupplier =
+      type === 'pagar' && subType === 'compra_tecido' && linkedSupplierId
+        ? suppliers.find((s) => s.id === linkedSupplierId)
+        : undefined;
 
     const newTrx: FinancialTransaction = {
       id: `fin-${Date.now()}`,
       type,
       subType,
       productionOrderId: linkedOrder?.id,
-      referenceId: linkedOrder?.orderNumber,
+      referenceId: linkedOrder?.orderNumber || linkedPartner?.code || linkedSupplier?.code,
+      partnerId: linkedPartner?.id,
+      partnerName: linkedPartner?.tradeName,
+      supplierId: linkedSupplier?.id,
+      supplierName: linkedSupplier?.tradeName,
+      clientId: linkedOrder?.clientId,
+      clientName: linkedOrder?.clientName,
+      serviceReference:
+        type === 'pagar' && subType === 'servico_terceirizado'
+          ? serviceReference.trim() || undefined
+          : undefined,
+      isProvision: type === 'pagar' && subType === 'servico_terceirizado' ? isProvision : false,
       description: description.trim(),
       category: category.trim() || (type === 'receber' ? 'Venda de Uniformes' : 'Custos Operacionais'),
       amount: Math.round(amount * 100) / 100,
@@ -223,6 +278,9 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
     setIsModalOpen(false);
     setDescription('');
     setLinkedOrderId('');
+    setLinkedPartnerId('');
+    setLinkedSupplierId('');
+    setServiceReference('');
   };
 
   return (
@@ -297,6 +355,81 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
           </button>
         </div>
       )}
+
+      {/* Partner Services Provision & Payment Forecast Callout */}
+      {partnerForecast &&
+        (partnerForecast.summary.totalContracted > 0 ||
+          partnerForecast.summary.totalPendingCP > 0 ||
+          partnerForecast.summary.totalUnbilledProvision > 0) && (
+          <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-xl flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                <Handshake className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="font-bold text-indigo-950 flex flex-wrap items-center gap-2">
+                  <span>Provisão &amp; Previsão de Pagamentos a Parceiros (CP)</span>
+                  {partnerForecast.summary.nextPaymentDate && (
+                    <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white text-indigo-800 border border-indigo-200">
+                      Próx. Previsão: {formatDateBR(partnerForecast.summary.nextPaymentDate)}
+                    </span>
+                  )}
+                </div>
+                <div className="text-indigo-900 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <span>
+                    Já Pago:{' '}
+                    <strong className="font-mono text-emerald-700">
+                      {formatCurrencyBRL(partnerForecast.summary.totalPaid)}
+                    </strong>
+                  </span>
+                  <span>
+                    Restante CP Lançado:{' '}
+                    <strong className="font-mono text-amber-800">
+                      {formatCurrencyBRL(partnerForecast.summary.totalPendingCP)}
+                    </strong>
+                    {partnerForecast.summary.totalOverdueCP > 0 && (
+                      <span className="text-rose-700 font-semibold">
+                        {' '}({formatCurrencyBRL(partnerForecast.summary.totalOverdueCP)} venc.)
+                      </span>
+                    )}
+                  </span>
+                  <span>
+                    A Provisionar (OPs sem CP):{' '}
+                    <strong className="font-mono text-indigo-800">
+                      {formatCurrencyBRL(partnerForecast.summary.totalUnbilledProvision)}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (statusFilter === 'parceiros_cp') {
+                    setStatusFilter('all');
+                    setTypeFilter('all');
+                  } else {
+                    setTypeFilter('pagar');
+                    setStatusFilter('parceiros_cp');
+                  }
+                }}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg cursor-pointer transition-colors"
+              >
+                {statusFilter === 'parceiros_cp' ? 'Mostrar Todos' : 'Filtrar Parceiros (CP)'}
+              </button>
+              {onNavigateTab && (
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab('partners')}
+                  className="px-3 py-1.5 bg-white hover:bg-indigo-100 text-indigo-800 border border-indigo-200 font-semibold rounded-lg cursor-pointer transition-colors"
+                >
+                  Gerenciar Provisões &rarr;
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
@@ -414,11 +547,34 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
           >
             <option value="all">Todos os Status</option>
             <option value="sinais_pendentes">Sinais 50% Pendentes (Gate A.3.2)</option>
+            <option value="parceiros_cp">Serviços de Parceiros / Facções (CP)</option>
+            <option value="fornecedores_cp">Fornecedores / Compras de Insumos (CP)</option>
             <option value="pendente">Pendente (A vencer)</option>
             <option value="atrasado">Atrasado (Vencido)</option>
             <option value="pago">Liquidado / Pago</option>
             <option value="estornado">Estornado (Auditoria)</option>
           </select>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (statusFilter === 'fornecedores_cp') {
+                setStatusFilter('all');
+                setTypeFilter('all');
+              } else {
+                setTypeFilter('pagar');
+                setStatusFilter('fornecedores_cp');
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              statusFilter === 'fornecedores_cp'
+                ? 'bg-cyan-600 text-white border-cyan-600'
+                : 'bg-cyan-50 text-cyan-800 border-cyan-200 hover:bg-cyan-100'
+            }`}
+          >
+            <Truck className="w-3.5 h-3.5" />
+            <span>Fornecedores (CP)</span>
+          </button>
         </div>
 
         <div className="text-slate-500 font-medium">
@@ -480,11 +636,51 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                         <div className={`font-bold text-slate-900 ${isReversed ? 'line-through text-slate-500' : ''}`}>
                           {t.description}
                         </div>
-                        <div className="text-[11px] text-slate-400 font-mono flex flex-wrap gap-2 mt-0.5">
+                        {t.serviceReference && (
+                          <div className="text-[11px] text-slate-600 mt-0.5">
+                            Serviço: {t.serviceReference}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-slate-400 font-mono flex flex-wrap items-center gap-1.5 mt-1">
                           <span>{t.transactionNumber || t.id}</span>
-                          {t.referenceId && (
+                          {t.isProvision && !isPaid && !isReversed && (
+                            <span className="font-sans font-bold text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200">
+                              PROVISÃO CP
+                            </span>
+                          )}
+                          {t.partnerName && (
+                            <span className="font-sans font-semibold text-purple-800 bg-purple-50 px-1.5 rounded border border-purple-100">
+                              Parceiro: {t.partnerName}
+                            </span>
+                          )}
+                          {t.supplierName && (
+                            <button
+                              type="button"
+                              onClick={() => onNavigateTab && onNavigateTab('suppliers')}
+                              className="font-sans font-semibold text-cyan-800 bg-cyan-50 hover:bg-cyan-100 px-1.5 rounded border border-cyan-200 cursor-pointer"
+                              title="Abrir módulo de Fornecedores & Compras"
+                            >
+                              Fornecedor: {t.supplierName}
+                            </button>
+                          )}
+                          {t.purchaseOrderNumber && (
+                            <button
+                              type="button"
+                              onClick={() => onNavigateTab && onNavigateTab('suppliers')}
+                              className="font-mono font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 px-1.5 rounded border border-teal-200 cursor-pointer"
+                              title="Ver Pedido de Compra vinculado"
+                            >
+                              {t.purchaseOrderNumber}
+                            </button>
+                          )}
+                          {t.clientName && (
+                            <span className="font-sans font-semibold text-slate-700 bg-slate-100 px-1.5 rounded border border-slate-200">
+                              Cliente: {t.clientName}
+                            </span>
+                          )}
+                          {(t.orderNumber || t.referenceId) && (
                             <span className="text-blue-700 bg-blue-50 px-1.5 rounded border border-blue-100">
-                              Ref: {t.referenceId}
+                              Ref: {t.orderNumber || t.referenceId}
                             </span>
                           )}
                           {t.receiptVoucherNumber && (
@@ -573,6 +769,25 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="inline-flex items-center justify-end gap-1">
+                          {canUseWhatsApp &&
+                            onSendTransactionWhatsApp &&
+                            t.type === 'receber' &&
+                            !isReversed &&
+                            (!isPaid || t.subType === 'entrada_pedido') && (
+                              <button
+                                type="button"
+                                onClick={() => onSendTransactionWhatsApp(t)}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded cursor-pointer"
+                                title={
+                                  isPaid
+                                    ? 'Enviar confirmação de sinal recebido via WhatsApp'
+                                    : 'Enviar lembrete de pagamento / PIX via WhatsApp'
+                                }
+                              >
+                                <MessageSquare className="w-4 h-4" />
+                              </button>
+                            )}
+
                           {isPaid && (
                             <button
                               type="button"
@@ -698,6 +913,96 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 </select>
               </div>
 
+              {type === 'pagar' && subType === 'compra_tecido' && suppliers.length > 0 && (
+                <div className="p-3 bg-cyan-50/70 border border-cyan-200 rounded-lg space-y-2">
+                  <label className="block font-semibold text-cyan-950">
+                    Fornecedor de Matéria-Prima (Opcional)
+                  </label>
+                  <select
+                    value={linkedSupplierId}
+                    onChange={(e) => {
+                      const sid = e.target.value;
+                      setLinkedSupplierId(sid);
+                      const sup = suppliers.find((s) => s.id === sid);
+                      if (sup) {
+                        setCategory(`Compra de Insumos (${sup.tradeName})`);
+                        if (sup.pixKey) setPaymentMethod('pix');
+                        if (!description.trim()) {
+                          setDescription(`Compra de Insumos — ${sup.tradeName}`);
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-cyan-200 rounded-lg bg-white text-slate-800"
+                  >
+                    <option value="">Selecione o fornecedor homologado</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        [{s.code}] {s.tradeName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {type === 'pagar' && subType === 'servico_terceirizado' && (
+                <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-lg space-y-2.5">
+                  <div>
+                    <label className="block font-semibold text-indigo-950 mb-1">
+                      Parceiro / Facção Terceirizada
+                    </label>
+                    <select
+                      value={linkedPartnerId}
+                      onChange={(e) => {
+                        const pid = e.target.value;
+                        setLinkedPartnerId(pid);
+                        const p = partners.find((item) => item.id === pid);
+                        if (p) {
+                          setCategory(`Serviço Terceirizado (${p.tradeName})`);
+                          if (p.pixKey) setPaymentMethod('pix');
+                          const op = orders.find((o) => o.id === linkedOrderId);
+                          if (!description.trim()) {
+                            setDescription(
+                              `Serviço Terceirizado (${p.tradeName})${op ? ` · ${op.orderNumber} · Cliente: ${op.clientName}` : ''}`
+                            );
+                          }
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-slate-800"
+                    >
+                      <option value="">Selecione o parceiro (recomendado)</option>
+                      {partners.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          [{p.code}] {p.tradeName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-indigo-950 mb-1">
+                      Referência do Serviço (Costura, Bordado, Silk, etc.)
+                    </label>
+                    <input
+                      type="text"
+                      value={serviceReference}
+                      onChange={(e) => setServiceReference(e.target.value)}
+                      placeholder="Ex: Facção de Costura — Camisas Polo (130 pçs)"
+                      className="w-full px-3 py-2 border border-indigo-200 rounded-lg bg-white text-slate-900"
+                    />
+                  </div>
+
+                  <label className="inline-flex items-center gap-2 cursor-pointer text-indigo-900">
+                    <input
+                      type="checkbox"
+                      checked={isProvision}
+                      onChange={(e) => setIsProvision(e.target.checked)}
+                      className="rounded border-indigo-300 text-indigo-600"
+                    />
+                    <span className="font-semibold">Marcar como Provisão / Previsão de Pagamento (CP)</span>
+                  </label>
+                </div>
+              )}
+
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Descrição *</label>
                 <input
@@ -713,11 +1018,20 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
               {orders.length > 0 && (
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    Vincular a Ordem de Produção (Opcional)
+                    Vincular a Ordem de Produção / Cliente (Opcional)
                   </label>
                   <select
                     value={linkedOrderId}
-                    onChange={(e) => setLinkedOrderId(e.target.value)}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setLinkedOrderId(nextId);
+                      const ord = orders.find((o) => o.id === nextId);
+                      if (ord && type === 'pagar' && subType === 'servico_terceirizado') {
+                        if (!serviceReference.trim()) {
+                          setServiceReference(`${ord.itemTitle} (${ord.totalPieces} pçs)`);
+                        }
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-700"
                   >
                     <option value="">Sem vínculo direto com OP</option>

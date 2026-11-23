@@ -184,6 +184,59 @@ class ApiClient {
     });
   }
 
+  public async getQuoteVersions(quoteId: string) {
+    return this.request<any>(`/quotes/${quoteId}/versions`, {
+      method: 'GET',
+    });
+  }
+
+  public async approveQuoteCommercial(
+    quoteId: string,
+    payload: {
+      approvedByName: string;
+      acceptanceChannel: 'whatsapp' | 'email' | 'presencial';
+      acceptanceNotes?: string;
+      artDecision: 'manter_pendente' | 'solicitar_revisao_arte' | 'aprovar_arte_atual';
+      artRevisionNotes?: string;
+      artApproverName?: string;
+    }
+  ) {
+    return this.request<any>(`/quotes/${quoteId}/approve-commercial`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async uploadQuoteArtwork(
+    quoteId: string,
+    payload: { fileName: string; fileUrl: string; notes?: string }
+  ) {
+    return this.request<any>(`/quotes/${quoteId}/artworks`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async requestQuoteArtRevision(
+    quoteId: string,
+    payload: { revisionNotes: string; requestedBy?: string }
+  ) {
+    return this.request<any>(`/quotes/${quoteId}/artworks/request-revision`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async approveQuoteArtwork(
+    quoteId: string,
+    payload: { approverName: string; notes?: string; version?: number }
+  ) {
+    return this.request<any>(`/quotes/${quoteId}/artworks/approve`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   public async convertQuoteToOrder(quoteId: string, idempotencyKey?: string) {
     return this.request<any>(`/quotes/${quoteId}/convert-to-order`, {
       method: 'POST',
@@ -228,8 +281,53 @@ class ApiClient {
     });
   }
 
+  public async requestOrderArtRevision(
+    orderId: string,
+    payload: { revisionNotes: string; requestedBy?: string }
+  ) {
+    return this.request<any>(`/orders/${orderId}/request-art-revision`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   public async deleteOrder(orderId: string) {
     return this.request<any>(`/orders/${orderId}`, { method: 'DELETE' });
+  }
+
+  public async getOrderDeadlinesSummary() {
+    return this.request<any>('/orders/deadlines-summary', { method: 'GET' });
+  }
+
+  public async getOrderSchedule(orderId: string) {
+    return this.request<any>(`/orders/${orderId}/schedule`, { method: 'GET' });
+  }
+
+  public async updateOrderSchedule(
+    orderId: string,
+    payload: {
+      targetDeliveryDate?: string;
+      syncTargetDelivery?: boolean;
+      recalculateProportional?: boolean;
+      stages?: Array<{
+        stage: string;
+        plannedStartDate: string;
+        plannedEndDate: string;
+        responsible?: string;
+        notes?: string;
+        skipped?: boolean;
+      }>;
+    }
+  ) {
+    return this.request<any>(`/orders/${orderId}/schedule`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Notifications & SLA Monitoring
+  public async getNotifications() {
+    return this.request<any>('/notifications', { method: 'GET' });
   }
 
   // Finance
@@ -294,8 +392,12 @@ class ApiClient {
     return this.request<any>(`/inventory/items/${itemId}`, { method: 'DELETE' });
   }
 
-  public async getInventoryMovements() {
-    return this.request<any[]>('/inventory/movements', { method: 'GET' });
+  public async getInventoryMovements(filters?: { itemId?: string; type?: string }) {
+    const params = new URLSearchParams();
+    if (filters?.itemId) params.set('itemId', filters.itemId);
+    if (filters?.type) params.set('type', filters.type);
+    const qs = params.toString();
+    return this.request<any[]>(`/inventory/movements${qs ? `?${qs}` : ''}`, { method: 'GET' });
   }
 
   public async createStockMovement(payload: any) {
@@ -375,6 +477,31 @@ class ApiClient {
     return this.request<any[]>('/partners/custody', { method: 'GET' });
   }
 
+  public async getPartnersFinancialForecast() {
+    return this.request<any>('/partners/financial-forecast', { method: 'GET' });
+  }
+
+  public async createPartnerProvision(
+    partnerId: string,
+    payload: {
+      productionOrderId?: string;
+      clientId?: string;
+      clientName?: string;
+      serviceReference?: string;
+      description?: string;
+      category?: string;
+      amount: number;
+      dueDate: string;
+      paymentMethod: 'pix' | 'boleto' | 'transferencia' | 'cartao';
+      isProvision?: boolean;
+    }
+  ) {
+    return this.request<any>(`/partners/${partnerId}/provisions`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   public async createPartner(payload: any) {
     return this.request<any>('/partners', {
       method: 'POST',
@@ -424,6 +551,15 @@ class ApiClient {
   }
 
   // Communication & WhatsApp
+  public async getWhatsAppUnreadSummary() {
+    return this.request<{
+      totalUnread: number;
+      openConversationsCount: number;
+      totalConversationsCount: number;
+      anyLiveConfigured: boolean;
+    }>('/communication/unread-summary', { method: 'GET' });
+  }
+
   public async getChannels() {
     return this.request<any[]>('/communication/channels', { method: 'GET' });
   }
@@ -476,22 +612,39 @@ class ApiClient {
     conversationId: string,
     body: string,
     mediaUrl?: string,
-    messageType?: 'text' | 'image' | 'document' | 'template'
+    messageType?: 'text' | 'image' | 'document' | 'template',
+    mediaMimeType?: string
   ) {
     return this.request<any>(`/communication/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ body, mediaUrl, messageType }),
+      body: JSON.stringify({ body, mediaUrl, messageType, mediaMimeType }),
     });
   }
 
   public async sendTemplateMessage(payload: {
-    templateType: 'quote_ready' | 'downpayment_confirmed';
+    templateType:
+      | 'quote_ready'
+      | 'downpayment_confirmed'
+      | 'art_approval'
+      | 'order_stage_update'
+      | 'purchase_order'
+      | 'payment_reminder';
     clientPhone: string;
     clientName: string;
     quoteNumber?: string;
     orderNumber?: string;
+    poNumber?: string;
     amount?: number;
     voucherNumber?: string;
+    artVersion?: number;
+    artFileUrl?: string;
+    stage?: string;
+    targetDeliveryDate?: string;
+    expectedDeliveryDate?: string;
+    itemsSummary?: string;
+    dueDate?: string;
+    pixKey?: string;
+    paymentLabel?: string;
   }) {
     return this.request<any>('/communication/send-template', {
       method: 'POST',
@@ -546,6 +699,89 @@ class ApiClient {
       situation?: string;
       source: string;
     }>(`/lookups/cnpj/${digits}`, { method: 'GET' });
+  }
+
+  // Suppliers & Purchase Orders (Fornecedores & Compras de Insumos)
+  public async getSuppliers() {
+    return this.request<any[]>('/suppliers', { method: 'GET' });
+  }
+
+  public async getSuppliersSummary() {
+    return this.request<any>('/suppliers/summary', { method: 'GET' });
+  }
+
+  public async getSupplierDetail(supplierId: string) {
+    return this.request<any>(`/suppliers/${supplierId}`, { method: 'GET' });
+  }
+
+  public async createSupplier(payload: any) {
+    return this.request<any>('/suppliers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateSupplier(supplierId: string, payload: any) {
+    return this.request<any>(`/suppliers/${supplierId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteSupplier(supplierId: string) {
+    return this.request<any>(`/suppliers/${supplierId}`, { method: 'DELETE' });
+  }
+
+  public async getPurchaseOrders(filters?: { status?: string; supplierId?: string }) {
+    const params = new URLSearchParams();
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.supplierId) params.set('supplierId', filters.supplierId);
+    const qs = params.toString();
+    return this.request<any[]>(`/suppliers/purchase-orders${qs ? `?${qs}` : ''}`, { method: 'GET' });
+  }
+
+  public async createPurchaseOrder(payload: any) {
+    return this.request<any>('/suppliers/purchase-orders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updatePurchaseOrderStatus(
+    poId: string,
+    payload: { status: string; autoGeneratePayable?: boolean }
+  ) {
+    return this.request<any>(`/suppliers/purchase-orders/${poId}/status`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async receivePurchaseOrder(
+    poId: string,
+    payload: {
+      invoiceNumber?: string;
+      updateUnitCost?: boolean;
+      generatePayableIfMissing?: boolean;
+      dueDate?: string;
+      notes?: string;
+      items: Array<{ itemId: string; receiveQuantity: number }>;
+    }
+  ) {
+    return this.request<any>(`/suppliers/purchase-orders/${poId}/receive`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async generatePurchaseOrderPayable(
+    poId: string,
+    payload?: { amount?: number; dueDate?: string; paymentMethod?: string; description?: string }
+  ) {
+    return this.request<any>(`/suppliers/purchase-orders/${poId}/generate-payable`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
   }
 
   private async request<T>(path: string, options: RequestInit): Promise<ApiResponse<T>> {

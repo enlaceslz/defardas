@@ -109,6 +109,61 @@ export interface QuoteItemEntity {
   customizations?: any[];
 }
 
+export type ArtworkStatus =
+  | 'pendente'
+  | 'enviada_para_cliente'
+  | 'revisao_solicitada'
+  | 'aprovada';
+
+export interface ArtworkVersionEntity {
+  id: string;
+  version: number;
+  fileName: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'application/pdf' | 'external_link';
+  fileUrl: string;
+  fileSizeBytes?: number;
+  status: 'enviada_para_cliente' | 'revisao_solicitada' | 'aprovada' | 'substituida';
+  uploadedBy: string;
+  uploadedAt: string;
+  notes?: string;
+  revisionRequestedBy?: string;
+  revisionRequestedAt?: string;
+  revisionNotes?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+export interface QuoteVersionSnapshotItem {
+  modelName: string;
+  fabricName: string;
+  fabricColor: string;
+  totalQuantity: number;
+  calculatedBaseUnitCost: number;
+  suggestedUnitPrice: number;
+  negotiatedUnitPrice: number;
+  totalItemPrice: number;
+}
+
+export interface QuoteVersionSnapshot {
+  version: number;
+  savedAt: string;
+  savedBy: string;
+  commercialStatus: string;
+  artStatus: ArtworkStatus;
+  validUntil: string;
+  totalBaseCost: number;
+  suggestedTotalAmount: number;
+  negotiatedTotalAmount: number;
+  discountAmount: number;
+  estimatedMarginPercentage: number;
+  entryAmount: number;
+  balanceAmount: number;
+  productionLeadDays: number;
+  totalPieces: number;
+  changeSummary: string;
+  items: QuoteVersionSnapshotItem[];
+}
+
 export interface QuoteEntity {
   id: string;
   quoteNumber: string; // Ex: ORC-2026-1001
@@ -137,11 +192,16 @@ export interface QuoteEntity {
   balanceAmount: number;
   paymentTerms: string;
   productionLeadDays: number;
+  artStatus?: ArtworkStatus;
   artApproved: boolean;
   artApprovedBy?: string;
   artApprovalDate?: string;
   artFileUrl?: string;
   artNotes?: string;
+  artVersions?: ArtworkVersionEntity[];
+  versionHistory?: QuoteVersionSnapshot[];
+  approvedByName?: string;
+  approvedAt?: string;
   acceptanceChannel: 'whatsapp' | 'email' | 'presencial';
   acceptanceNotes?: string;
   acceptanceTimestamp?: string;
@@ -152,6 +212,20 @@ export interface QuoteEntity {
   createdAt: string;
   updatedAt: string;
   items: QuoteItemEntity[];
+}
+
+export interface StageScheduleItem {
+  stage: 'aguardando_liberacao' | 'corte' | 'bordado_silk' | 'costura' | 'conferencia_qualidade' | 'expedicao';
+  label: string;
+  orderIndex: number;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  plannedDays: number;
+  actualStartDate?: string;
+  actualEndDate?: string;
+  responsible?: string;
+  notes?: string;
+  skipped?: boolean;
 }
 
 export interface ProductionOrderEntity {
@@ -172,9 +246,13 @@ export interface ProductionOrderEntity {
   commercialStatus: string;
   financialStatus: 'entrada_pendente' | 'entrada_confirmada' | 'saldo_em_aberto' | 'quitado';
   stage: 'aguardando_liberacao' | 'corte' | 'bordado_silk' | 'costura' | 'conferencia_qualidade' | 'retrabalho' | 'expedicao' | 'entregue';
+  artStatus?: ArtworkStatus;
   artApproved: boolean;
   artApprovalDate?: string;
   artApprovedBy?: string;
+  artFileUrl?: string;
+  artVersionNumber?: number;
+  artRevisionNotes?: string;
   entryPaymentConfirmed: boolean;
   entryReceiptUrl?: string;
   entryReceiptReference?: string;
@@ -184,6 +262,7 @@ export interface ProductionOrderEntity {
   creationDate: string;
   targetDeliveryDate: string;
   completionDate?: string;
+  stageSchedule?: StageScheduleItem[];
   outsourcedPartner?: string;
   partnerCostPerPiece?: number;
   technicalNotes?: string;
@@ -198,6 +277,16 @@ export interface FinancialTransactionEntity {
   transactionNumber: string; // Ex: FIN-2026-5001
   productionOrderId?: string;
   quoteId?: string;
+  partnerId?: string;
+  partnerName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  purchaseOrderId?: string;
+  purchaseOrderNumber?: string;
+  clientId?: string;
+  clientName?: string;
+  serviceReference?: string;
+  isProvision?: boolean;
   type: 'receber' | 'pagar';
   subType: 'entrada_pedido' | 'saldo_entrega' | 'compra_tecido' | 'servico_terceirizado' | 'despesa_geral';
   description: string;
@@ -229,6 +318,7 @@ export interface InventoryItemEntity {
   inPartnersCustodyStock: number;
   minStock: number;
   unitCostPrice: number;
+  supplierId?: string;
   supplier: string;
   location: string;
   lastRestocked: string;
@@ -348,3 +438,89 @@ export interface PartnerCustodyEntity {
   createdAt: string;
   updatedAt: string;
 }
+
+export type SupplierCategory =
+  | 'tecidos_malhas'
+  | 'aviamentos'
+  | 'bordado_estamparia'
+  | 'embalagens'
+  | 'servicos_manutencao'
+  | 'outros';
+
+export interface SupplierEntity {
+  id: string;
+  code: string; // Ex: FOR-2026-0001
+  companyName: string;
+  tradeName: string;
+  cnpj?: string;
+  stateRegistration?: string;
+  contactName: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  city: string;
+  state: string;
+  cep?: string;
+  category: SupplierCategory;
+  paymentTerms: string;
+  paymentTermsDays: number;
+  defaultPaymentMethod: 'pix' | 'boleto' | 'transferencia' | 'cartao';
+  pixKey?: string;
+  bankDetails?: string;
+  leadTimeDays: number;
+  minOrderValue: number;
+  rating: number;
+  notes?: string;
+  active: boolean;
+  isDemo?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PurchaseOrderStatus =
+  | 'rascunho'
+  | 'enviado'
+  | 'confirmado'
+  | 'recebido_parcial'
+  | 'recebido_total'
+  | 'cancelado';
+
+export interface PurchaseOrderItemEntity {
+  id: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  unit: string;
+  quantity: number;
+  receivedQuantity: number;
+  unitCost: number;
+  subtotal: number;
+}
+
+export interface PurchaseOrderEntity {
+  id: string;
+  poNumber: string; // Ex: PC-2026-0001
+  supplierId: string;
+  supplierName: string;
+  relatedOrderId?: string;
+  relatedOrderNumber?: string;
+  status: PurchaseOrderStatus;
+  orderDate: string;
+  expectedDeliveryDate: string;
+  receivedDate?: string;
+  items: PurchaseOrderItemEntity[];
+  subtotalAmount: number;
+  freightCost: number;
+  discountAmount: number;
+  totalAmount: number;
+  paymentTerms: string;
+  paymentMethod: 'pix' | 'boleto' | 'transferencia' | 'cartao';
+  dueDate: string;
+  invoiceNumber?: string;
+  notes?: string;
+  createdByName?: string;
+  isDemo?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+

@@ -18,7 +18,9 @@ export class InventoryRepository {
         console.warn('⚠️ [InventoryRepository] Erro ao listar itens via Drizzle. Recorrendo à memória.', err);
       }
     }
-    return Array.from(fallbackDb.inventory.values());
+    return Array.from(fallbackDb.inventory.values()).sort((a, b) =>
+      (b.createdAt || '').localeCompare(a.createdAt || '')
+    );
   }
 
   public async findItemById(id: string): Promise<InventoryItemEntity | null> {
@@ -51,6 +53,7 @@ export class InventoryRepository {
           inPartnersCustodyStock: item.inPartnersCustodyStock.toString(),
           minStock: item.minStock.toString(),
           unitCostPrice: item.unitCostPrice.toString(),
+          supplierId: item.supplierId || null,
           supplier: item.supplier,
           location: item.location,
           lastRestocked: item.lastRestocked,
@@ -71,6 +74,7 @@ export class InventoryRepository {
               inPartnersCustodyStock: newRecord.inPartnersCustodyStock,
               minStock: newRecord.minStock,
               unitCostPrice: newRecord.unitCostPrice,
+              supplierId: newRecord.supplierId,
               supplier: newRecord.supplier,
               location: newRecord.location,
               lastRestocked: newRecord.lastRestocked,
@@ -107,7 +111,27 @@ export class InventoryRepository {
         console.warn('⚠️ [InventoryRepository] Erro ao listar movimentações via Drizzle. Recorrendo à memória.', err);
       }
     }
-    return Array.from(fallbackDb.movements.values());
+    return Array.from(fallbackDb.movements.values()).sort((a, b) =>
+      (b.createdAt || '').localeCompare(a.createdAt || '')
+    );
+  }
+
+  public async findMovementsByItemId(itemId: string): Promise<StockMovementEntity[]> {
+    if (fallbackDb.isConnected()) {
+      try {
+        const rows = await drizzleDb
+          .select()
+          .from(movements)
+          .where(eq(movements.itemId, itemId))
+          .orderBy(desc(movements.createdAt));
+        return rows.map((r) => this.mapToMovementEntity(r));
+      } catch (err) {
+        console.warn(`⚠️ [InventoryRepository] Erro ao buscar movimentações do item ${itemId} via Drizzle.`, err);
+      }
+    }
+    return Array.from(fallbackDb.movements.values())
+      .filter((m) => m.itemId === itemId)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 
   public async saveMovement(mov: StockMovementEntity): Promise<StockMovementEntity> {
@@ -126,6 +150,7 @@ export class InventoryRepository {
           date: mov.date,
           reason: mov.reason,
           referenceDoc: mov.referenceDoc,
+          operatorId: mov.operatorId,
           operatorName: mov.operatorName,
           isDemo: mov.isDemo ?? false,
         };
@@ -154,6 +179,7 @@ export class InventoryRepository {
       inPartnersCustodyStock: parseFloat(row.inPartnersCustodyStock),
       minStock: parseFloat(row.minStock),
       unitCostPrice: parseFloat(row.unitCostPrice),
+      supplierId: row.supplierId || undefined,
       supplier: row.supplier || 'Fornecedor Homologado',
       location: row.location || 'Almoxarifado Central',
       lastRestocked: row.lastRestocked || new Date().toISOString().split('T')[0],
@@ -175,6 +201,7 @@ export class InventoryRepository {
       date: row.date,
       reason: row.reason,
       referenceDoc: row.referenceDoc || undefined,
+      operatorId: row.operatorId || undefined,
       operatorName: row.operatorName,
       isDemo: row.isDemo,
       createdAt: row.createdAt.toISOString(),

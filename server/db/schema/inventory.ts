@@ -19,6 +19,7 @@ export const items = estoqueSchema.table('items', {
   inPartnersCustodyStock: numeric('in_partners_custody_stock', { precision: 10, scale: 2 }).notNull().default('0.00'),
   minStock: numeric('min_stock', { precision: 10, scale: 2 }).notNull().default('0.00'),
   unitCostPrice: numeric('unit_cost_price', { precision: 10, scale: 2 }).notNull().default('0.00'),
+  supplierId: uuid('supplier_id'),
   supplier: varchar('supplier', { length: 120 }),
   location: varchar('location', { length: 80 }).default('Almoxarifado Central - Galpão 01'),
   lastRestocked: date('last_restocked'),

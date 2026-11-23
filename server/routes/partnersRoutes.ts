@@ -18,7 +18,18 @@ import {
   PartnerServiceCategory,
   PartnerCustodyEntity,
   StockMovementEntity,
+  FinancialTransactionEntity,
 } from '../types/db';
+import {
+  addDaysISO,
+  buildGlobalPartnerForecast,
+  buildPartnerFinancialProfile,
+  computePartnerOrderAssignment,
+  getTodayISO,
+  PARTNER_CATEGORY_SERVICE_LABEL,
+  round2,
+  withEffectiveStatus,
+} from '../services/partnerFinanceService';
 
 export const partnersRouter = Router();
 
@@ -30,33 +41,19 @@ const VALID_PARTNER_TYPES = new Set<PartnerServiceCategory>([
   'corte_externo',
 ]);
 
-function normalizeText(value?: string): string {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-}
+const VALID_PAYMENT_METHODS = new Set(['pix', 'boleto', 'transferencia', 'cartao']);
 
-function partnerMatchesName(partner: PartnerEntity, candidate?: string): boolean {
-  const target = normalizeText(candidate);
-  if (!target) return false;
-  const trade = normalizeText(partner.tradeName);
-  const legal = normalizeText(partner.name);
-  return (
-    target === trade ||
-    target === legal ||
-    (trade.length >= 4 && target.includes(trade)) ||
-    (legal.length >= 4 && target.includes(legal))
-  );
+function isValidIsoDate(val: unknown): val is string {
+  return typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val) && !Number.isNaN(Date.parse(val));
 }
 
 // Autenticação + Permissão de leitura em todas as rotas de parceiros
 partnersRouter.use(requireAuth);
 partnersRouter.use(requirePermission('partners:view'));
 
-// 1. Listar todos os parceiros enriquecidos com métricas cruzadas (PCP + Estoque + Financeiro)
+// 1. Listar todos os parceiros enriquecidos com métricas cruzadas (PCP + Estoque + Financeiro + Provisões CP)
 partnersRouter.get('/', async (_req: RequestWithUser, res: Response) => {
+  const todayISO = getTodayISO();
   const [partnersList, ordersList, custodyList, financeList] = await Promise.all([
     partnerRepository.findAll(),
     orderRepository.findAll(),
@@ -65,51 +62,26 @@ partnersRouter.get('/', async (_req: RequestWithUser, res: Response) => {
   ]);
 
   const enriched = partnersList.map((partner) => {
-    const linkedOrders = ordersList.filter((o) => partnerMatchesName(partner, o.outsourcedPartner));
-    const activeOrders = linkedOrders.filter((o) => o.stage !== 'entregue');
-    const totalPiecesAssigned = activeOrders.reduce((s, o) => s + (o.totalPieces || 0), 0);
-
     const linkedCustody = custodyList.filter((c) => c.partnerId === partner.id);
     const openCustody = linkedCustody.filter(
       (c) => c.status === 'em_custodia' || c.status === 'devolvido_parcial'
     );
-    const openCustodyQty = Math.round(
-      openCustody.reduce(
-        (s, c) => s + Math.max(0, c.sentQuantity - c.returnedQuantity - c.lostQuantity),
-        0
-      ) * 100
-    ) / 100;
+    const openCustodyQty =
+      Math.round(
+        openCustody.reduce(
+          (s, c) => s + Math.max(0, c.sentQuantity - c.returnedQuantity - c.lostQuantity),
+          0
+        ) * 100
+      ) / 100;
 
-    const linkedPayables = financeList.filter(
-      (f) =>
-        f.type === 'pagar' &&
-        f.subType === 'servico_terceirizado' &&
-        (partnerMatchesName(partner, f.description) ||
-          linkedOrders.some((o) => o.id === f.productionOrderId || o.orderNumber === f.referenceId))
-    );
-    const pendingPayablesAmount =
-      Math.round(
-        linkedPayables
-          .filter((f) => f.status === 'pendente' || f.status === 'atrasado')
-          .reduce((s, f) => s + f.amount, 0) * 100
-      ) / 100;
-    const paidServicesAmount =
-      Math.round(
-        linkedPayables
-          .filter((f) => f.status === 'pago')
-          .reduce((s, f) => s + f.amount, 0) * 100
-      ) / 100;
+    const finProfile = buildPartnerFinancialProfile(partner, ordersList, financeList, todayISO);
 
     return {
       ...partner,
       metrics: {
-        activeOrdersCount: activeOrders.length,
-        totalOrdersCount: linkedOrders.length,
-        totalPiecesAssigned,
+        ...finProfile.metrics,
         openCustodyCount: openCustody.length,
         openCustodyQty,
-        pendingPayablesAmount,
-        paidServicesAmount,
       },
     };
   });
@@ -117,7 +89,23 @@ partnersRouter.get('/', async (_req: RequestWithUser, res: Response) => {
   res.json(enriched);
 });
 
-// 2. Listar todas as remessas sob custódia de terceiros (visão consolidada)
+// 2. Visão consolidada de Provisões, Valores Pagos, Restante CP e Previsão de Pagamento por Serviço/Cliente
+partnersRouter.get('/financial-forecast', async (_req: RequestWithUser, res: Response) => {
+  const todayISO = getTodayISO();
+  const [partnersList, ordersList, financeList] = await Promise.all([
+    partnerRepository.findAll(),
+    orderRepository.findAll(),
+    financeRepository.findAll(),
+  ]);
+
+  const forecast = buildGlobalPartnerForecast(partnersList, ordersList, financeList, todayISO);
+  res.json({
+    asOfDate: todayISO,
+    ...forecast,
+  });
+});
+
+// 3. Listar todas as remessas sob custódia de terceiros (visão consolidada)
 partnersRouter.get('/custody', async (_req: RequestWithUser, res: Response) => {
   const [custodyList, partnersList, itemsList, ordersList] = await Promise.all([
     partnerRepository.findAllCustody(),
@@ -146,19 +134,21 @@ partnersRouter.get('/custody', async (_req: RequestWithUser, res: Response) => {
       itemCode: item?.code,
       itemName: item?.name || 'Material',
       orderNumber: order?.orderNumber,
+      clientName: order?.clientName,
     };
   });
 
   res.json(enriched);
 });
 
-// 3. Visão 360° de um parceiro (cadastro + OPs vinculadas + custódia + financeiro)
+// 4. Visão 360° de um parceiro (cadastro + OPs com conciliação financeira + custódia + financeiro CP)
 partnersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
   const partner = await partnerRepository.findById(req.params.id);
   if (!partner) {
     return res.status(404).json({ error: 'Parceiro não encontrado.' });
   }
 
+  const todayISO = getTodayISO();
   const [ordersList, custodyList, itemsList, financeList] = await Promise.all([
     orderRepository.findAll(),
     partnerRepository.findCustodyByPartner(partner.id),
@@ -169,7 +159,6 @@ partnersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
   const itemMap = new Map(itemsList.map((i) => [i.id, i]));
   const orderMap = new Map(ordersList.map((o) => [o.id, o]));
 
-  const linkedOrders = ordersList.filter((o) => partnerMatchesName(partner, o.outsourcedPartner));
   const linkedCustody = custodyList.map((c) => {
     const item = itemMap.get(c.itemId);
     const order = c.productionOrderId ? orderMap.get(c.productionOrderId) : undefined;
@@ -180,26 +169,164 @@ partnersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
       itemCode: item?.code,
       itemName: item?.name || 'Material',
       orderNumber: order?.orderNumber,
+      clientName: order?.clientName,
     };
   });
 
-  const linkedPayables = financeList.filter(
-    (f) =>
-      f.type === 'pagar' &&
-      f.subType === 'servico_terceirizado' &&
-      (partnerMatchesName(partner, f.description) ||
-        linkedOrders.some((o) => o.id === f.productionOrderId || o.orderNumber === f.referenceId))
+  const openCustody = linkedCustody.filter(
+    (c) => c.status === 'em_custodia' || c.status === 'devolvido_parcial'
   );
+  const openCustodyQty = round2(openCustody.reduce((s, c) => s + c.pendingQuantity, 0));
+
+  const finProfile = buildPartnerFinancialProfile(partner, ordersList, financeList, todayISO);
 
   return res.json({
-    partner,
-    orders: linkedOrders,
+    partner: {
+      ...partner,
+      metrics: {
+        ...finProfile.metrics,
+        openCustodyCount: openCustody.length,
+        openCustodyQty,
+      },
+    },
+    orders: finProfile.orders,
     custody: linkedCustody,
-    payables: linkedPayables,
+    payables: finProfile.payables,
+    financialSummary: finProfile.metrics,
   });
 });
 
-// 4. Cadastrar novo parceiro / facção terceirizada
+// 5. Provisionar / Lançar Previsão de Pagamento (CP) para Serviço de Parceiro no Financeiro
+partnersRouter.post(
+  '/:id/provisions',
+  requirePermission('partners:provision_payable'),
+  async (req: RequestWithUser, res: Response) => {
+    const actor = req.user!;
+    const partner = await partnerRepository.findById(req.params.id);
+    if (!partner) {
+      return res.status(404).json({ error: 'Parceiro não encontrado.' });
+    }
+    if (!partner.active) {
+      return res.status(400).json({
+        error: `O parceiro ${partner.tradeName} está inativo e não pode receber novas provisões de pagamento.`,
+      });
+    }
+
+    const body = req.body || {};
+    const amount = round2(Number(body.amount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: 'O valor da provisão/pagamento deve ser maior que zero.' });
+    }
+
+    const paymentMethod = String(body.paymentMethod || 'pix');
+    if (!VALID_PAYMENT_METHODS.has(paymentMethod)) {
+      return res.status(400).json({
+        error: `Forma de pagamento inválida. Permitidas: ${Array.from(VALID_PAYMENT_METHODS).join(', ')}.`,
+      });
+    }
+
+    const todayISO = getTodayISO();
+    let linkedOrder = undefined;
+    if (body.productionOrderId) {
+      linkedOrder = (await orderRepository.findById(String(body.productionOrderId))) || undefined;
+      if (!linkedOrder) {
+        return res.status(404).json({ error: 'Ordem de Produção vinculada não encontrada.' });
+      }
+    }
+
+    const defaultDueDate =
+      linkedOrder?.targetDeliveryDate || addDaysISO(todayISO, partner.leadTimeDays || 5);
+    const dueDate = body.dueDate ? String(body.dueDate).trim() : defaultDueDate;
+    if (!isValidIsoDate(dueDate)) {
+      return res.status(400).json({ error: 'Data de previsão de pagamento inválida. Utilize YYYY-MM-DD.' });
+    }
+
+    const assignment = linkedOrder ? computePartnerOrderAssignment(partner, linkedOrder) : null;
+    const categoryLabel =
+      PARTNER_CATEGORY_SERVICE_LABEL[partner.partnerType] || 'Serviço Terceirizado';
+
+    const serviceReference =
+      (typeof body.serviceReference === 'string' && body.serviceReference.trim()) ||
+      assignment?.serviceReference ||
+      `${categoryLabel} — ${partner.tradeName}`;
+
+    const clientId = linkedOrder?.clientId || (typeof body.clientId === 'string' ? body.clientId.trim() || undefined : undefined);
+    const clientName =
+      linkedOrder?.clientName ||
+      (typeof body.clientName === 'string' && body.clientName.trim()) ||
+      undefined;
+
+    const description =
+      (typeof body.description === 'string' && body.description.trim().length >= 3
+        ? body.description.trim()
+        : `${categoryLabel} (${partner.tradeName})${linkedOrder ? ` · ${linkedOrder.orderNumber}` : ''}${clientName ? ` · Cliente: ${clientName}` : ''}`);
+
+    const trxNumber = await sequenceService.nextFinanceNumberAsync();
+    const nowIso = new Date().toISOString();
+    const newTrx: FinancialTransactionEntity = {
+      id: crypto.randomUUID(),
+      transactionNumber: trxNumber,
+      productionOrderId: linkedOrder?.id,
+      quoteId: linkedOrder?.quoteId,
+      partnerId: partner.id,
+      partnerName: partner.tradeName,
+      clientId,
+      clientName,
+      serviceReference,
+      isProvision: body.isProvision !== false,
+      type: 'pagar',
+      subType: 'servico_terceirizado',
+      description,
+      category:
+        (typeof body.category === 'string' && body.category.trim()) ||
+        `Serviço Terceirizado (${categoryLabel})`,
+      amount,
+      dueDate,
+      status: 'pendente',
+      paymentMethod: paymentMethod as FinancialTransactionEntity['paymentMethod'],
+      referenceId: linkedOrder?.orderNumber || partner.code,
+      isDemo: false,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    await financeRepository.save(newTrx);
+
+    const [ordersList, financeList] = await Promise.all([
+      orderRepository.findAll(),
+      financeRepository.findAll(),
+    ]);
+    const updatedProfile = buildPartnerFinancialProfile(partner, ordersList, financeList, todayISO);
+
+    auditService.log({
+      actorId: actor.id,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      entityName: 'financeiro.transactions',
+      entityId: newTrx.transactionNumber,
+      action: 'CREATE_PARTNER_PROVISION',
+      newData: {
+        transactionNumber: newTrx.transactionNumber,
+        partnerCode: partner.code,
+        partnerName: partner.tradeName,
+        orderNumber: linkedOrder?.orderNumber,
+        clientName,
+        serviceReference,
+        amount: newTrx.amount,
+        dueDate: newTrx.dueDate,
+        isProvision: newTrx.isProvision,
+      },
+      notes: `Provisão CP ${newTrx.transactionNumber} de R$ ${newTrx.amount.toFixed(2)} para ${partner.tradeName} (Previsão: ${dueDate}${clientName ? ` · Cliente: ${clientName}` : ''}).`,
+    });
+
+    return res.status(201).json({
+      transaction: withEffectiveStatus(newTrx, todayISO),
+      financialSummary: updatedProfile.metrics,
+    });
+  }
+);
+
+// 6. Cadastrar novo parceiro / facção terceirizada
 partnersRouter.post('/', requirePermission('partners:manage'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const body = req.body || {};
@@ -274,7 +401,7 @@ partnersRouter.post('/', requirePermission('partners:manage'), async (req: Reque
   return res.status(201).json(newPartner);
 });
 
-// 5. Atualizar parceiro / facção (allowlist explícita)
+// 7. Atualizar parceiro / facção (allowlist explícita)
 partnersRouter.put('/:id', requirePermission('partners:manage'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const existing = await partnerRepository.findById(req.params.id);
@@ -357,7 +484,7 @@ partnersRouter.put('/:id', requirePermission('partners:manage'), async (req: Req
   return res.json(updated);
 });
 
-// 6. Excluir parceiro (bloqueia se houver custódia ativa ou OPs em andamento)
+// 8. Excluir parceiro (bloqueia se houver custódia ativa, OPs em andamento ou títulos financeiros vinculados)
 partnersRouter.delete('/:id', requirePermission('partners:delete'), async (req: RequestWithUser, res: Response) => {
   const actor = req.user!;
   const partner = await partnerRepository.findById(req.params.id);
@@ -365,9 +492,10 @@ partnersRouter.delete('/:id', requirePermission('partners:delete'), async (req: 
     return res.status(404).json({ error: 'Parceiro não encontrado.' });
   }
 
-  const [custodyList, ordersList] = await Promise.all([
+  const [custodyList, ordersList, financeList] = await Promise.all([
     partnerRepository.findCustodyByPartner(partner.id),
     orderRepository.findAll(),
+    financeRepository.findAll(),
   ]);
 
   const openCustody = custodyList.filter(
@@ -380,13 +508,26 @@ partnersRouter.delete('/:id', requirePermission('partners:delete'), async (req: 
     });
   }
 
-  const activeOrders = ordersList.filter(
-    (o) => partnerMatchesName(partner, o.outsourcedPartner) && o.stage !== 'entregue'
-  );
-  if (activeOrders.length > 0) {
+  const finProfile = buildPartnerFinancialProfile(partner, ordersList, financeList);
+
+  if (finProfile.metrics.activeOrdersCount > 0) {
     return res.status(409).json({
-      error: `Exclusão bloqueada: ${partner.tradeName} está vinculado a ${activeOrders.length} Ordem(ns) de Produção em aberto. Inative o parceiro em vez de excluí-lo.`,
+      error: `Exclusão bloqueada: ${partner.tradeName} está vinculado a ${finProfile.metrics.activeOrdersCount} Ordem(ns) de Produção em aberto. Inative o parceiro em vez de excluí-lo.`,
       code: 'PARTNER_HAS_ACTIVE_ORDERS',
+    });
+  }
+
+  if (finProfile.metrics.pendingPayablesAmount > 0) {
+    return res.status(409).json({
+      error: `Exclusão bloqueada: ${partner.tradeName} possui Contas a Pagar em aberto (R$ ${finProfile.metrics.pendingPayablesAmount.toFixed(2)}). Liquide ou cancele os títulos pendentes antes de excluir, ou inative o parceiro.`,
+      code: 'PARTNER_HAS_OPEN_PAYABLES',
+    });
+  }
+
+  if (finProfile.metrics.paidServicesAmount > 0) {
+    return res.status(409).json({
+      error: `Exclusão bloqueada: ${partner.tradeName} possui histórico financeiro liquidado (R$ ${finProfile.metrics.paidServicesAmount.toFixed(2)}). Para preservar a auditoria contábil, inative o cadastro em vez de excluí-lo.`,
+      code: 'PARTNER_HAS_FINANCIAL_HISTORY',
     });
   }
 

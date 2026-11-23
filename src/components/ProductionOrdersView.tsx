@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Plus,
   Search,
@@ -22,6 +22,8 @@ import {
   X,
   Factory,
   CalendarClock,
+  GanttChart,
+  MessageSquare,
 } from 'lucide-react';
 import { ProductionOrder, OperationalStage } from '../types/erp';
 import {
@@ -31,6 +33,11 @@ import {
   getFinancialStatusBadge,
 } from '../utils/formatters';
 import { useAuth } from '../api/authContext';
+import {
+  OrderScheduleModal,
+  getDeliveryStatusBadge,
+  getStageDeadlineBadge,
+} from './OrderScheduleModal';
 
 interface ProductionOrdersViewProps {
   orders: ProductionOrder[];
@@ -42,6 +49,22 @@ interface ProductionOrdersViewProps {
     nextStage: OperationalStage,
     reason?: string
   ) => void | Promise<void>;
+  onUpdateOrderSchedule?: (
+    orderId: string,
+    payload: {
+      targetDeliveryDate?: string;
+      syncTargetDelivery?: boolean;
+      recalculateProportional?: boolean;
+      stages?: Array<{
+        stage: string;
+        plannedStartDate: string;
+        plannedEndDate: string;
+        responsible?: string;
+        notes?: string;
+        skipped?: boolean;
+      }>;
+    }
+  ) => Promise<boolean>;
   onOpenPrintTicket: (order: ProductionOrder) => void;
   onGoToFinanceForPayment?: () => void;
   onApproveArt?: (
@@ -49,6 +72,14 @@ interface ProductionOrdersViewProps {
     approverName: string,
     notes?: string
   ) => void | Promise<void>;
+  onRequestArtRevision?: (
+    orderId: string,
+    revisionNotes: string,
+    requestedBy?: string
+  ) => void | Promise<void>;
+  focusedScheduleOrderId?: string | null;
+  onClearFocusedScheduleOrder?: () => void;
+  onNotifyOrderWhatsApp?: (order: ProductionOrder) => Promise<void> | void;
 }
 
 export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
@@ -57,9 +88,14 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
   onEditOrder,
   onDeleteOrder,
   onUpdateOrderStage,
+  onUpdateOrderSchedule,
   onOpenPrintTicket,
   onGoToFinanceForPayment,
   onApproveArt,
+  onRequestArtRevision,
+  focusedScheduleOrderId,
+  onClearFocusedScheduleOrder,
+  onNotifyOrderWhatsApp,
 }) => {
   const { user } = useAuth();
   const role = user?.role || '';
@@ -69,14 +105,16 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
   const canCreateOrEdit = ['admin', 'gerente_comercial', 'pcp_producao'].includes(role);
   const canAdvanceStage = ['admin', 'pcp_producao', 'expedicao_qualidade'].includes(role);
   const canApproveArt = ['admin', 'gerente_comercial', 'vendedor', 'pcp_producao'].includes(role);
+  const canManageSchedule = ['admin', 'pcp_producao', 'gerente_comercial'].includes(role);
+  const canUseWhatsApp = ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role);
   const canDelete = role === 'admin';
   const canGoToFinance = ['admin', 'financeiro', 'gerente_comercial'].includes(role);
 
-  const [viewMode, setViewMode] = useState<'kanban' | 'table'>('kanban');
+  const [viewMode, setViewMode] = useState<'kanban' | 'timeline' | 'table'>('kanban');
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [stageFilter, setStageFilter] = useState<string>('all');
-  const [quickFilter, setQuickFilter] = useState<'all' | 'overdue' | 'blocked' | 'rework'>('all');
+  const [quickFilter, setQuickFilter] = useState<'all' | 'overdue' | 'stage_alert' | 'blocked' | 'rework'>('all');
 
   // Modais operacionais in-app (zero window.prompt/alert)
   const [gateModalOrder, setGateModalOrder] = useState<ProductionOrder | null>(null);
@@ -85,14 +123,46 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
   const [artApprovalNotes, setArtApprovalNotes] = useState('');
   const [reworkModalOrder, setReworkModalOrder] = useState<ProductionOrder | null>(null);
   const [reworkReason, setReworkReason] = useState('');
+  const [artRevisionModalOrder, setArtRevisionModalOrder] = useState<ProductionOrder | null>(null);
+  const [artRevisionReason, setArtRevisionReason] = useState('');
+  const [scheduleModalOrderId, setScheduleModalOrderId] = useState<string | null>(null);
   const [isProcessingModal, setIsProcessingModal] = useState(false);
+
+  // Abrir automaticamente o cronograma da OP quando acionado pela Central de Notificações ou Painel
+  useEffect(() => {
+    if (!focusedScheduleOrderId) return;
+    if (orders.some((o) => o.id === focusedScheduleOrderId)) {
+      setViewMode('timeline');
+      setScheduleModalOrderId(focusedScheduleOrderId);
+    }
+    onClearFocusedScheduleOrder?.();
+  }, [focusedScheduleOrderId, orders, onClearFocusedScheduleOrder]);
+
+  const scheduleModalOrder = useMemo(
+    () => (scheduleModalOrderId ? orders.find((o) => o.id === scheduleModalOrderId) || null : null),
+    [scheduleModalOrderId, orders]
+  );
 
   const todayISO = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const isOrderOverdue = (order: ProductionOrder) =>
     order.stage !== 'entregue' &&
-    Boolean(order.targetDeliveryDate) &&
-    order.targetDeliveryDate < todayISO;
+    (order.deadlineSummary
+      ? order.deadlineSummary.deliveryStatus === 'atrasada'
+      : Boolean(order.targetDeliveryDate) && order.targetDeliveryDate < todayISO);
+
+  const hasStageOrDeliveryAlert = (order: ProductionOrder) => {
+    if (order.stage === 'entregue') return false;
+    if (order.deadlineSummary) {
+      return (
+        order.deadlineSummary.isCurrentStageOverdue ||
+        order.deadlineSummary.isCurrentStageDueSoon ||
+        order.deadlineSummary.deliveryStatus === 'critica_hoje' ||
+        order.deadlineSummary.deliveryStatus === 'atencao'
+      );
+    }
+    return false;
+  };
 
   const stagesList: { id: OperationalStage; label: string; icon: any; color: string }[] = [
     { id: 'aguardando_liberacao', label: '0. Bloqueado (Entrada/Arte)', icon: ShieldAlert, color: 'border-t-rose-500' },
@@ -137,12 +207,14 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
     const activePieces = active.reduce((sum, o) => sum + (o.totalPieces || 0), 0);
     const blocked = active.filter((o) => !o.canStartProduction).length;
     const overdue = active.filter((o) => isOrderOverdue(o)).length;
+    const stageAlert = active.filter((o) => hasStageOrDeliveryAlert(o)).length;
     const rework = active.filter((o) => o.stage === 'retrabalho').length;
     return {
       activeCount: active.length,
       activePieces,
       blocked,
       overdue,
+      stageAlert,
       rework,
     };
   }, [orders, todayISO]);
@@ -166,6 +238,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
       const matchesQuick =
         quickFilter === 'all' ||
         (quickFilter === 'overdue' && isOrderOverdue(order)) ||
+        (quickFilter === 'stage_alert' && hasStageOrDeliveryAlert(order)) ||
         (quickFilter === 'blocked' && order.stage !== 'entregue' && !order.canStartProduction) ||
         (quickFilter === 'rework' && order.stage === 'retrabalho');
 
@@ -232,7 +305,25 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
     }
   };
 
-  const toggleQuickFilter = (target: 'overdue' | 'blocked' | 'rework') => {
+  const handleSubmitOrderArtRevision = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!artRevisionModalOrder || !onRequestArtRevision || isProcessingModal) return;
+    if (artRevisionReason.trim().length < 5) return;
+    setIsProcessingModal(true);
+    try {
+      await onRequestArtRevision(
+        artRevisionModalOrder.id,
+        artRevisionReason.trim(),
+        artRevisionModalOrder.clientName
+      );
+      setArtRevisionModalOrder(null);
+      setArtRevisionReason('');
+    } finally {
+      setIsProcessingModal(false);
+    }
+  };
+
+  const toggleQuickFilter = (target: 'overdue' | 'stage_alert' | 'blocked' | 'rework') => {
     setQuickFilter((prev) => (prev === target ? 'all' : target));
   };
 
@@ -260,7 +351,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
           </h1>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {/* View Mode Toggle */}
           <div className="flex items-center p-1 bg-slate-200 rounded-lg">
             <button
@@ -273,6 +364,17 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
             >
               <Columns3 className="w-3.5 h-3.5" />
               <span>Quadro Kanban</span>
+            </button>
+            <button
+              onClick={() => setViewMode('timeline')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                viewMode === 'timeline'
+                  ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <GanttChart className="w-3.5 h-3.5" />
+              <span>Cronograma & Prazos</span>
             </button>
             <button
               onClick={() => setViewMode('table')}
@@ -300,7 +402,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
       </div>
 
       {/* KPI Summary Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <button
           type="button"
           onClick={() => setQuickFilter('all')}
@@ -324,6 +426,52 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
 
         <button
           type="button"
+          onClick={() => toggleQuickFilter('overdue')}
+          className={`text-left bg-white p-4 rounded-xl border transition-all cursor-pointer ${
+            quickFilter === 'overdue'
+              ? 'border-rose-500 ring-1 ring-rose-100 shadow-xs'
+              : 'border-slate-200 hover:border-rose-300'
+          }`}
+        >
+          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+            <span>Entregas Atrasadas</span>
+            <CalendarClock className="w-4 h-4 text-rose-600" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className={`text-2xl font-bold font-mono ${kpis.overdue > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+              {kpis.overdue}
+            </span>
+            <span className="text-[11px] text-slate-500">
+              {kpis.overdue > 0 ? 'Prazo final vencido' : 'Tudo no prazo'}
+            </span>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => toggleQuickFilter('stage_alert')}
+          className={`text-left bg-white p-4 rounded-xl border transition-all cursor-pointer ${
+            quickFilter === 'stage_alert'
+              ? 'border-amber-500 ring-1 ring-amber-100 shadow-xs'
+              : 'border-slate-200 hover:border-amber-300'
+          }`}
+        >
+          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+            <span>Etapas em Alerta / SLA</span>
+            <Clock className="w-4 h-4 text-amber-600" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className={`text-2xl font-bold font-mono ${kpis.stageAlert > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {kpis.stageAlert}
+            </span>
+            <span className="text-[11px] text-slate-500">
+              Etapa vencida ou próx. 3d
+            </span>
+          </div>
+        </button>
+
+        <button
+          type="button"
           onClick={() => toggleQuickFilter('blocked')}
           className={`text-left bg-white p-4 rounded-xl border transition-all cursor-pointer ${
             quickFilter === 'blocked'
@@ -338,29 +486,6 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono text-rose-700">{kpis.blocked}</span>
             <span className="text-[11px] text-slate-500">Aguardando sinal ou arte</span>
-          </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => toggleQuickFilter('overdue')}
-          className={`text-left bg-white p-4 rounded-xl border transition-all cursor-pointer ${
-            quickFilter === 'overdue'
-              ? 'border-amber-500 ring-1 ring-amber-100 shadow-xs'
-              : 'border-slate-200 hover:border-amber-300'
-          }`}
-        >
-          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-            <span>Prazo SLA Vencido</span>
-            <CalendarClock className="w-4 h-4 text-amber-600" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className={`text-2xl font-bold font-mono ${kpis.overdue > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
-              {kpis.overdue}
-            </span>
-            <span className="text-[11px] text-slate-500">
-              {kpis.overdue > 0 ? 'Entrega atrasada' : 'Tudo no prazo'}
-            </span>
           </div>
         </button>
 
@@ -596,23 +721,105 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                               </span>
                             </div>
 
-                            {/* Delivery Date */}
+                            {/* Current Stage Deadline + Mini Progress Strip */}
+                            {order.deadlineSummary && (
+                              <div className="p-2 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1.5">
+                                {order.deadlineSummary.currentStageItem && (
+                                  <div className="flex items-center justify-between gap-1 text-[10px]">
+                                    <span className="text-slate-500 truncate">
+                                      Prazo etapa:{' '}
+                                      <strong className="font-mono text-slate-800">
+                                        {formatDateBR(order.deadlineSummary.currentStageItem.plannedEndDate)}
+                                      </strong>
+                                    </span>
+                                    {(() => {
+                                      const sb = getStageDeadlineBadge(
+                                        order.deadlineSummary.currentStageItem.status,
+                                        order.deadlineSummary.currentStageItem.daysRemaining
+                                      );
+                                      return (
+                                        <span className={`px-1.5 py-0.5 rounded border text-[9px] shrink-0 ${sb.badgeClass}`}>
+                                          {sb.label}
+                                        </span>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
+                                {/* Mini 6-stage progress pills */}
+                                <div className="flex items-center gap-1" title={`Progresso: ${order.deadlineSummary.completedStagesCount}/${order.deadlineSummary.totalApplicableStagesCount} etapas concluídas`}>
+                                  {order.deadlineSummary.stages.map((st) => {
+                                    const barColor =
+                                      st.status === 'nao_aplicavel'
+                                        ? 'bg-slate-200/60'
+                                        : st.status === 'concluida_no_prazo'
+                                          ? 'bg-emerald-500'
+                                          : st.status === 'concluida_atrasada'
+                                            ? 'bg-amber-500'
+                                            : st.status === 'em_andamento_atrasada'
+                                              ? 'bg-rose-500'
+                                              : st.status === 'em_andamento_alerta'
+                                                ? 'bg-amber-400'
+                                                : st.status === 'em_andamento_no_prazo'
+                                                  ? 'bg-blue-500'
+                                                  : st.status === 'retrabalho'
+                                                    ? 'bg-orange-500'
+                                                    : 'bg-slate-200';
+                                    return (
+                                      <span
+                                        key={st.stage}
+                                        className={`h-1.5 flex-1 rounded-full ${barColor}`}
+                                        title={`${st.label}: até ${formatDateBR(st.plannedEndDate)}`}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Delivery Date + Cronograma + Print */}
                             <div className="flex items-center justify-between text-[11px] pt-1 text-slate-500">
                               <span
                                 className={`flex items-center gap-1 font-mono ${
                                   overdue ? 'text-rose-700 font-bold' : ''
                                 }`}
+                                title="Prazo prometido de entrega final"
                               >
                                 <Clock className={`w-3 h-3 ${overdue ? 'text-rose-600' : 'text-slate-400'}`} />
                                 {formatDateBR(order.targetDeliveryDate)}
                               </span>
-                              <button
-                                onClick={() => onOpenPrintTicket(order)}
-                                className="text-slate-500 hover:text-blue-600 p-1 rounded hover:bg-slate-100 transition-colors cursor-pointer"
-                                title="Imprimir Ficha de Produção Fabril"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setScheduleModalOrderId(order.id)}
+                                  className="inline-flex items-center gap-1 px-1.5 py-1 text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition-colors cursor-pointer"
+                                  title="Abrir Cronograma e Prazos por Etapa"
+                                >
+                                  <CalendarClock className="w-3 h-3" />
+                                  <span>Prazos</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenPrintTicket(order)}
+                                  className="text-slate-500 hover:text-blue-600 p-1 rounded hover:bg-slate-100 transition-colors cursor-pointer"
+                                  title="Imprimir Ficha de Produção Fabril"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
+                                {canUseWhatsApp && onNotifyOrderWhatsApp && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onNotifyOrderWhatsApp(order)}
+                                    className="text-emerald-600 hover:text-emerald-700 p-1 rounded hover:bg-emerald-50 transition-colors cursor-pointer"
+                                    title={
+                                      !order.artApproved
+                                        ? 'Cobrar aprovação de arte via WhatsApp'
+                                        : 'Notificar cliente sobre etapa atual via WhatsApp'
+                                    }
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             {/* Action Buttons: Stage Advance & Edit */}
@@ -699,6 +906,180 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
             })}
           </div>
         </div>
+      ) : viewMode === 'timeline' ? (
+        /* Cronograma & Prazos por Etapa View */
+        <div className="space-y-4">
+          {filteredOrders.length === 0 ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-10 text-center text-xs text-slate-400">
+              Nenhuma Ordem de Produção encontrada com os filtros selecionados.
+            </div>
+          ) : (
+            filteredOrders.map((order) => {
+              const summary = order.deadlineSummary;
+              const deliveryBadge = getDeliveryStatusBadge(
+                summary?.deliveryStatus,
+                summary?.daysToDelivery
+              );
+              const nextStage = getNextStage(order.stage);
+              const isBlocked = !order.canStartProduction;
+
+              return (
+                <div
+                  key={order.id}
+                  className={`bg-white rounded-xl border shadow-xs overflow-hidden ${
+                    summary?.deliveryStatus === 'atrasada' || summary?.isCurrentStageOverdue
+                      ? 'border-rose-300'
+                      : summary?.isCurrentStageDueSoon || summary?.deliveryStatus === 'atencao'
+                        ? 'border-amber-300'
+                        : 'border-slate-200'
+                  }`}
+                >
+                  {/* Card Top Bar */}
+                  <div className="px-5 py-3.5 bg-slate-50/80 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div className="flex items-start sm:items-center gap-3 flex-wrap min-w-0">
+                      <span className="font-mono font-bold text-slate-900 text-xs px-2.5 py-1 rounded bg-white border border-slate-200">
+                        {order.orderNumber || order.id}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-slate-900 truncate">
+                          {order.clientName}
+                        </div>
+                        <div className="text-xs text-slate-600 truncate">
+                          {order.itemTitle} · <strong className="font-mono text-blue-700">{order.totalPieces} pçs</strong>
+                          {order.outsourcedPartner ? ` · Facção: ${order.outsourcedPartner}` : ''}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <div className="text-right">
+                        <div className="text-[10px] text-slate-500 uppercase font-semibold">
+                          Entrega Prometida
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-bold text-xs text-slate-900">
+                            {formatDateBR(order.targetDeliveryDate)}
+                          </span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded border ${deliveryBadge.className}`}>
+                            {deliveryBadge.label}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => setScheduleModalOrderId(order.id)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <CalendarClock className="w-3.5 h-3.5" />
+                          <span>{canManageSchedule ? 'Ajustar Prazos' : 'Ver Cronograma'}</span>
+                        </button>
+                        {canAdvanceStage && nextStage && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (order.stage === 'aguardando_liberacao' && isBlocked) {
+                                setGateModalOrder(order);
+                                return;
+                              }
+                              onUpdateOrderStage(order.id, nextStage);
+                            }}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                              order.stage === 'aguardando_liberacao' && isBlocked
+                                ? 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                                : 'bg-blue-600 text-white hover:bg-blue-500'
+                            }`}
+                          >
+                            <span>Avançar</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onOpenPrintTicket(order)}
+                          className="p-1.5 text-slate-500 hover:text-blue-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer"
+                          title="Imprimir Ficha Técnica com Prazos"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                        {canUseWhatsApp && onNotifyOrderWhatsApp && (
+                          <button
+                            type="button"
+                            onClick={() => onNotifyOrderWhatsApp(order)}
+                            className="p-1.5 text-emerald-600 hover:text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg cursor-pointer"
+                            title={
+                              !order.artApproved
+                                ? 'Cobrar aprovação de arte via WhatsApp'
+                                : 'Notificar cliente sobre etapa atual via WhatsApp'
+                            }
+                          >
+                            <MessageSquare className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 6-Stage Horizontal Timeline Grid */}
+                  <div className="p-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+                      {(summary?.stages || []).map((st) => {
+                        const badge = getStageDeadlineBadge(st.status, st.daysRemaining);
+                        return (
+                          <div
+                            key={st.stage}
+                            className={`p-3 rounded-xl border text-xs flex flex-col justify-between gap-2 ${badge.cardBorder}`}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${badge.dotClass}`} />
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded border leading-tight ${badge.badgeClass}`}>
+                                  {badge.label}
+                                </span>
+                              </div>
+                              <div className="font-bold text-slate-900 leading-snug pt-0.5">
+                                {st.label}
+                              </div>
+                              <div className="text-[10px] text-slate-500 truncate" title={st.responsible || ''}>
+                                {st.responsible || 'Equipe interna'}
+                              </div>
+                            </div>
+
+                            {!st.skipped ? (
+                              <div className="pt-2 border-t border-slate-200/70 space-y-0.5 text-[10px] font-mono">
+                                <div className="flex items-center justify-between text-slate-600">
+                                  <span>Previsto:</span>
+                                  <strong className={st.status === 'em_andamento_atrasada' ? 'text-rose-700' : 'text-slate-900'}>
+                                    {formatDateBR(st.plannedEndDate)}
+                                  </strong>
+                                </div>
+                                <div className="flex items-center justify-between text-slate-500">
+                                  <span>{st.actualEndDate ? 'Concluído:' : st.actualStartDate ? 'Início:' : 'Janela:'}</span>
+                                  <span className={st.actualEndDate ? 'text-emerald-700 font-semibold' : ''}>
+                                    {st.actualEndDate
+                                      ? formatDateBR(st.actualEndDate)
+                                      : st.actualStartDate
+                                        ? formatDateBR(st.actualStartDate)
+                                        : `${st.plannedDays}d`}
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="pt-2 border-t border-slate-200/60 text-[10px] text-slate-400 italic">
+                                Etapa pulada
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
       ) : (
         /* Table View */
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
@@ -765,25 +1146,61 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                           {order.outsourcedPartner || 'Produção Interna'}
                         </td>
                         <td className="py-3 px-4 font-mono">
-                          <div className="flex items-center gap-1.5">
-                            <span className={overdue ? 'text-rose-700 font-bold' : 'text-slate-700'}>
-                              {formatDateBR(order.targetDeliveryDate)}
-                            </span>
-                            {overdue && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">
-                                Atrasada
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className={overdue ? 'text-rose-700 font-bold' : 'text-slate-700'}>
+                                {formatDateBR(order.targetDeliveryDate)}
                               </span>
+                              {(() => {
+                                const db = getDeliveryStatusBadge(
+                                  order.deadlineSummary?.deliveryStatus,
+                                  order.deadlineSummary?.daysToDelivery
+                                );
+                                return (
+                                  <span className={`text-[9px] px-1.5 py-0.5 rounded border ${db.className}`}>
+                                    {db.label}
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                            {order.deadlineSummary?.currentStageItem && (
+                              <div className="text-[10px] text-slate-500">
+                                Etapa até {formatDateBR(order.deadlineSummary.currentStageItem.plannedEndDate)}
+                              </div>
                             )}
                           </div>
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
+                              type="button"
+                              onClick={() => setScheduleModalOrderId(order.id)}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition-colors cursor-pointer"
+                              title="Ver / Editar Cronograma e Prazos por Etapa"
+                            >
+                              <CalendarClock className="w-3 h-3" />
+                              <span>Prazos</span>
+                            </button>
+                            <button
                               onClick={() => onOpenPrintTicket(order)}
                               className="px-2 py-1 text-[11px] font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors cursor-pointer"
                             >
                               Ficha
                             </button>
+                            {canUseWhatsApp && onNotifyOrderWhatsApp && (
+                              <button
+                                type="button"
+                                onClick={() => onNotifyOrderWhatsApp(order)}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                                title={
+                                  !order.artApproved
+                                    ? 'Cobrar aprovação de arte via WhatsApp'
+                                    : 'Notificar cliente sobre etapa atual via WhatsApp'
+                                }
+                              >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {canApproveArt && !order.artApproved && onApproveArt && (
                               <button
                                 onClick={() => openArtApprovalModal(order)}
@@ -935,26 +1352,57 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                       ) : (
                         <AlertTriangle className="w-4 h-4 text-amber-600" />
                       )}
-                      <span>2. Aprovação Formal da Arte / Layout</span>
+                      <span>
+                        2. Aprovação Formal da Arte / Layout
+                        {gateModalOrder.artVersionNumber ? ` (Arte v${gateModalOrder.artVersionNumber})` : ''}
+                      </span>
                     </div>
                     <p className="text-[11px] text-slate-600">
                       {gateModalOrder.artApproved
                         ? `Aprovada por ${gateModalOrder.artApprovedBy || 'Cliente'}.`
+                        : gateModalOrder.artStatus === 'revisao_solicitada'
+                        ? `Revisão de arte solicitada: ${gateModalOrder.artRevisionNotes || 'aguardando nova versão do layout.'}`
                         : 'A arte final precisa ser formalmente aprovada pelo cliente antes do corte.'}
                     </p>
+                    {gateModalOrder.artFileUrl && gateModalOrder.artFileUrl.startsWith('data:image/') && (
+                      <div className="mt-2">
+                        <img
+                          src={gateModalOrder.artFileUrl}
+                          alt="Layout da arte vinculada"
+                          className="max-h-24 rounded border border-slate-200 bg-white p-1 object-contain"
+                        />
+                      </div>
+                    )}
                   </div>
-                  {!gateModalOrder.artApproved && canApproveArt && onApproveArt && (
-                    <button
-                      onClick={() => {
-                        const target = gateModalOrder;
-                        setGateModalOrder(null);
-                        openArtApprovalModal(target);
-                      }}
-                      className="px-2.5 py-1 bg-blue-600 text-white font-semibold rounded text-[11px] hover:bg-blue-500 transition-colors shrink-0 cursor-pointer"
-                    >
-                      Aprovar Arte
-                    </button>
-                  )}
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    {!gateModalOrder.artApproved && canApproveArt && onApproveArt && (
+                      <button
+                        onClick={() => {
+                          const target = gateModalOrder;
+                          setGateModalOrder(null);
+                          openArtApprovalModal(target);
+                        }}
+                        className="px-2.5 py-1 bg-blue-600 text-white font-semibold rounded text-[11px] hover:bg-blue-500 transition-colors cursor-pointer"
+                      >
+                        Aprovar Arte
+                      </button>
+                    )}
+                    {gateModalOrder.stage === 'aguardando_liberacao' &&
+                      canApproveArt &&
+                      onRequestArtRevision && (
+                        <button
+                          onClick={() => {
+                            const target = gateModalOrder;
+                            setGateModalOrder(null);
+                            setArtRevisionModalOrder(target);
+                            setArtRevisionReason('');
+                          }}
+                          className="px-2.5 py-1 bg-white text-amber-800 border border-amber-300 font-semibold rounded text-[11px] hover:bg-amber-50 transition-colors cursor-pointer"
+                        >
+                          Pedir Revisão
+                        </button>
+                      )}
+                  </div>
                 </div>
               </div>
 
@@ -1111,6 +1559,78 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal de Solicitação de Revisão de Arte a partir do PCP */}
+      {artRevisionModalOrder && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+              <div className="flex items-center gap-2.5">
+                <RotateCcw className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-sm font-bold">Solicitar Revisão da Arte</h3>
+                  <p className="text-[11px] text-slate-400">
+                    {artRevisionModalOrder.orderNumber || artRevisionModalOrder.id} ·{' '}
+                    {artRevisionModalOrder.clientName}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setArtRevisionModalOrder(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmitOrderArtRevision} className="p-6 space-y-4 text-xs">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
+                A OP permanecerá retida em <strong>Aguardando Liberação</strong> (Gate A.3.2) e a proposta
+                comercial vinculada será notificada como <em>Revisão de Arte Solicitada</em>.
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Ajustes Solicitados na Arte *
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  minLength={5}
+                  value={artRevisionReason}
+                  onChange={(e) => setArtRevisionReason(e.target.value)}
+                  placeholder="Ex: Ajustar posição do bordado no bolso esquerdo para 2cm abaixo da costura."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+              <div className="pt-2 border-t border-slate-200 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setArtRevisionModalOrder(null)}
+                  disabled={isProcessingModal}
+                  className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isProcessingModal || artRevisionReason.trim().length < 5}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg cursor-pointer disabled:opacity-60"
+                >
+                  {isProcessingModal ? 'Registrando...' : 'Registrar Revisão de Arte'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Interativo de Cronograma & Prazos por Etapa */}
+      {scheduleModalOrder && onUpdateOrderSchedule && (
+        <OrderScheduleModal
+          order={scheduleModalOrder}
+          onClose={() => setScheduleModalOrderId(null)}
+          onSaveSchedule={onUpdateOrderSchedule}
+        />
       )}
 
     </div>

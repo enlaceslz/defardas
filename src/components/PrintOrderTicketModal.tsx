@@ -215,6 +215,50 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
             </div>
           )}
 
+          {/* Approved Artwork Preview */}
+          {(order.artFileUrl || order.artRevisionNotes) && (
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <div className="bg-slate-100 px-4 py-2 font-bold text-xs uppercase tracking-wider text-slate-700 border-b border-slate-200 flex items-center justify-between">
+                <span>
+                  Arte / Layout de Personalização
+                  {order.artVersionNumber ? ` (Arte v${order.artVersionNumber})` : ''}
+                </span>
+                <span
+                  className={`text-[11px] font-bold ${
+                    order.artApproved ? 'text-emerald-700' : 'text-amber-700'
+                  }`}
+                >
+                  {order.artApproved
+                    ? `Aprovada por ${order.artApprovedBy || 'Cliente'}`
+                    : order.artStatus === 'revisao_solicitada'
+                    ? 'REVISÃO DE ARTE PENDENTE (CORTE BLOQUEADO)'
+                    : 'Aguardando Aprovação Formal'}
+                </span>
+              </div>
+              <div className="p-3 flex items-center gap-4 text-xs">
+                {order.artFileUrl && order.artFileUrl.startsWith('data:image/') && (
+                  <img
+                    src={order.artFileUrl}
+                    alt={`Layout aprovado ${order.orderNumber || order.id}`}
+                    className="max-h-32 max-w-[200px] object-contain border border-slate-200 rounded bg-slate-50 p-1"
+                  />
+                )}
+                <div className="space-y-1 text-slate-700">
+                  {order.artRevisionNotes && (
+                    <div className="p-2 rounded bg-amber-50 border border-amber-200 text-amber-950">
+                      <strong>Ajuste solicitado na arte:</strong> {order.artRevisionNotes}
+                    </div>
+                  )}
+                  {order.artFileUrl && !order.artFileUrl.startsWith('data:image/') && (
+                    <div className="font-mono text-[11px] text-slate-600 break-all">
+                      Arquivo/Referência: {order.artFileUrl.startsWith('data:application/pdf') ? 'Documento PDF armazenado no ERP' : order.artFileUrl}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Technical Notes */}
           {order.technicalNotes && (
             <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-lg text-xs space-y-1">
@@ -225,68 +269,102 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
             </div>
           )}
 
-          {/* Quality Routing Sign-Off Table (PRD B.2.3 & 5.8) */}
+          {/* Quality Routing Sign-Off Table (PRD B.2.3 & 5.8) com Prazos por Etapa */}
           <div className="border border-slate-200 rounded-lg overflow-hidden">
             <div className="bg-slate-100 px-4 py-2 font-bold text-xs uppercase tracking-wider text-slate-700 border-b border-slate-200 flex justify-between">
-              <span>4. Roteiro de Controle & Conferência de Qualidade Final (DE FARDAS)</span>
+              <span>4. Cronograma por Etapa & Controle de Qualidade Final (DE FARDAS)</span>
               <span className="text-[11px] text-slate-500 font-normal">Aprovação obrigatória antes da liberação de pagamento ao parceiro</span>
             </div>
             <table className="w-full text-xs text-left">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold">
                   <th className="py-2 px-3">Etapa</th>
-                  <th className="py-2 px-3">Data</th>
+                  <th className="py-2 px-3">Prazo Previsto</th>
+                  <th className="py-2 px-3">Conclusão Real</th>
                   <th className="py-2 px-3">Responsável / Facção</th>
                   <th className="py-2 px-3">Qtd Aprovada</th>
                   <th className="py-2 px-3">Perdas/Defeito</th>
-                  <th className="py-2 px-3">Visto / Assinatura</th>
+                  <th className="py-2 px-3">Visto</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-slate-800">1. Corte & Enfesto</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
-                  <td className="py-3 px-3 font-mono text-slate-600">{order.assignedTeam || 'DE FARDAS · Corte'}</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ m</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-slate-800">2. Bordado / Silk (Parceiro)</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
-                  <td className="py-3 px-3 font-mono text-slate-600">
-                    {order.customizations?.find((c) => c.partnerName)?.partnerName || 'Parceiro de Personalização'}
-                  </td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-slate-800">3. Costura & Montagem</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
-                  <td className="py-3 px-3 font-mono text-slate-600">
-                    {order.outsourcedPartner || 'Produção Interna DE FARDAS'}
-                  </td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-slate-800">4. Inspeção Final DE FARDAS</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
-                  <td className="py-3 px-3 font-mono text-slate-600">Controle de Qualidade</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-slate-800">5. Embalagem & Expedição</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____/____/____</td>
-                  <td className="py-3 px-3 font-mono text-slate-600">Expedição / Almoxarifado</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">____ pçs</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">-</td>
-                  <td className="py-3 px-3 font-mono text-slate-400">__________________</td>
-                </tr>
+                {(() => {
+                  const scheduleByStage = new Map(
+                    (order.deadlineSummary?.stages || order.stageSchedule || []).map((s) => [s.stage, s])
+                  );
+                  const rows = [
+                    {
+                      key: 'aguardando_liberacao',
+                      label: '0. Liberação (Gate A.3.2)',
+                      fallbackResp: 'Comercial / Financeiro',
+                      lossPlaceholder: '-',
+                    },
+                    {
+                      key: 'corte',
+                      label: '1. Corte & Enfesto',
+                      fallbackResp: order.assignedTeam || 'DE FARDAS · Corte',
+                      lossPlaceholder: '____ m',
+                    },
+                    {
+                      key: 'bordado_silk',
+                      label: '2. Bordado / Silk (Parceiro)',
+                      fallbackResp:
+                        order.customizations?.find((c) => c.partnerName)?.partnerName ||
+                        'Parceiro de Personalização',
+                      lossPlaceholder: '____ pçs',
+                    },
+                    {
+                      key: 'costura',
+                      label: '3. Costura & Montagem',
+                      fallbackResp: order.outsourcedPartner || 'Produção Interna DE FARDAS',
+                      lossPlaceholder: '____ pçs',
+                    },
+                    {
+                      key: 'conferencia_qualidade',
+                      label: '4. Inspeção Final DE FARDAS',
+                      fallbackResp: 'Controle de Qualidade',
+                      lossPlaceholder: '____ pçs',
+                    },
+                    {
+                      key: 'expedicao',
+                      label: '5. Embalagem & Expedição',
+                      fallbackResp: 'Expedição / Almoxarifado',
+                      lossPlaceholder: '-',
+                    },
+                  ];
+                  return rows.map((r) => {
+                    const st = scheduleByStage.get(r.key as any);
+                    return (
+                      <tr key={r.key} className={st?.skipped ? 'opacity-50 bg-slate-50/50' : ''}>
+                        <td className="py-2.5 px-3 font-semibold text-slate-800">{r.label}</td>
+                        <td className="py-2.5 px-3 font-mono font-semibold text-slate-800">
+                          {st?.skipped
+                            ? 'N/A'
+                            : st?.plannedEndDate
+                              ? formatDateBR(st.plannedEndDate)
+                              : '____/____/____'}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-600">
+                          {st?.skipped
+                            ? '—'
+                            : st?.actualEndDate
+                              ? formatDateBR(st.actualEndDate)
+                              : '____/____/____'}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-600">
+                          {st?.responsible || r.fallbackResp}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-400">
+                          {st?.skipped ? '—' : '____ pçs'}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-400">
+                          {st?.skipped ? '—' : r.lossPlaceholder}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-400">____________</td>
+                      </tr>
+                    );
+                  });
+                })()}
               </tbody>
             </table>
           </div>

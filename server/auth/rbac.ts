@@ -39,6 +39,7 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
   // Produção & PCP
   'orders:advance_stage': ['admin', 'pcp_producao', 'expedicao_qualidade'],
   'orders:create': ['admin', 'gerente_comercial', 'pcp_producao'],
+  'orders:manage_schedule': ['admin', 'pcp_producao', 'gerente_comercial'],
   'orders:delete': ['admin'],
   'orders:approve_art': ['admin', 'gerente_comercial', 'vendedor', 'pcp_producao'],
 
@@ -54,11 +55,19 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
   'inventory:adjust': ['admin', 'pcp_producao'],
   'inventory:manage_items': ['admin', 'pcp_producao'],
 
-  // Parceiros & Terceirizados (Facções, Bordado, Silk, Corte e Custódia)
+  // Parceiros & Terceirizados (Facções, Bordado, Silk, Corte, Custódia e Provisão CP)
   'partners:view': ['admin', 'gerente_comercial', 'pcp_producao', 'expedicao_qualidade', 'financeiro'],
   'partners:manage': ['admin', 'pcp_producao', 'gerente_comercial'],
   'partners:manage_custody': ['admin', 'pcp_producao'],
+  'partners:provision_payable': ['admin', 'financeiro', 'pcp_producao', 'gerente_comercial'],
   'partners:delete': ['admin'],
+
+  // Fornecedores & Pedidos de Compra (Matéria-prima, Tecidos, Aviamentos, Recebimento e CP)
+  'suppliers:view': ['admin', 'pcp_producao', 'financeiro', 'gerente_comercial'],
+  'suppliers:manage': ['admin', 'pcp_producao', 'financeiro'],
+  'suppliers:manage_orders': ['admin', 'pcp_producao', 'financeiro'],
+  'suppliers:receive_orders': ['admin', 'pcp_producao'],
+  'suppliers:delete': ['admin'],
 
   // CRM & Clientes
   'crm:manage_clients': ['admin', 'gerente_comercial', 'vendedor'],

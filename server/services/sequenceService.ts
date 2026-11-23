@@ -17,11 +17,13 @@ class SequenceService {
       ['quote', 1003],
       ['order', 102],
       ['client', 203],
-      ['finance', 5002],
+      ['finance', 5003],
       ['inventory', 303],
       ['lead', 102],
       ['movement', 101],
       ['partner', 101],
+      ['supplier', 4],
+      ['purchase_order', 2],
     ]);
   }
 
@@ -34,11 +36,13 @@ class SequenceService {
       ['seq_quote_number', 1003],
       ['seq_order_number', 102],
       ['seq_client_number', 203],
-      ['seq_finance_number', 5002],
+      ['seq_finance_number', 5003],
       ['seq_inventory_number', 303],
       ['seq_lead_number', 102],
       ['seq_movement_number', 101],
       ['seq_partner_number', 101],
+      ['seq_supplier_number', 4],
+      ['seq_purchase_order_number', 2],
     ];
 
     try {
@@ -114,6 +118,18 @@ class SequenceService {
     const val = await this.getNextSequenceValue('seq_partner_number', 'partner');
     const padded = String(val).padStart(4, '0');
     return `FAC-${this.currentYear}-${padded}`;
+  }
+
+  public async nextSupplierCodeAsync(): Promise<string> {
+    const val = await this.getNextSequenceValue('seq_supplier_number', 'supplier');
+    const padded = String(val).padStart(4, '0');
+    return `FOR-${this.currentYear}-${padded}`;
+  }
+
+  public async nextPurchaseOrderNumberAsync(): Promise<string> {
+    const val = await this.getNextSequenceValue('seq_purchase_order_number', 'purchase_order');
+    const padded = String(val).padStart(4, '0');
+    return `PC-${this.currentYear}-${padded}`;
   }
 
   // Métodos síncronos mantidos apenas para retrocompatibilidade

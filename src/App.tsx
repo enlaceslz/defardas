@@ -13,6 +13,7 @@ import { PublicPortalView } from './components/PublicPortalView';
 import { LoginView } from './components/LoginView';
 import { WhatsAppOmnichannelView } from './components/WhatsAppOmnichannelView';
 import { PartnersView } from './components/PartnersView';
+import { SuppliersView } from './components/SuppliersView';
 
 import { NewOrderModal } from './components/NewOrderModal';
 import { NewQuoteModal } from './components/NewQuoteModal';
@@ -41,7 +42,14 @@ import {
   UniformCategory,
   Partner,
   PartnerCustody,
+  PartnerFinancialForecastResponse,
   LeadItem,
+  NotificationsPayload,
+  SystemNotificationItem,
+  Supplier,
+  PurchaseOrder,
+  PurchaseOrderStatus,
+  SuppliersSummaryResponse,
 } from './types/erp';
 
 interface ToastMessage {
@@ -62,7 +70,19 @@ export default function App() {
   const [state, setState] = useState<ERPState>(() => loadERPState());
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerCustody, setPartnerCustody] = useState<PartnerCustody[]>([]);
+  const [partnerForecast, setPartnerForecast] = useState<PartnerFinancialForecastResponse | null>(null);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [suppliersSummary, setSuppliersSummary] = useState<SuppliersSummaryResponse | null>(null);
+  const [preselectedReplenish, setPreselectedReplenish] = useState<{ itemId: string; supplierId?: string } | null>(null);
   const [leads, setLeads] = useState<LeadItem[]>([]);
+  const [notificationsPayload, setNotificationsPayload] = useState<NotificationsPayload | null>(null);
+  const [whatsappUnreadCount, setWhatsappUnreadCount] = useState<number>(0);
+  const [whatsappHandoff, setWhatsappHandoff] = useState<{
+    conversationId: string;
+    draftMessage?: string;
+  } | null>(null);
+  const [focusedScheduleOrderId, setFocusedScheduleOrderId] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
@@ -120,7 +140,22 @@ export default function App() {
     if (!isAuthenticated) return;
 
     try {
-      const [ordersRes, quotesRes, invRes, clientsRes, finRes, partnersRes, custodyRes, leadsRes] = await Promise.all([
+      const [
+        ordersRes,
+        quotesRes,
+        invRes,
+        clientsRes,
+        finRes,
+        partnersRes,
+        custodyRes,
+        forecastRes,
+        suppliersRes,
+        purchaseOrdersRes,
+        suppliersSummaryRes,
+        leadsRes,
+        notificationsRes,
+        whatsappSummaryRes,
+      ] = await Promise.all([
         api.getOrders(),
         api.getQuotes(),
         api.getInventoryItems(),
@@ -128,7 +163,15 @@ export default function App() {
         api.getTransactions(),
         api.getPartners(),
         api.getPartnerCustody(),
+        api.getPartnersFinancialForecast(),
+        api.getSuppliers(),
+        api.getPurchaseOrders(),
+        api.getSuppliersSummary(),
         api.getLeads(),
+        api.getNotifications(),
+        ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(user?.role || '')
+          ? api.getWhatsAppUnreadSummary()
+          : Promise.resolve({ status: 403, data: undefined }),
       ]);
 
       if (partnersRes.status === 200 && Array.isArray(partnersRes.data)) {
@@ -143,10 +186,46 @@ export default function App() {
         setPartnerCustody([]);
       }
 
+      if (forecastRes.status === 200 && forecastRes.data) {
+        setPartnerForecast(forecastRes.data);
+      } else if (forecastRes.status === 403) {
+        setPartnerForecast(null);
+      }
+
+      if (suppliersRes.status === 200 && Array.isArray(suppliersRes.data)) {
+        setSuppliers(suppliersRes.data);
+      } else if (suppliersRes.status === 403) {
+        setSuppliers([]);
+      }
+
+      if (purchaseOrdersRes.status === 200 && Array.isArray(purchaseOrdersRes.data)) {
+        setPurchaseOrders(purchaseOrdersRes.data);
+      } else if (purchaseOrdersRes.status === 403) {
+        setPurchaseOrders([]);
+      }
+
+      if (suppliersSummaryRes.status === 200 && suppliersSummaryRes.data) {
+        setSuppliersSummary(suppliersSummaryRes.data);
+      } else if (suppliersSummaryRes.status === 403) {
+        setSuppliersSummary(null);
+      }
+
       if (leadsRes.status === 200 && Array.isArray(leadsRes.data)) {
         setLeads(leadsRes.data);
       } else if (leadsRes.status === 403) {
         setLeads([]);
+      }
+
+      if (notificationsRes.status === 200 && notificationsRes.data) {
+        setNotificationsPayload(notificationsRes.data);
+      } else if (notificationsRes.status === 401 || notificationsRes.status === 403) {
+        setNotificationsPayload(null);
+      }
+
+      if (whatsappSummaryRes.status === 200 && whatsappSummaryRes.data) {
+        setWhatsappUnreadCount(Number(whatsappSummaryRes.data.totalUnread || 0));
+      } else if (whatsappSummaryRes.status === 401 || whatsappSummaryRes.status === 403) {
+        setWhatsappUnreadCount(0);
       }
 
       setState((prev) => {
@@ -187,9 +266,13 @@ export default function App() {
             commercialStatus: o.commercialStatus,
             financialStatus: o.financialStatus,
             stage: o.stage,
+            artStatus: o.artStatus || (o.artApproved ? 'aprovada' : 'pendente'),
             artApproved: Boolean(o.artApproved),
             artApprovalDate: o.artApprovalDate,
             artApprovedBy: o.artApprovedBy,
+            artFileUrl: o.artFileUrl,
+            artVersionNumber: o.artVersionNumber,
+            artRevisionNotes: o.artRevisionNotes,
             entryPaymentConfirmed: Boolean(o.entryPaymentConfirmed),
             entryReceiptUrl: o.entryReceiptUrl,
             canStartProduction: Boolean(o.entryPaymentConfirmed && o.artApproved),
@@ -199,6 +282,8 @@ export default function App() {
             creationDate: o.creationDate,
             targetDeliveryDate: o.targetDeliveryDate,
             completionDate: o.completionDate,
+            stageSchedule: o.stageSchedule,
+            deadlineSummary: o.deadlineSummary,
             technicalNotes: o.technicalNotes || '',
             assignedTeam: o.assignedTeam,
           }));
@@ -224,8 +309,8 @@ export default function App() {
               clientName: q.clientName,
               clientCnpj: q.clientCnpj,
               clientContact: client?.contactName || q.sellerName,
-              clientPhone: client?.phone || '(98) 98841-2090',
-              clientEmail: client?.email || 'compras@cliente.com.br',
+              clientPhone: client?.phone || '',
+              clientEmail: client?.email || '',
               sellerName: q.sellerName,
               date: q.date,
               validUntil: q.validUntil,
@@ -280,7 +365,18 @@ export default function App() {
               paymentTerms: q.paymentTerms,
               productionLeadDays: q.productionLeadDays,
               status: q.commercialStatus,
+              artStatus: q.artStatus || (q.artApproved ? 'aprovada' : 'pendente'),
               artApproved: Boolean(q.artApproved),
+              artApprovedBy: q.artApprovedBy,
+              artApprovalDate: q.artApprovalDate,
+              artFileUrl: q.artFileUrl,
+              artNotes: q.artNotes,
+              artVersions: Array.isArray(q.artVersions) ? q.artVersions : [],
+              versionHistory: Array.isArray(q.versionHistory) ? q.versionHistory : [],
+              approvedByName: q.approvedByName,
+              approvedAt: q.approvedAt,
+              acceptanceChannel: q.acceptanceChannel,
+              acceptanceNotes: q.acceptanceNotes,
               notes: q.notes || '',
               convertedToOrderId: linkedOrder?.orderNumber || q.convertedOrderId,
             };
@@ -301,6 +397,7 @@ export default function App() {
             inPartnersCustodyStock: Number(i.inPartnersCustodyStock ?? 0),
             minStock: Number(i.minStock ?? 50),
             costPrice: Number(i.unitCostPrice ?? i.costPrice ?? 0),
+            supplierId: i.supplierId,
             supplier: i.supplier || 'Fornecedor Homologado',
             location: i.location || 'Almoxarifado Central',
             lastRestocked: i.lastRestocked || new Date().toISOString().split('T')[0],
@@ -338,6 +435,17 @@ export default function App() {
             transactionNumber: f.transactionNumber || f.id,
             productionOrderId: f.productionOrderId,
             quoteId: f.quoteId,
+            orderNumber: f.orderNumber,
+            partnerId: f.partnerId,
+            partnerName: f.partnerName,
+            supplierId: f.supplierId,
+            supplierName: f.supplierName,
+            purchaseOrderId: f.purchaseOrderId,
+            purchaseOrderNumber: f.purchaseOrderNumber,
+            clientId: f.clientId,
+            clientName: f.clientName,
+            serviceReference: f.serviceReference,
+            isProvision: Boolean(f.isProvision),
             type: f.type,
             subType: f.subType,
             description: f.description,
@@ -364,7 +472,7 @@ export default function App() {
     } catch (err) {
       console.warn('⚠️ [ERP Frontend] Falha ao sincronizar dados com o backend:', err);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user?.role]);
 
   useEffect(() => {
     fetchServerState();
@@ -492,7 +600,11 @@ export default function App() {
   const handleSendQuoteWhatsApp = async (quote: Quote) => {
     const targetPhone = quote.whatsAppProof?.contactId || quote.clientPhone;
     if (!targetPhone) {
-      notify('error', 'Telefone ausente', 'O cliente não possui número de WhatsApp cadastrado.');
+      notify(
+        'error',
+        'Telefone ausente',
+        'O cliente não possui número de WhatsApp cadastrado. Atualize o telefone na Carteira de Clientes.'
+      );
       return;
     }
     const res = await api.sendTemplateMessage({
@@ -506,10 +618,137 @@ export default function App() {
       notify('error', 'Falha no envio via WhatsApp', res.error || `Falha HTTP ${res.status}`);
       return;
     }
+    if (res.data?.message?.status === 'failed') {
+      notify(
+        'error',
+        'Falha na entrega pelo provedor WhatsApp',
+        res.data?.message?.errorMessage ||
+          'A mensagem foi registrada na Central WhatsApp, mas o provedor recusou o disparo.'
+      );
+      return;
+    }
     notify(
       'success',
       'Proposta enviada no WhatsApp',
       `Resumo da ${quote.quoteNumber || quote.id} disparado para ${quote.clientName} (${targetPhone}).`
+    );
+  };
+
+  const handleNotifyOrderWhatsApp = async (order: ProductionOrder) => {
+    const client = state.clients.find((c) => c.id === order.clientId);
+    const targetPhone = client?.phone || '';
+    if (!targetPhone) {
+      notify(
+        'error',
+        'Telefone ausente',
+        `O cliente ${order.clientName} não possui número de WhatsApp cadastrado.`
+      );
+      return;
+    }
+
+    const res = !order.artApproved
+      ? await api.sendTemplateMessage({
+          templateType: 'art_approval',
+          clientPhone: targetPhone,
+          clientName: order.clientName,
+          orderNumber: order.orderNumber,
+          artVersion: order.artVersionNumber,
+          artFileUrl: order.artFileUrl,
+        })
+      : await api.sendTemplateMessage({
+          templateType: 'order_stage_update',
+          clientPhone: targetPhone,
+          clientName: order.clientName,
+          orderNumber: order.orderNumber,
+          stage: order.stage,
+          targetDeliveryDate: order.targetDeliveryDate,
+        });
+
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Falha no envio via WhatsApp', res.error || `Falha HTTP ${res.status}`);
+      return;
+    }
+    if (res.data?.message?.status === 'failed') {
+      notify(
+        'error',
+        'Falha na entrega pelo provedor WhatsApp',
+        res.data?.message?.errorMessage || 'Verifique a configuração do canal na Central WhatsApp.'
+      );
+      return;
+    }
+
+    notify(
+      'success',
+      !order.artApproved ? 'Aprovação de arte solicitada no WhatsApp' : 'Etapa da OP enviada no WhatsApp',
+      `Mensagem da ${order.orderNumber} enviada para ${order.clientName} (${targetPhone}).`
+    );
+  };
+
+  const handleSendTransactionWhatsApp = async (trx: FinancialTransaction) => {
+    const linkedOrder =
+      (trx.productionOrderId
+        ? state.orders.find((o) => o.id === trx.productionOrderId)
+        : undefined) ||
+      (trx.referenceId ? state.orders.find((o) => o.orderNumber === trx.referenceId) : undefined);
+
+    const client =
+      (trx.clientId ? state.clients.find((c) => c.id === trx.clientId) : undefined) ||
+      (linkedOrder ? state.clients.find((c) => c.id === linkedOrder.clientId) : undefined);
+
+    const targetPhone = client?.phone || '';
+    const clientName = client?.tradeName || trx.clientName || linkedOrder?.clientName || 'Cliente';
+
+    if (!targetPhone) {
+      notify(
+        'error',
+        'Telefone ausente',
+        `Não foi possível localizar um telefone WhatsApp cadastrado para ${clientName}.`
+      );
+      return;
+    }
+
+    const isPaidDownpayment = trx.status === 'pago' && trx.subType === 'entrada_pedido';
+    const res = isPaidDownpayment
+      ? await api.sendTemplateMessage({
+          templateType: 'downpayment_confirmed',
+          clientPhone: targetPhone,
+          clientName,
+          orderNumber: linkedOrder?.orderNumber || trx.referenceId || trx.transactionNumber,
+          voucherNumber: trx.receiptVoucherNumber || trx.transactionNumber,
+        })
+      : await api.sendTemplateMessage({
+          templateType: 'payment_reminder',
+          clientPhone: targetPhone,
+          clientName,
+          orderNumber: linkedOrder?.orderNumber || trx.referenceId || trx.transactionNumber,
+          amount: trx.amount,
+          dueDate: trx.dueDate,
+          pixKey: state.profile.cnpj || undefined,
+          paymentLabel:
+            trx.subType === 'entrada_pedido'
+              ? 'Sinal de 50% (Liberação de Produção)'
+              : trx.subType === 'saldo_entrega'
+                ? 'Saldo na Entrega (50%)'
+                : trx.description,
+        });
+
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Falha no envio via WhatsApp', res.error || `Falha HTTP ${res.status}`);
+      return;
+    }
+    if (res.data?.message?.status === 'failed') {
+      notify(
+        'error',
+        'Falha na entrega pelo provedor WhatsApp',
+        res.data?.message?.errorMessage || 'Verifique a configuração do canal na Central WhatsApp.'
+      );
+      return;
+    }
+
+    notify(
+      'success',
+      isPaidDownpayment ? 'Confirmação de sinal enviada no WhatsApp' : 'Lembrete financeiro enviado no WhatsApp',
+      `Notificação referente a ${trx.transactionNumber} enviada para ${clientName} (${targetPhone}).`
     );
   };
 
@@ -521,6 +760,130 @@ export default function App() {
     }
     await fetchServerState();
     notify('success', 'Status atualizado', `Status comercial alterado para '${status}'.`);
+  };
+
+  // Aprovação Comercial Auditável (suporta "Aprovou Orçamento mas Pediu Revisão na Arte")
+  const handleApproveQuoteCommercial = async (
+    quoteId: string,
+    payload: {
+      approvedByName: string;
+      acceptanceChannel: 'whatsapp' | 'email' | 'presencial';
+      acceptanceNotes?: string;
+      artDecision: 'manter_pendente' | 'solicitar_revisao_arte' | 'aprovar_arte_atual';
+      artRevisionNotes?: string;
+      artApproverName?: string;
+    },
+    alsoConvertToOrder?: boolean
+  ): Promise<boolean> => {
+    const res = await api.approveQuoteCommercial(quoteId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Erro na aprovação comercial', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+
+    if (alsoConvertToOrder) {
+      const targetQuote = state.quotes.find((q) => q.id === quoteId);
+      const idempotencyKey = `convert_quote_${quoteId}_v${targetQuote?.version || 1}`;
+      const convRes = await api.convertQuoteToOrder(quoteId, idempotencyKey);
+      await fetchServerState();
+      if (convRes.status < 200 || convRes.status >= 300) {
+        notify(
+          'info',
+          'Orçamento aprovado, mas OP não gerada',
+          convRes.error || 'Aprovação comercial registrada; tente converter para OP novamente.'
+        );
+        return true;
+      }
+      notify(
+        'success',
+        `Orçamento aprovado e OP ${convRes.data?.order?.orderNumber || ''} gerada`,
+        res.data?.message || convRes.data?.message || 'Proposta aprovada e convertida com Gate A.3.2 ativo.'
+      );
+      setCurrentTab('orders');
+      return true;
+    }
+
+    await fetchServerState();
+    notify(
+      'success',
+      payload.artDecision === 'solicitar_revisao_arte'
+        ? 'Orçamento Aprovado · Revisão de Arte Registrada'
+        : 'Orçamento Aprovado Comercialmente',
+      res.data?.message || 'Aceite comercial registrado na trilha de auditoria.'
+    );
+    return true;
+  };
+
+  const handleUploadQuoteArtwork = async (
+    quoteId: string,
+    payload: { fileName: string; fileUrl: string; notes?: string }
+  ): Promise<boolean> => {
+    const res = await api.uploadQuoteArtwork(quoteId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Falha ao armazenar arte', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify(
+      'success',
+      `Arte v${res.data?.artwork?.version || ''} armazenada`,
+      res.data?.message || 'Nova versão da arte salva e disponibilizada para validação.'
+    );
+    return true;
+  };
+
+  const handleRequestQuoteArtRevision = async (
+    quoteId: string,
+    payload: { revisionNotes: string; requestedBy?: string }
+  ): Promise<boolean> => {
+    const res = await api.requestQuoteArtRevision(quoteId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Falha ao solicitar revisão de arte', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify(
+      'info',
+      'Revisão de Arte Registrada',
+      res.data?.message || 'Ajustes da arte registrados mantendo a proposta comercial intacta.'
+    );
+    return true;
+  };
+
+  const handleApproveQuoteArtwork = async (
+    quoteId: string,
+    payload: { approverName: string; notes?: string; version?: number }
+  ): Promise<boolean> => {
+    const res = await api.approveQuoteArtwork(quoteId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Falha ao aprovar arte', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify(
+      'success',
+      'Arte Aprovada Formalmente',
+      res.data?.message || 'Critério de Arte do Gate A.3.2 liberado.'
+    );
+    return true;
+  };
+
+  const handleRequestOrderArtRevision = async (
+    orderId: string,
+    revisionNotes: string,
+    requestedBy?: string
+  ) => {
+    const res = await api.requestOrderArtRevision(orderId, { revisionNotes, requestedBy });
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Revisão de arte bloqueada', res.error || `Falha HTTP ${res.status}`);
+      return;
+    }
+    await fetchServerState();
+    notify(
+      'info',
+      'Revisão de Arte Registrada na OP',
+      res.data?.message || 'Gate A.3.2 manterá a OP bloqueada até aprovação da nova arte.'
+    );
   };
 
   // Conversão Idempotente de Orçamento em Pedido (PRD A.3.1 e B.3 — 100% Backend)
@@ -596,17 +959,16 @@ export default function App() {
   // =========================================================================
   // INVENTORY ACTIONS (Backend-Authoritative + Movimentos Compensatórios)
   // =========================================================================
-  const handleSaveInventoryItem = async (item: InventoryItem) => {
+  const handleSaveInventoryItem = async (item: InventoryItem): Promise<boolean> => {
     const exists = state.inventory.some((i) => i.id === item.id);
     const payload = {
       name: item.name,
       category: item.category,
       unit: item.unit,
       physicalStock: item.currentStock,
-      allocatedStock: item.allocatedStock,
-      inPartnersCustodyStock: item.inPartnersCustodyStock,
       minStock: item.minStock,
       unitCostPrice: item.costPrice,
+      supplierId: item.supplierId || null,
       supplier: item.supplier,
       location: item.location,
     };
@@ -617,18 +979,23 @@ export default function App() {
 
     if (res.status < 200 || res.status >= 300) {
       notify('error', 'Erro no estoque', res.error || `Falha HTTP ${res.status}`);
-      return;
+      return false;
     }
 
     await fetchServerState();
-    notify('success', exists ? 'Insumo atualizado' : 'Insumo cadastrado', `${item.name} salvo no almoxarifado.`);
+    notify(
+      'success',
+      exists ? 'Insumo atualizado' : 'Insumo cadastrado',
+      `${res.data?.code || item.code} — ${item.name} salvo no almoxarifado.`
+    );
+    return true;
   };
 
   const handleDeleteInventoryItem = (itemId: string) => {
     const target = state.inventory.find((i) => i.id === itemId);
     setConfirmDialog({
       title: `Excluir insumo ${target?.code || ''}?`,
-      message: 'Itens com saldo em poder de terceiros (facções) não podem ser excluídos.',
+      message: 'Insumos com saldo positivo, alocados para OPs, em poder de terceiros ou com histórico no Kardex são protegidos contra exclusão.',
       confirmLabel: 'Excluir Insumo',
       onConfirm: async () => {
         const res = await api.deleteInventoryItem(itemId);
@@ -644,6 +1011,7 @@ export default function App() {
 
   const handleCreateStockMovement = async (payload: {
     itemId: string;
+    productionOrderId?: string;
     type: 'entrada_compra' | 'saida_corte' | 'remessa_parceiro' | 'retorno_parceiro' | 'perda_tecnica' | 'ajuste_inventario';
     quantity: number;
     reason: string;
@@ -704,15 +1072,16 @@ export default function App() {
       customerName: target.name,
       clientId: target.id,
     });
-    if (res.status < 200 || res.status >= 300) {
+    if (res.status < 200 || res.status >= 300 || !res.data?.id) {
       notify('error', 'WhatsApp indisponível', res.error || `Falha HTTP ${res.status}`);
       return;
     }
+    setWhatsappHandoff({ conversationId: res.data.id });
     setCurrentTab('whatsapp');
     notify(
       'success',
       'Conversa aberta na Central WhatsApp',
-      `Atendimento com ${target.name} (${target.phone}) pronto para envio.`
+      `Atendimento com ${target.name} (${target.phone}) selecionado e pronto para envio.`
     );
   };
 
@@ -827,16 +1196,234 @@ export default function App() {
       phone: partner.phone,
       customerName: `${partner.tradeName} (${partner.code})`,
     });
-    if (res.status < 200 || res.status >= 300) {
+    if (res.status < 200 || res.status >= 300 || !res.data?.id) {
       notify('error', 'WhatsApp indisponível', res.error || `Falha HTTP ${res.status}`);
       return;
     }
+    setWhatsappHandoff({ conversationId: res.data.id });
     setCurrentTab('whatsapp');
     notify(
       'success',
       'Conversa aberta na Central WhatsApp',
-      `Atendimento com ${partner.tradeName} (${partner.phone}) pronto para envio.`
+      `Atendimento com ${partner.tradeName} (${partner.phone}) selecionado e pronto para envio.`
     );
+  };
+
+  const handleCreatePartnerProvision = async (
+    partnerId: string,
+    payload: {
+      productionOrderId?: string;
+      clientId?: string;
+      clientName?: string;
+      serviceReference?: string;
+      description?: string;
+      category?: string;
+      amount: number;
+      dueDate: string;
+      paymentMethod: 'pix' | 'boleto' | 'transferencia' | 'cartao';
+      isProvision?: boolean;
+    }
+  ): Promise<boolean> => {
+    const res = await api.createPartnerProvision(partnerId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Provisão rejeitada', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify(
+      'success',
+      `Provisão CP ${res.data?.transaction?.transactionNumber || ''} registrada`,
+      `Previsão de pagamento lançada em Contas a Pagar no Financeiro.`
+    );
+    return true;
+  };
+
+  // =========================================================================
+  // SUPPLIERS & PURCHASE ORDERS ACTIONS (Backend-Authoritative)
+  // =========================================================================
+  const handleSaveSupplier = async (payload: Partial<Supplier>, existingId?: string): Promise<boolean> => {
+    const res = existingId
+      ? await api.updateSupplier(existingId, payload)
+      : await api.createSupplier(payload);
+
+    if (res.status < 200 || res.status >= 300) {
+      notify(
+        'error',
+        res.status === 409 ? 'CNPJ já cadastrado' : 'Erro ao salvar fornecedor',
+        res.error || `Falha HTTP ${res.status}`
+      );
+      return false;
+    }
+
+    await fetchServerState();
+    notify(
+      'success',
+      existingId ? 'Fornecedor atualizado' : 'Fornecedor homologado',
+      `${res.data?.tradeName || payload.tradeName || 'Fornecedor'} (${res.data?.code || ''}) salvo com sucesso.`
+    );
+    return true;
+  };
+
+  const handleDeleteSupplier = (supplierId: string) => {
+    const target = suppliers.find((s) => s.id === supplierId);
+    setConfirmDialog({
+      title: `Excluir fornecedor ${target?.tradeName || ''}?`,
+      message:
+        'Fornecedores vinculados a insumos no estoque, pedidos de compra ou títulos financeiros são protegidos contra exclusão (prefira inativar o cadastro).',
+      confirmLabel: 'Excluir Fornecedor',
+      onConfirm: async () => {
+        const res = await api.deleteSupplier(supplierId);
+        if (res.status < 200 || res.status >= 300) {
+          notify('error', 'Exclusão bloqueada', res.error || `Falha HTTP ${res.status}`);
+          return;
+        }
+        await fetchServerState();
+        notify('success', 'Fornecedor excluído', `${target?.tradeName || 'Fornecedor'} removido da base.`);
+      },
+    });
+  };
+
+  const handleCreatePurchaseOrder = async (payload: any): Promise<boolean> => {
+    const res = await api.createPurchaseOrder(payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Pedido de Compra rejeitado', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    const poNum = res.data?.purchaseOrder?.poNumber || '';
+    const trxNum = res.data?.createdPayable?.transactionNumber;
+    notify(
+      'success',
+      `Pedido de Compra ${poNum} emitido`,
+      trxNum
+        ? `PC registrado com previsão de CP ${trxNum} provisionada no Financeiro.`
+        : `Pedido de Compra ${poNum} salvo com sucesso.`
+    );
+    return true;
+  };
+
+  const handleUpdatePurchaseOrderStatus = async (
+    poId: string,
+    status: PurchaseOrderStatus,
+    autoGeneratePayable?: boolean
+  ): Promise<boolean> => {
+    const res = await api.updatePurchaseOrderStatus(poId, { status, autoGeneratePayable });
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Transição de PC rejeitada', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    const trxNum = res.data?.createdPayable?.transactionNumber;
+    notify(
+      'success',
+      `Status do PC atualizado para '${status}'`,
+      trxNum
+        ? `Título a pagar ${trxNum} provisionado automaticamente no Financeiro.`
+        : res.data?.message || 'Pedido de compra atualizado com sucesso.'
+    );
+    return true;
+  };
+
+  const handleReceivePurchaseOrder = async (
+    poId: string,
+    payload: {
+      invoiceNumber?: string;
+      updateUnitCost?: boolean;
+      generatePayableIfMissing?: boolean;
+      dueDate?: string;
+      notes?: string;
+      items: Array<{ itemId: string; receiveQuantity: number }>;
+    }
+  ): Promise<boolean> => {
+    const res = await api.receivePurchaseOrder(poId, payload);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Recebimento rejeitado', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    const movCount = Array.isArray(res.data?.movements) ? res.data.movements.length : 0;
+    const trxNum = res.data?.payable?.transactionNumber;
+    notify(
+      'success',
+      `Recebimento confirmado (${res.data?.purchaseOrder?.poNumber || 'PC'})`,
+      `${movCount} entrada(s) lançadas no Estoque/Kardex com Custo Médio Ponderado${trxNum ? ` e CP ${trxNum} efetivado no Financeiro.` : '.'}`
+    );
+    return true;
+  };
+
+  const handleGeneratePurchaseOrderPayable = async (poId: string): Promise<boolean> => {
+    const res = await api.generatePurchaseOrderPayable(poId);
+    if (res.status < 200 || res.status >= 300) {
+      notify('error', 'Falha ao gerar CP', res.error || `Falha HTTP ${res.status}`);
+      return false;
+    }
+    await fetchServerState();
+    notify(
+      res.data?.alreadyExists ? 'info' : 'success',
+      res.data?.alreadyExists ? 'Título CP já vinculado' : `CP ${res.data?.transaction?.transactionNumber || ''} gerado`,
+      res.data?.message || 'Título de Contas a Pagar sincronizado com o Financeiro.'
+    );
+    return true;
+  };
+
+  const handleOpenSupplierWhatsApp = async (supplier: Supplier, po?: PurchaseOrder) => {
+    if (po) {
+      const itemsSummary = (po.items || [])
+        .map((it) => `${it.quantity} ${it.unit} ${it.itemName}`)
+        .join(', ');
+      const res = await api.sendTemplateMessage({
+        templateType: 'purchase_order',
+        clientPhone: supplier.phone,
+        clientName: `${supplier.tradeName} (${supplier.code})`,
+        poNumber: po.poNumber,
+        amount: po.totalAmount,
+        expectedDeliveryDate: po.expectedDeliveryDate,
+        itemsSummary,
+      });
+      if (res.status < 200 || res.status >= 300) {
+        notify('error', 'WhatsApp indisponível', res.error || `Falha HTTP ${res.status}`);
+        return;
+      }
+      if (res.data?.conversationId) {
+        setWhatsappHandoff({ conversationId: res.data.conversationId });
+      }
+      setCurrentTab('whatsapp');
+      if (res.data?.message?.status === 'failed') {
+        notify(
+          'error',
+          `Falha ao entregar ${po.poNumber} pelo provedor`,
+          res.data?.message?.errorMessage || 'Conversa aberta na Central WhatsApp para reenvio.'
+        );
+      } else {
+        notify(
+          'success',
+          `Pedido ${po.poNumber} enviado no WhatsApp`,
+          `Template do pedido disparado para ${supplier.tradeName} e conversa aberta para acompanhamento.`
+        );
+      }
+      return;
+    }
+
+    const res = await api.startConversation({
+      phone: supplier.phone,
+      customerName: `${supplier.tradeName} (${supplier.code})`,
+    });
+    if (res.status < 200 || res.status >= 300 || !res.data?.id) {
+      notify('error', 'WhatsApp indisponível', res.error || `Falha HTTP ${res.status}`);
+      return;
+    }
+    setWhatsappHandoff({ conversationId: res.data.id });
+    setCurrentTab('whatsapp');
+    notify(
+      'success',
+      'Conversa aberta na Central WhatsApp',
+      `Atendimento com ${supplier.tradeName} (${supplier.phone}) selecionado e pronto para envio.`
+    );
+  };
+
+  const handleRequestPurchaseForItem = (item: InventoryItem) => {
+    setPreselectedReplenish({ itemId: item.id, supplierId: item.supplierId });
+    setCurrentTab('suppliers');
   };
 
   // =========================================================================
@@ -973,6 +1560,11 @@ export default function App() {
     if (currentTab === 'finance' && !['admin', 'financeiro', 'gerente_comercial'].includes(role)) {
       setCurrentTab('dashboard');
     } else if (
+      currentTab === 'suppliers' &&
+      !['admin', 'pcp_producao', 'financeiro', 'gerente_comercial'].includes(role)
+    ) {
+      setCurrentTab('dashboard');
+    } else if (
       currentTab === 'partners' &&
       !['admin', 'gerente_comercial', 'pcp_producao', 'expedicao_qualidade', 'financeiro'].includes(role)
     ) {
@@ -984,11 +1576,55 @@ export default function App() {
     }
   }, [isAuthenticated, user?.role, currentTab]);
 
+  const handleUpdateOrderSchedule = async (
+    orderId: string,
+    payload: {
+      targetDeliveryDate?: string;
+      syncTargetDelivery?: boolean;
+      recalculateProportional?: boolean;
+      stages?: Array<{
+        stage: string;
+        plannedStartDate: string;
+        plannedEndDate: string;
+        responsible?: string;
+        notes?: string;
+        skipped?: boolean;
+      }>;
+    }
+  ): Promise<boolean> => {
+    const res = await api.updateOrderSchedule(orderId, payload);
+    if (res.status === 200) {
+      await fetchServerState();
+      notify(
+        'success',
+        'Cronograma de prazos atualizado',
+        payload.recalculateProportional
+          ? 'Os prazos de todas as etapas foram recalculados proporcionalmente até a entrega final.'
+          : 'Os prazos, responsáveis e observações das etapas foram salvos com sucesso.'
+      );
+      return true;
+    }
+    notify('error', 'Falha ao atualizar cronograma', res.error || 'Não foi possível salvar os prazos das etapas.');
+    return false;
+  };
+
+  const handleNotificationAction = (notification: SystemNotificationItem) => {
+    if (notification.targetTab) {
+      setCurrentTab(notification.targetTab);
+    }
+    if (notification.openScheduleModal && notification.entityId) {
+      setFocusedScheduleOrderId(notification.entityId);
+    }
+  };
+
   // Real operational counts for Sidebar badges & capacity bar
   const activeOrders = state.orders.filter((o) => o.stage !== 'entregue');
   const activeOrdersCount = activeOrders.length;
   const activePiecesCount = activeOrders.reduce((sum, o) => sum + (o.totalPieces || 0), 0);
   const blockedOrdersCount = activeOrders.filter((o) => !o.canStartProduction).length;
+  const overdueOrdersCount = activeOrders.filter(
+    (o) => o.deadlineSummary?.deliveryStatus === 'atrasada'
+  ).length;
   const lowStockCount = state.inventory.filter((i) => i.currentStock <= i.minStock).length;
   const openCustodyCount = partnerCustody.filter(
     (c) => c.status === 'em_custodia' || c.status === 'devolvido_parcial'
@@ -998,6 +1634,13 @@ export default function App() {
     (q) => q.status === 'enviado' || q.status === 'em_negociacao' || q.status === 'aprovado'
   ).length;
   const todayISO = new Date().toISOString().split('T')[0];
+  const openPurchaseOrders = purchaseOrders.filter(
+    (po) => po.status !== 'recebido_total' && po.status !== 'cancelado'
+  );
+  const openPurchaseOrdersCount = openPurchaseOrders.length;
+  const delayedPurchaseOrdersCount = openPurchaseOrders.filter(
+    (po) => po.expectedDeliveryDate && po.expectedDeliveryDate < todayISO
+  ).length;
   const pendingDownpaymentsCount = state.finance.filter(
     (f) => f.type === 'receber' && f.subType === 'entrada_pedido' && (f.status === 'pendente' || f.status === 'atrasado')
   ).length;
@@ -1089,12 +1732,16 @@ export default function App() {
         activeOrdersCount={activeOrdersCount}
         activePiecesCount={activePiecesCount}
         blockedOrdersCount={blockedOrdersCount}
+        overdueOrdersCount={overdueOrdersCount}
         lowStockCount={lowStockCount}
+        openPurchaseOrdersCount={openPurchaseOrdersCount}
+        delayedPurchaseOrdersCount={delayedPurchaseOrdersCount}
         openCustodyCount={openCustodyCount}
         newLeadsCount={newLeadsCount}
         pendingQuotesCount={pendingQuotesCount}
         pendingDownpaymentsCount={pendingDownpaymentsCount}
         overdueFinanceCount={overdueFinanceCount}
+        whatsappUnreadCount={whatsappUnreadCount}
         profile={state.profile}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={handleToggleSidebarCollapse}
@@ -1120,6 +1767,8 @@ export default function App() {
           }}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
           lowStockCount={lowStockCount}
+          notificationsPayload={notificationsPayload}
+          onNotificationAction={handleNotificationAction}
           onOpenHelpManual={() => setIsHelpManualOpen(true)}
           onOpenAuditModal={() => setIsAuditModalOpen(true)}
         />
@@ -1181,6 +1830,10 @@ export default function App() {
                 }}
                 onOpenNewQuoteModal={() => setIsNewQuoteModalOpen(true)}
                 onSelectOrderForTicket={(order) => setSelectedOrderForTicket(order)}
+                onOpenOrderSchedule={(order) => {
+                  setFocusedScheduleOrderId(order.id);
+                  setCurrentTab('orders');
+                }}
               />
             )}
 
@@ -1194,9 +1847,14 @@ export default function App() {
                 onEditOrder={handleEditOrder}
                 onDeleteOrder={handleDeleteOrder}
                 onUpdateOrderStage={handleUpdateOrderStage}
+                onUpdateOrderSchedule={handleUpdateOrderSchedule}
                 onOpenPrintTicket={(order) => setSelectedOrderForTicket(order)}
                 onGoToFinanceForPayment={() => setCurrentTab('finance')}
                 onApproveArt={handleApproveArt}
+                onRequestArtRevision={handleRequestOrderArtRevision}
+                focusedScheduleOrderId={focusedScheduleOrderId}
+                onClearFocusedScheduleOrder={() => setFocusedScheduleOrderId(null)}
+                onNotifyOrderWhatsApp={handleNotifyOrderWhatsApp}
               />
             )}
 
@@ -1210,6 +1868,10 @@ export default function App() {
                 onEditQuote={handleEditQuote}
                 onOpenPrintQuote={(quote) => setSelectedQuoteForPrint(quote)}
                 onUpdateQuoteStatus={handleUpdateQuoteStatus}
+                onApproveQuoteCommercial={handleApproveQuoteCommercial}
+                onUploadQuoteArtwork={handleUploadQuoteArtwork}
+                onRequestQuoteArtRevision={handleRequestQuoteArtRevision}
+                onApproveQuoteArtwork={handleApproveQuoteArtwork}
                 onConvertQuoteToOrder={handleConvertQuoteToOrder}
                 onSendQuoteWhatsApp={handleSendQuoteWhatsApp}
                 onDeleteQuote={handleDeleteQuote}
@@ -1219,9 +1881,33 @@ export default function App() {
             {currentTab === 'inventory' && (
               <InventoryView
                 inventory={state.inventory}
+                orders={state.orders}
+                suppliers={suppliers}
                 onSaveItem={handleSaveInventoryItem}
                 onDeleteItem={handleDeleteInventoryItem}
                 onCreateStockMovement={handleCreateStockMovement}
+                onRequestPurchaseForItem={handleRequestPurchaseForItem}
+                onNavigateTab={setCurrentTab}
+              />
+            )}
+
+            {currentTab === 'suppliers' && (
+              <SuppliersView
+                suppliers={suppliers}
+                purchaseOrders={purchaseOrders}
+                summary={suppliersSummary}
+                inventory={state.inventory}
+                orders={state.orders}
+                preselectedReplenish={preselectedReplenish}
+                onClearPreselectedReplenish={() => setPreselectedReplenish(null)}
+                onSaveSupplier={handleSaveSupplier}
+                onDeleteSupplier={handleDeleteSupplier}
+                onCreatePurchaseOrder={handleCreatePurchaseOrder}
+                onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus}
+                onReceivePurchaseOrder={handleReceivePurchaseOrder}
+                onGeneratePurchaseOrderPayable={handleGeneratePurchaseOrderPayable}
+                onOpenSupplierWhatsApp={handleOpenSupplierWhatsApp}
+                onNavigateTab={setCurrentTab}
               />
             )}
 
@@ -1229,13 +1915,14 @@ export default function App() {
               <PartnersView
                 partners={partners}
                 custodyList={partnerCustody}
+                forecast={partnerForecast}
                 inventory={state.inventory}
                 orders={state.orders}
                 onSavePartner={handleSavePartner}
                 onDeletePartner={handleDeletePartner}
                 onDispatchCustody={handleDispatchPartnerCustody}
                 onReturnCustody={handleReturnPartnerCustody}
-                onCreateServicePayable={handleSaveTransaction}
+                onCreatePartnerProvision={handleCreatePartnerProvision}
                 onOpenWhatsApp={handleOpenPartnerWhatsApp}
                 onNavigateTab={setCurrentTab}
               />
@@ -1263,15 +1950,32 @@ export default function App() {
                 profile={state.profile}
                 transactions={state.finance}
                 orders={state.orders}
+                partners={partners}
+                suppliers={suppliers}
+                partnerForecast={partnerForecast}
                 onSaveTransaction={handleSaveTransaction}
                 onDeleteTransaction={handleDeleteTransaction}
                 onConfirmPaymentWithVoucher={handleConfirmPaymentWithVoucher}
                 onReverseTransaction={handleReverseTransaction}
+                onSendTransactionWhatsApp={handleSendTransactionWhatsApp}
+                onNavigateTab={setCurrentTab}
               />
             )}
 
             {currentTab === 'whatsapp' && (
-              <WhatsAppOmnichannelView clients={state.clients} profile={state.profile} />
+              <WhatsAppOmnichannelView
+                clients={state.clients}
+                partners={partners}
+                suppliers={suppliers}
+                quotes={state.quotes}
+                orders={state.orders}
+                finance={state.finance}
+                profile={state.profile}
+                initialConversationId={whatsappHandoff?.conversationId || null}
+                initialDraftMessage={whatsappHandoff?.draftMessage || null}
+                onClearInitialHandoff={() => setWhatsappHandoff(null)}
+                onUnreadCountChange={setWhatsappUnreadCount}
+              />
             )}
 
             {currentTab === 'settings' && (

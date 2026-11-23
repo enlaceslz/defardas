@@ -2,6 +2,8 @@ import { pgSchema, uuid, varchar, text, numeric, boolean, date, timestamp, index
 import { users } from './users';
 import { quotes } from './quotes';
 import { productionOrders } from './orders';
+import { partners } from './partners';
+import { clients } from './clients';
 
 export const financeiroSchema = pgSchema('financeiro');
 
@@ -10,6 +12,16 @@ export const transactions = financeiroSchema.table('transactions', {
   transactionNumber: varchar('transaction_number', { length: 30 }).unique().notNull(), // Ex: FIN-2026-5001
   productionOrderId: uuid('production_order_id').references(() => productionOrders.id, { onDelete: 'set null' }),
   quoteId: uuid('quote_id').references(() => quotes.id, { onDelete: 'set null' }),
+  partnerId: uuid('partner_id').references(() => partners.id, { onDelete: 'set null' }),
+  partnerName: varchar('partner_name', { length: 150 }),
+  supplierId: uuid('supplier_id'),
+  supplierName: varchar('supplier_name', { length: 150 }),
+  purchaseOrderId: uuid('purchase_order_id'),
+  purchaseOrderNumber: varchar('purchase_order_number', { length: 30 }),
+  clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+  clientName: varchar('client_name', { length: 150 }),
+  serviceReference: text('service_reference'),
+  isProvision: boolean('is_provision').notNull().default(false),
   type: varchar('type', { length: 20 }).notNull().$type<'receber' | 'pagar'>(),
   subType: varchar('sub_type', { length: 40 }).notNull().$type<
     'entrada_pedido' | 'saldo_entrega' | 'compra_tecido' | 'servico_terceirizado' | 'despesa_geral'
@@ -40,6 +52,8 @@ export const transactions = financeiroSchema.table('transactions', {
   index('idx_finance_status').on(table.status),
   index('idx_finance_due_date').on(table.dueDate),
   index('idx_finance_order').on(table.productionOrderId),
+  index('idx_finance_partner').on(table.partnerId),
+  index('idx_finance_supplier').on(table.supplierId),
 ]);
 
 export type FinancialTransaction = typeof transactions.$inferSelect;

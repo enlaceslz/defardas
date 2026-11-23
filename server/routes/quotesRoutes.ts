@@ -8,7 +8,17 @@ import { financeRepository } from '../repositories/financeRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { PricingEngine } from '../services/pricingEngine';
-import { QuoteEntity, QuoteItemEntity, ProductionOrderEntity, FinancialTransactionEntity } from '../types/db';
+import { validateArtworkPayload } from '../services/artworkValidation';
+import { buildDefaultStageSchedule } from '../services/productionScheduleService';
+import {
+  ArtworkStatus,
+  ArtworkVersionEntity,
+  QuoteEntity,
+  QuoteItemEntity,
+  QuoteVersionSnapshot,
+  ProductionOrderEntity,
+  FinancialTransactionEntity,
+} from '../types/db';
 
 export const quotesRouter = Router();
 
@@ -26,6 +36,82 @@ const DEFAULT_PAYMENT_TERMS = '50% Sinal (Liberação de Corte) + 50% na Entrega
 
 // Trava de concorrência em voo para garantir idempotência absoluta em cliques duplos simultâneos
 const convertingQuoteIds = new Set<string>();
+
+function resolveArtStatus(quote: Pick<QuoteEntity, 'artStatus' | 'artApproved' | 'artVersions'>): ArtworkStatus {
+  if (quote.artStatus) return quote.artStatus;
+  if (quote.artApproved) return 'aprovada';
+  if (quote.artVersions && quote.artVersions.length > 0) return 'enviada_para_cliente';
+  return 'pendente';
+}
+
+function buildQuoteVersionSnapshot(
+  quote: Pick<
+    QuoteEntity,
+    | 'version'
+    | 'commercialStatus'
+    | 'artStatus'
+    | 'artApproved'
+    | 'artVersions'
+    | 'validUntil'
+    | 'totalBaseCost'
+    | 'suggestedTotalAmount'
+    | 'negotiatedTotalAmount'
+    | 'discountAmount'
+    | 'estimatedMarginPercentage'
+    | 'entryAmount'
+    | 'balanceAmount'
+    | 'productionLeadDays'
+    | 'items'
+  >,
+  savedBy: string,
+  changeSummary: string,
+  savedAt: string
+): QuoteVersionSnapshot {
+  const totalPieces = (quote.items || []).reduce((sum, it) => sum + (it.totalQuantity || 0), 0);
+  return {
+    version: quote.version || 1,
+    savedAt,
+    savedBy,
+    commercialStatus: quote.commercialStatus,
+    artStatus: resolveArtStatus(quote),
+    validUntil: quote.validUntil,
+    totalBaseCost: quote.totalBaseCost,
+    suggestedTotalAmount: quote.suggestedTotalAmount,
+    negotiatedTotalAmount: quote.negotiatedTotalAmount,
+    discountAmount: quote.discountAmount,
+    estimatedMarginPercentage: quote.estimatedMarginPercentage,
+    entryAmount: quote.entryAmount,
+    balanceAmount: quote.balanceAmount,
+    productionLeadDays: quote.productionLeadDays,
+    totalPieces,
+    changeSummary,
+    items: (quote.items || []).map((it) => ({
+      modelName: it.modelName,
+      fabricName: it.fabricName,
+      fabricColor: it.fabricColor,
+      totalQuantity: it.totalQuantity,
+      calculatedBaseUnitCost: it.calculatedBaseUnitCost,
+      suggestedUnitPrice: it.suggestedUnitPrice,
+      negotiatedUnitPrice: it.negotiatedUnitPrice,
+      totalItemPrice: it.totalItemPrice,
+    })),
+  };
+}
+
+async function findLinkedOrderForQuote(quote: QuoteEntity): Promise<ProductionOrderEntity | null> {
+  if (quote.convertedOrderId) {
+    const direct = await orderRepository.findById(quote.convertedOrderId);
+    if (direct) return direct;
+  }
+  const allOrders = await orderRepository.findAll();
+  return allOrders.find((o) => o.quoteId === quote.id) || null;
+}
+
+function getLatestArtVersion(quote: QuoteEntity): ArtworkVersionEntity | undefined {
+  const versions = quote.artVersions || [];
+  if (versions.length === 0) return undefined;
+  return [...versions].sort((a, b) => b.version - a.version)[0];
+}
 
 function sanitizeSizeGrid(rawSizes: any) {
   const s = rawSizes || {};
@@ -354,9 +440,12 @@ quotesRouter.post('/', requirePermission('quotes:create'), async (req: RequestWi
     balanceAmount: totals.balanceAmount,
     paymentTerms: customPaymentTerms,
     productionLeadDays: Math.floor(leadDays),
-    artApproved: Boolean(payload.artApproved),
-    artApprovedBy: payload.artApproved ? String(payload.artApprovedBy || actor.fullName) : undefined,
-    artApprovalDate: payload.artApproved ? nowIso : undefined,
+    artStatus: 'pendente',
+    artApproved: false,
+    artApprovedBy: undefined,
+    artApprovalDate: undefined,
+    artVersions: [],
+    versionHistory: [],
     acceptanceChannel,
     acceptanceNotes,
     acceptanceTimestamp: payload.whatsAppProof?.timestamp || nowIso,
@@ -367,6 +456,15 @@ quotesRouter.post('/', requirePermission('quotes:create'), async (req: RequestWi
     updatedAt: nowIso,
     items: processedItems,
   };
+
+  newQuote.versionHistory = [
+    buildQuoteVersionSnapshot(
+      newQuote,
+      actor.fullName,
+      'Emissão inicial da proposta comercial (v1)',
+      nowIso
+    ),
+  ];
 
   await quoteRepository.save(newQuote);
 
@@ -480,9 +578,33 @@ quotesRouter.put('/:id', requirePermission('quotes:edit'), async (req: RequestWi
     commercialStatus: existing.commercialStatus,
   };
 
+  const existingHistory = Array.isArray(existing.versionHistory) ? [...existing.versionHistory] : [];
+  if (existingHistory.length === 0) {
+    existingHistory.push(
+      buildQuoteVersionSnapshot(
+        existing,
+        existing.sellerName || actor.fullName,
+        `Snapshot preservado da v${existing.version || 1} antes da revisão`,
+        existing.updatedAt || existing.createdAt
+      )
+    );
+  }
+
+  const nextVersion = (existing.version || 1) + 1;
+  const formatBRL = (v: number) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+  const autoSummary =
+    existing.negotiatedTotalAmount !== totals.negotiatedTotalAmount
+      ? `Revisão v${nextVersion}: valor atualizado de ${formatBRL(existing.negotiatedTotalAmount)} para ${formatBRL(totals.negotiatedTotalAmount)}`
+      : `Revisão v${nextVersion}: atualização de itens, grade ou condições comerciais`;
+  const revisionSummary =
+    typeof payload.revisionSummary === 'string' && payload.revisionSummary.trim()
+      ? payload.revisionSummary.trim().slice(0, 240)
+      : autoSummary;
+
   const revisedQuote: QuoteEntity = {
     ...existing,
-    version: (existing.version || 1) + 1,
+    version: nextVersion,
     clientId: targetClientId,
     clientName: clientRecord?.companyName || String(payload.clientName || existing.clientName).trim(),
     clientCnpj: clientRecord?.cnpj || String(payload.clientCnpj || existing.clientCnpj).trim(),
@@ -512,13 +634,11 @@ quotesRouter.put('/:id', requirePermission('quotes:edit'), async (req: RequestWi
         ? payload.paymentTerms.trim()
         : existing.paymentTerms,
     productionLeadDays: Math.floor(leadDays),
-    artApproved: payload.artApproved !== undefined ? Boolean(payload.artApproved) : existing.artApproved,
-    artApprovedBy:
-      payload.artApproved && !existing.artApproved
-        ? String(payload.artApprovedBy || actor.fullName)
-        : existing.artApprovedBy,
-    artApprovalDate:
-      payload.artApproved && !existing.artApproved ? nowIso : existing.artApprovalDate,
+    artStatus: resolveArtStatus(existing),
+    artApproved: existing.artApproved,
+    artApprovedBy: existing.artApprovedBy,
+    artApprovalDate: existing.artApprovalDate,
+    artVersions: existing.artVersions || [],
     acceptanceNotes:
       typeof payload.acceptanceNotes === 'string'
         ? payload.acceptanceNotes.trim()
@@ -529,6 +649,11 @@ quotesRouter.put('/:id', requirePermission('quotes:edit'), async (req: RequestWi
     updatedAt: nowIso,
     items: processedItems,
   };
+
+  revisedQuote.versionHistory = [
+    ...existingHistory,
+    buildQuoteVersionSnapshot(revisedQuote, actor.fullName, revisionSummary, nowIso),
+  ];
 
   await quoteRepository.save(revisedQuote);
 
@@ -592,6 +717,508 @@ quotesRouter.patch('/:id/status', requirePermission('quotes:edit'), async (req: 
   });
 
   res.json(quote);
+});
+
+// Histórico completo de versões da proposta + versões de arte armazenadas
+quotesRouter.get('/:id/versions', async (req: RequestWithUser, res: Response) => {
+  const quote = await quoteRepository.findById(req.params.id);
+  if (!quote) {
+    return res.status(404).json({ error: 'Orçamento não encontrado' });
+  }
+
+  const versionHistory =
+    quote.versionHistory && quote.versionHistory.length > 0
+      ? quote.versionHistory
+      : [
+          buildQuoteVersionSnapshot(
+            quote,
+            quote.sellerName,
+            `Versão v${quote.version || 1} atual da proposta`,
+            quote.updatedAt || quote.createdAt
+          ),
+        ];
+
+  return res.json({
+    quoteId: quote.id,
+    quoteNumber: quote.quoteNumber,
+    currentVersion: quote.version,
+    commercialStatus: quote.commercialStatus,
+    artStatus: resolveArtStatus(quote),
+    artApproved: quote.artApproved,
+    approvedByName: quote.approvedByName,
+    approvedAt: quote.approvedAt,
+    versionHistory,
+    artVersions: quote.artVersions || [],
+  });
+});
+
+// Aprovação Comercial Auditável (DESACOPLADA da Arte — suporta "Aprovou Orçamento mas Pediu Revisão na Arte")
+quotesRouter.post('/:id/approve-commercial', requirePermission('quotes:edit'), async (req: RequestWithUser, res: Response) => {
+  const actor = req.user!;
+  const quote = await quoteRepository.findById(req.params.id);
+  if (!quote) {
+    return res.status(404).json({ error: 'Orçamento não encontrado' });
+  }
+
+  if (quote.isLocked || quote.commercialStatus === 'convertido_em_pedido') {
+    return res.status(409).json({
+      error: 'Esta proposta já foi convertida em Ordem de Produção.',
+      code: 'QUOTE_ALREADY_CONVERTED',
+    });
+  }
+
+  if (quote.commercialStatus === 'recusado' || quote.commercialStatus === 'cancelado') {
+    return res.status(409).json({
+      error: `Proposta ${quote.quoteNumber} está com status '${quote.commercialStatus}' e não pode ser aprovada.`,
+      code: 'QUOTE_NOT_APPROVABLE',
+    });
+  }
+
+  const approvedByName =
+    typeof req.body?.approvedByName === 'string' && req.body.approvedByName.trim().length >= 2
+      ? req.body.approvedByName.trim().slice(0, 120)
+      : '';
+  if (!approvedByName) {
+    return res.status(400).json({
+      error: 'Informe o nome do responsável pelo aceite comercial no cliente (mínimo 2 caracteres).',
+    });
+  }
+
+  const channel = VALID_ACCEPTANCE_CHANNELS.has(req.body?.acceptanceChannel)
+    ? (req.body.acceptanceChannel as 'whatsapp' | 'email' | 'presencial')
+    : quote.acceptanceChannel || 'whatsapp';
+  const acceptanceNotes =
+    typeof req.body?.acceptanceNotes === 'string' ? req.body.acceptanceNotes.trim().slice(0, 1000) : '';
+
+  const validArtDecisions = new Set(['manter_pendente', 'solicitar_revisao_arte', 'aprovar_arte_atual']);
+  const artDecision = validArtDecisions.has(req.body?.artDecision)
+    ? (req.body.artDecision as 'manter_pendente' | 'solicitar_revisao_arte' | 'aprovar_arte_atual')
+    : 'manter_pendente';
+  const artRevisionNotes =
+    typeof req.body?.artRevisionNotes === 'string' ? req.body.artRevisionNotes.trim().slice(0, 1000) : '';
+
+  if (artDecision === 'solicitar_revisao_arte' && artRevisionNotes.length < 5) {
+    return res.status(400).json({
+      error: 'Descreva os ajustes solicitados pelo cliente na arte (mínimo 5 caracteres).',
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  const oldStatus = quote.commercialStatus;
+  const oldArtStatus = resolveArtStatus(quote);
+
+  quote.commercialStatus = 'aprovado';
+  quote.approvedByName = approvedByName;
+  quote.approvedAt = nowIso;
+  quote.acceptanceChannel = channel;
+  quote.acceptanceTimestamp = nowIso;
+  if (acceptanceNotes) {
+    quote.acceptanceNotes = acceptanceNotes;
+  }
+
+  const versions = Array.isArray(quote.artVersions) ? [...quote.artVersions] : [];
+  const latestArt = versions.length > 0 ? [...versions].sort((a, b) => b.version - a.version)[0] : undefined;
+
+  let auditAction = 'APPROVE_QUOTE_COMMERCIAL';
+  let responseMessage = `Orçamento ${quote.quoteNumber} v${quote.version} aprovado comercialmente por ${approvedByName}.`;
+
+  if (artDecision === 'solicitar_revisao_arte') {
+    quote.artStatus = 'revisao_solicitada';
+    quote.artApproved = false;
+    quote.artApprovedBy = undefined;
+    quote.artApprovalDate = undefined;
+    quote.artNotes = artRevisionNotes;
+
+    if (latestArt) {
+      quote.artVersions = versions.map((v) =>
+        v.version === latestArt.version
+          ? {
+              ...v,
+              status: 'revisao_solicitada',
+              revisionRequestedBy: approvedByName,
+              revisionRequestedAt: nowIso,
+              revisionNotes: artRevisionNotes,
+            }
+          : v
+      );
+    }
+    auditAction = 'APPROVE_QUOTE_WITH_ART_REVISION';
+    responseMessage = `Orçamento ${quote.quoteNumber} v${quote.version} APROVADO comercialmente com SOLICITAÇÃO DE REVISÃO DE ARTE registrada. O preço e a proposta ficam preservados e o corte permanecerá travado (Gate A.3.2) até aprovação da nova versão da arte.`;
+  } else if (artDecision === 'aprovar_arte_atual') {
+    const artApprover =
+      typeof req.body?.artApproverName === 'string' && req.body.artApproverName.trim()
+        ? req.body.artApproverName.trim().slice(0, 120)
+        : approvedByName;
+    quote.artStatus = 'aprovada';
+    quote.artApproved = true;
+    quote.artApprovedBy = artApprover;
+    quote.artApprovalDate = nowIso;
+    if (latestArt) {
+      quote.artFileUrl = latestArt.fileUrl;
+      quote.artVersions = versions.map((v) =>
+        v.version === latestArt.version
+          ? { ...v, status: 'aprovada', approvedBy: artApprover, approvedAt: nowIso }
+          : v.status === 'enviada_para_cliente'
+          ? { ...v, status: 'substituida' }
+          : v
+      );
+    }
+    auditAction = 'APPROVE_QUOTE_AND_ART';
+    responseMessage = `Orçamento ${quote.quoteNumber} v${quote.version} e Arte formalmente aprovados por ${approvedByName}.`;
+  } else {
+    quote.artStatus = resolveArtStatus(quote);
+  }
+
+  // Atualizar o snapshot mais recente no histórico com o aceite comercial e status da arte
+  const history = Array.isArray(quote.versionHistory) ? [...quote.versionHistory] : [];
+  if (history.length === 0) {
+    history.push(
+      buildQuoteVersionSnapshot(
+        quote,
+        actor.fullName,
+        `Aprovação comercial registrada por ${approvedByName} via ${channel}`,
+        nowIso
+      )
+    );
+  } else {
+    const lastIdx = history.length - 1;
+    history[lastIdx] = {
+      ...history[lastIdx],
+      commercialStatus: quote.commercialStatus,
+      artStatus: resolveArtStatus(quote),
+    };
+  }
+  quote.versionHistory = history;
+  quote.updatedAt = nowIso;
+
+  await quoteRepository.save(quote);
+
+  auditService.log({
+    actorId: actor.id,
+    actorName: actor.fullName,
+    actorRole: actor.role,
+    entityName: 'crm.quotes',
+    entityId: quote.quoteNumber,
+    action: auditAction,
+    oldData: { commercialStatus: oldStatus, artStatus: oldArtStatus },
+    newData: {
+      commercialStatus: quote.commercialStatus,
+      artStatus: quote.artStatus,
+      artApproved: quote.artApproved,
+      approvedByName,
+      acceptanceChannel: channel,
+      artRevisionNotes: artRevisionNotes || undefined,
+    },
+    notes: responseMessage,
+  });
+
+  return res.json({
+    success: true,
+    message: responseMessage,
+    quote,
+  });
+});
+
+// Armazenar nova versão de arte/layout (Arte v1, v2, v3...) — permitido mesmo após conversão em OP enquanto OP estiver em 'aguardando_liberacao'
+quotesRouter.post('/:id/artworks', requirePermission('orders:approve_art'), async (req: RequestWithUser, res: Response) => {
+  const actor = req.user!;
+  const quote = await quoteRepository.findById(req.params.id);
+  if (!quote) {
+    return res.status(404).json({ error: 'Orçamento não encontrado' });
+  }
+
+  if (quote.commercialStatus === 'recusado' || quote.commercialStatus === 'cancelado') {
+    return res.status(409).json({
+      error: `Não é permitido anexar artes em propostas com status '${quote.commercialStatus}'.`,
+      code: 'QUOTE_CANCELLED',
+    });
+  }
+
+  const linkedOrder = await findLinkedOrderForQuote(quote);
+  if (linkedOrder && linkedOrder.stage !== 'aguardando_liberacao') {
+    return res.status(409).json({
+      error: `Arte bloqueada: a OP vinculada (${linkedOrder.orderNumber}) já avançou para a etapa '${linkedOrder.stage}'. Não é permitido substituir a arte após o início do corte.`,
+      code: 'ART_LOCKED_IN_PRODUCTION',
+    });
+  }
+
+  const validation = validateArtworkPayload({
+    fileName: req.body?.fileName,
+    fileUrl: req.body?.fileUrl,
+  });
+  if (!validation.ok) {
+    return res.status(400).json({ error: validation.error });
+  }
+
+  const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim().slice(0, 1000) : undefined;
+  const nowIso = new Date().toISOString();
+  const existingVersions = Array.isArray(quote.artVersions) ? [...quote.artVersions] : [];
+  const nextArtVersion =
+    existingVersions.length > 0
+      ? Math.max(...existingVersions.map((v) => v.version)) + 1
+      : 1;
+
+  const updatedPrevious: ArtworkVersionEntity[] = existingVersions.map((v) =>
+    v.status === 'enviada_para_cliente' || v.status === 'aprovada'
+      ? { ...v, status: 'substituida' }
+      : v
+  );
+
+  const newArt: ArtworkVersionEntity = {
+    id: crypto.randomUUID(),
+    version: nextArtVersion,
+    fileName: validation.data.fileName,
+    mimeType: validation.data.mimeType,
+    fileUrl: validation.data.fileUrl,
+    fileSizeBytes: validation.data.fileSizeBytes,
+    status: 'enviada_para_cliente',
+    uploadedBy: actor.fullName,
+    uploadedAt: nowIso,
+    notes,
+  };
+
+  quote.artVersions = [...updatedPrevious, newArt];
+  quote.artStatus = 'enviada_para_cliente';
+  quote.artApproved = false;
+  quote.artApprovedBy = undefined;
+  quote.artApprovalDate = undefined;
+  quote.artFileUrl = newArt.fileUrl;
+  if (notes) {
+    quote.artNotes = notes;
+  }
+  quote.updatedAt = nowIso;
+  await quoteRepository.save(quote);
+
+  // Sincronização automática com a OP vinculada (mantém Gate A.3.2 travado até aprovação desta nova versão!)
+  if (linkedOrder) {
+    linkedOrder.artStatus = 'enviada_para_cliente';
+    linkedOrder.artApproved = false;
+    linkedOrder.artApprovedBy = undefined;
+    linkedOrder.artApprovalDate = undefined;
+    linkedOrder.artFileUrl = newArt.fileUrl;
+    linkedOrder.artVersionNumber = newArt.version;
+    linkedOrder.artRevisionNotes = undefined;
+    linkedOrder.updatedAt = nowIso;
+    await orderRepository.save(linkedOrder);
+  }
+
+  auditService.log({
+    actorId: actor.id,
+    actorName: actor.fullName,
+    actorRole: actor.role,
+    entityName: 'crm.quotes',
+    entityId: quote.quoteNumber,
+    action: 'UPLOAD_ARTWORK_VERSION',
+    newData: {
+      artVersion: newArt.version,
+      fileName: newArt.fileName,
+      mimeType: newArt.mimeType,
+      fileSizeBytes: newArt.fileSizeBytes,
+      syncedOrderNumber: linkedOrder?.orderNumber,
+    },
+    notes: `Arte v${newArt.version} (${newArt.fileName}) armazenada na proposta ${quote.quoteNumber}${linkedOrder ? ` e sincronizada com a OP ${linkedOrder.orderNumber}` : ''}.`,
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: `Arte v${newArt.version} armazenada e enviada para aprovação do cliente.`,
+    artwork: newArt,
+    quote,
+    syncedOrder: linkedOrder || undefined,
+  });
+});
+
+// Solicitar Revisão de Arte (mantém aprovação comercial intacta e re-trava Gate A.3.2 se OP ainda não entrou no corte)
+quotesRouter.post('/:id/artworks/request-revision', requirePermission('orders:approve_art'), async (req: RequestWithUser, res: Response) => {
+  const actor = req.user!;
+  const quote = await quoteRepository.findById(req.params.id);
+  if (!quote) {
+    return res.status(404).json({ error: 'Orçamento não encontrado' });
+  }
+
+  const linkedOrder = await findLinkedOrderForQuote(quote);
+  if (linkedOrder && linkedOrder.stage !== 'aguardando_liberacao') {
+    return res.status(409).json({
+      error: `Revisão de arte bloqueada: a OP ${linkedOrder.orderNumber} já avançou para '${linkedOrder.stage}'. Para ajustes após o corte, abra retrabalho no PCP.`,
+      code: 'ART_LOCKED_IN_PRODUCTION',
+    });
+  }
+
+  const revisionNotes =
+    typeof req.body?.revisionNotes === 'string' ? req.body.revisionNotes.trim().slice(0, 1000) : '';
+  if (revisionNotes.length < 5) {
+    return res.status(400).json({
+      error: 'Informe os detalhes do ajuste solicitado pelo cliente na arte (mínimo 5 caracteres).',
+    });
+  }
+
+  const requestedBy =
+    typeof req.body?.requestedBy === 'string' && req.body.requestedBy.trim()
+      ? req.body.requestedBy.trim().slice(0, 120)
+      : quote.clientName;
+
+  const nowIso = new Date().toISOString();
+  const versions = Array.isArray(quote.artVersions) ? [...quote.artVersions] : [];
+  const latestArt = getLatestArtVersion(quote);
+
+  if (latestArt) {
+    quote.artVersions = versions.map((v) =>
+      v.version === latestArt.version
+        ? {
+            ...v,
+            status: 'revisao_solicitada',
+            revisionRequestedBy: requestedBy,
+            revisionRequestedAt: nowIso,
+            revisionNotes,
+          }
+        : v
+    );
+  }
+
+  quote.artStatus = 'revisao_solicitada';
+  quote.artApproved = false;
+  quote.artApprovedBy = undefined;
+  quote.artApprovalDate = undefined;
+  quote.artNotes = revisionNotes;
+  quote.updatedAt = nowIso;
+  await quoteRepository.save(quote);
+
+  if (linkedOrder) {
+    linkedOrder.artStatus = 'revisao_solicitada';
+    linkedOrder.artApproved = false;
+    linkedOrder.artApprovedBy = undefined;
+    linkedOrder.artApprovalDate = undefined;
+    linkedOrder.artRevisionNotes = revisionNotes;
+    linkedOrder.updatedAt = nowIso;
+    await orderRepository.save(linkedOrder);
+  }
+
+  auditService.log({
+    actorId: actor.id,
+    actorName: actor.fullName,
+    actorRole: actor.role,
+    entityName: 'crm.quotes',
+    entityId: quote.quoteNumber,
+    action: 'REQUEST_ARTWORK_REVISION',
+    newData: {
+      artVersion: latestArt?.version,
+      requestedBy,
+      revisionNotes,
+      syncedOrderNumber: linkedOrder?.orderNumber,
+    },
+    notes: `Revisão de arte solicitada por ${requestedBy} na proposta ${quote.quoteNumber}: ${revisionNotes}`,
+  });
+
+  return res.json({
+    success: true,
+    message: `Revisão de arte registrada. A aprovação comercial permanece preservada e o corte segue bloqueado até o cliente aprovar a nova arte.`,
+    quote,
+    syncedOrder: linkedOrder || undefined,
+  });
+});
+
+// Aprovação Formal da Arte (desbloqueia o requisito de Arte do Gate A.3.2 na Proposta e na OP vinculada)
+quotesRouter.post('/:id/artworks/approve', requirePermission('orders:approve_art'), async (req: RequestWithUser, res: Response) => {
+  const actor = req.user!;
+  const quote = await quoteRepository.findById(req.params.id);
+  if (!quote) {
+    return res.status(404).json({ error: 'Orçamento não encontrado' });
+  }
+
+  const linkedOrder = await findLinkedOrderForQuote(quote);
+  if (linkedOrder && linkedOrder.stage !== 'aguardando_liberacao') {
+    return res.status(409).json({
+      error: `Arte bloqueada: a OP ${linkedOrder.orderNumber} já avançou para '${linkedOrder.stage}' e não permite alterar a arte aprovada.`,
+      code: 'ART_LOCKED_IN_PRODUCTION',
+    });
+  }
+
+  const approverName =
+    typeof req.body?.approverName === 'string' && req.body.approverName.trim().length >= 2
+      ? req.body.approverName.trim().slice(0, 120)
+      : actor.fullName;
+  const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim().slice(0, 1000) : '';
+  const requestedVersion = req.body?.version !== undefined ? Number(req.body.version) : undefined;
+
+  const versions = Array.isArray(quote.artVersions) ? [...quote.artVersions] : [];
+  let targetArt: ArtworkVersionEntity | undefined;
+  if (requestedVersion !== undefined && Number.isFinite(requestedVersion)) {
+    targetArt = versions.find((v) => v.version === requestedVersion);
+    if (!targetArt) {
+      return res.status(404).json({ error: `Arte v${requestedVersion} não encontrada nesta proposta.` });
+    }
+  } else {
+    targetArt = getLatestArtVersion(quote);
+  }
+
+  const nowIso = new Date().toISOString();
+
+  if (targetArt) {
+    quote.artVersions = versions.map((v) =>
+      v.version === targetArt!.version
+        ? {
+            ...v,
+            status: 'aprovada',
+            approvedBy: approverName,
+            approvedAt: nowIso,
+          }
+        : v.status === 'enviada_para_cliente' || v.status === 'aprovada'
+        ? { ...v, status: 'substituida' }
+        : v
+    );
+    quote.artFileUrl = targetArt.fileUrl;
+  }
+
+  quote.artStatus = 'aprovada';
+  quote.artApproved = true;
+  quote.artApprovedBy = approverName;
+  quote.artApprovalDate = nowIso;
+  if (notes) {
+    quote.artNotes = notes;
+  }
+  quote.updatedAt = nowIso;
+  await quoteRepository.save(quote);
+
+  if (linkedOrder) {
+    linkedOrder.artStatus = 'aprovada';
+    linkedOrder.artApproved = true;
+    linkedOrder.artApprovedBy = approverName;
+    linkedOrder.artApprovalDate = nowIso;
+    if (quote.artFileUrl) {
+      linkedOrder.artFileUrl = quote.artFileUrl;
+    }
+    if (targetArt) {
+      linkedOrder.artVersionNumber = targetArt.version;
+    }
+    linkedOrder.artRevisionNotes = undefined;
+    const tag = `[Arte${targetArt ? ` v${targetArt.version}` : ''} aprovada por ${approverName} em ${new Date().toLocaleDateString('pt-BR')}${notes ? ` — ${notes}` : ''}]`;
+    linkedOrder.technicalNotes = `${linkedOrder.technicalNotes || ''} ${tag}`.trim();
+    linkedOrder.updatedAt = nowIso;
+    await orderRepository.save(linkedOrder);
+  }
+
+  auditService.log({
+    actorId: actor.id,
+    actorName: actor.fullName,
+    actorRole: actor.role,
+    entityName: 'crm.quotes',
+    entityId: quote.quoteNumber,
+    action: 'APPROVE_ARTWORK_VERSION',
+    newData: {
+      artVersion: targetArt?.version,
+      approverName,
+      notes: notes || undefined,
+      syncedOrderNumber: linkedOrder?.orderNumber,
+    },
+    notes: `Arte${targetArt ? ` v${targetArt.version}` : ''} da proposta ${quote.quoteNumber} formalmente aprovada por ${approverName}${linkedOrder ? ` (OP ${linkedOrder.orderNumber} atualizada)` : ''}.`,
+  });
+
+  return res.json({
+    success: true,
+    message: `Arte${targetArt ? ` v${targetArt.version}` : ''} aprovada formalmente por ${approverName}.${linkedOrder ? ` A OP ${linkedOrder.orderNumber} foi liberada no critério de Arte (Gate A.3.2).` : ''}`,
+    quote,
+    syncedOrder: linkedOrder || undefined,
+  });
 });
 
 // Conversão IDEMPOTENTE de Orçamento em Pedido / Ordem de Produção (Regra B.2.2 & Gate A.3.2)
@@ -689,6 +1316,9 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
         ? ` [Aviso: convertida após validade original ${quote.validUntil}]`
         : '';
 
+    const latestArt = getLatestArtVersion(quote);
+    const resolvedArtStatus = resolveArtStatus(quote);
+
     // Criar Ordem de Produção no PCP com Portão A.3.2: stage inicial 'aguardando_liberacao'
     const newOrder: ProductionOrderEntity = {
       id: orderId,
@@ -708,9 +1338,13 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
       commercialStatus: 'aprovado',
       financialStatus: 'entrada_pendente', // Bloqueado até confirmar sinal de 50%!
       stage: 'aguardando_liberacao',       // Gate A.3.2
+      artStatus: resolvedArtStatus,
       artApproved: quote.artApproved,
       artApprovalDate: quote.artApprovalDate,
       artApprovedBy: quote.artApprovedBy,
+      artFileUrl: quote.artFileUrl || latestArt?.fileUrl,
+      artVersionNumber: latestArt?.version,
+      artRevisionNotes: resolvedArtStatus === 'revisao_solicitada' ? quote.artNotes : undefined,
       entryPaymentConfirmed: false,        // Portão rígido do PRD
       priority: 'normal',
       creationDate: todayStr,
@@ -721,6 +1355,7 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    newOrder.stageSchedule = buildDefaultStageSchedule(newOrder);
 
     await orderRepository.save(newOrder);
 
