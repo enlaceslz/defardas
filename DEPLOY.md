@@ -50,6 +50,7 @@ S3_FORCE_PATH_STYLE=true
 SESSION_SECRET=CHAVE_CRIPTOGRAFICA_MINIMO_32_CARACTERES
 META_WA_TOKEN=EAAG...
 META_WA_PHONE_NUMBER_ID=
+META_WA_BUSINESS_ACCOUNT_ID=
 META_WA_WEBHOOK_VERIFY_TOKEN=TOKEN_VERIFICACAO_META
 META_WA_APP_SECRET=SEGREDO_HMAC_APP_META
 WA_AKG_ENDPOINT=http://127.0.0.1:8080
@@ -196,7 +197,7 @@ Antes de liberar o acesso geral aos operadores da fábrica:
 - [ ] Conexão segura HTTPS com certificado SSL válido A+ (Qualys SSL Labs) e `trust proxy` preservado.
 - [ ] `NODE_ENV=production` ativo (confirmar que `/api/auth/dev-credentials` retorna `404` e `GET /api/health` responde `200`).
 - [ ] Banco de dados PostgreSQL com migrações Drizzle aplicadas (`npm run db:migrate`) e acesso restrito à rede interna.
-- [ ] `META_WA_APP_SECRET` e/ou `WA_AKG_API_KEY` configurados para verificação criptográfica de webhooks.
+- [ ] `META_WA_WEBHOOK_VERIFY_TOKEN` + `META_WA_APP_SECRET` (webhook `/api/communication/webhooks/meta`) e/ou `WA_AKG_API_KEY` (webhook `/api/communication/webhooks/wa-akg`) configurados para verificação criptográfica obrigatória em produção.
 - [ ] Backup automático (`scripts/backup.sh`) configurado via cron e teste de restauração (`scripts/restore.sh`) concluído.
-- [ ] Contas reais de usuários criadas com perfis RBAC específicos (Administrador, Gerente Comercial, Vendas, PCP, Financeiro, Qualidade/Expedição).
-- [ ] Dados da empresa em *Configurações* conferidos com CNPJ e endereço de São Luís - MA.
+- [ ] Contas reais de usuários criadas com perfis RBAC específicos (`npm run db:create-admin`) cobrindo Administrador, Gerente Comercial, Vendas, PCP, Financeiro e Qualidade/Expedição.
+- [ ] Fornecedores (`FOR-`), Parceiros/Facções (`FAC-`) e dados institucionais da empresa em *Configurações* conferidos com CNPJ e telefone WhatsApp de São Luís - MA.

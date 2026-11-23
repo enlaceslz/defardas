@@ -17,6 +17,18 @@ export const authRouter = Router();
 
 const isProd = process.env.NODE_ENV === 'production';
 
+function getCookieSecurityOptions(req: RequestWithUser) {
+  const isHttpsRequest =
+    req.secure ||
+    String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https' ||
+    isProd;
+  return {
+    secure: isHttpsRequest,
+    sameSite: (isHttpsRequest ? 'none' : 'lax') as 'none' | 'lax',
+    path: '/',
+  };
+}
+
 /**
  * GET /api/auth/csrf-token
  * Fornece e sincroniza o token CSRF para a camada de cliente
@@ -27,9 +39,7 @@ authRouter.get('/csrf-token', (req, res) => {
     token = generateCsrfToken();
     res.cookie(CSRF_COOKIE_NAME, token, {
       httpOnly: false,
-      secure: isProd,
-      sameSite: 'lax',
-      path: '/',
+      ...getCookieSecurityOptions(req as RequestWithUser),
       maxAge: 8 * 60 * 60 * 1000,
     });
   }
@@ -113,12 +123,12 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
     userAgent
   );
 
+  const cookieSec = getCookieSecurityOptions(req);
+
   // Configuração do cookie HttpOnly
   res.cookie('defardas_session', session.token, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    path: '/',
+    ...cookieSec,
     maxAge: 8 * 60 * 60 * 1000, // 8 horas
   });
 
@@ -138,9 +148,7 @@ authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Res
     csrfToken = generateCsrfToken();
     res.cookie(CSRF_COOKIE_NAME, csrfToken, {
       httpOnly: false,
-      secure: isProd,
-      sameSite: 'lax',
-      path: '/',
+      ...cookieSec,
       maxAge: 8 * 60 * 60 * 1000,
     });
   }
@@ -168,7 +176,7 @@ authRouter.post('/logout', requireAuth, async (req: RequestWithUser, res: Respon
     await sessionStore.destroySessionAsync(token);
   }
 
-  res.clearCookie('defardas_session', { path: '/' });
+  res.clearCookie('defardas_session', getCookieSecurityOptions(req));
 
   if (req.user) {
     auditService.log({

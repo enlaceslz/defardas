@@ -33,13 +33,22 @@ export function generateCsrfToken(): string {
  */
 export function csrfProtection(req: Request, res: Response, next: NextFunction) {
   // Garantir que todo cliente receba um token CSRF se ainda não possuir
+  const isHttpsRequest =
+    req.secure ||
+    String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https' ||
+    isProd;
+
   let currentToken = req.cookies?.[CSRF_COOKIE_NAME];
   if (!currentToken) {
     currentToken = generateCsrfToken();
+    if (!req.cookies) {
+      req.cookies = {};
+    }
+    req.cookies[CSRF_COOKIE_NAME] = currentToken;
     res.cookie(CSRF_COOKIE_NAME, currentToken, {
       httpOnly: false, // Permite leitura pela aplicação frontend para inclusão nos cabeçalhos
-      secure: isProd,
-      sameSite: 'lax',
+      secure: isHttpsRequest,
+      sameSite: isHttpsRequest ? 'none' : 'lax',
       path: '/',
       maxAge: 8 * 60 * 60 * 1000, // 8 horas (alinhado com o tempo de sessão)
     });

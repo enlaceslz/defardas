@@ -57,9 +57,9 @@ Em **Project Settings → Environment Variables**, configure:
   - `DATABASE_SSL_MODE`: `require` (ou `verify-full` se fornecer `DATABASE_CA_CERT`).
   - `DATABASE_POOL_MAX`: `5` (recomendado para funções serverless; padrão automático quando `VERCEL=1`).
 - **Opcionais (conforme integrações habilitadas):**
-  - `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION` (storage privado de artes e comprovantes).
-  - `META_WA_ACCESS_TOKEN`, `META_WA_PHONE_NUMBER_ID`, `META_WA_VERIFY_TOKEN`, `META_WA_APP_SECRET` (WhatsApp Business Cloud API oficial).
-  - `WA_AKG_BASE_URL`, `WA_AKG_API_KEY` (caso conecte a uma instância externa do WA-AKG).
+  - `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION`, `S3_FORCE_PATH_STYLE` (storage privado de artes e comprovantes).
+  - `META_WA_TOKEN`, `META_WA_PHONE_NUMBER_ID`, `META_WA_BUSINESS_ACCOUNT_ID`, `META_WA_WEBHOOK_VERIFY_TOKEN`, `META_WA_APP_SECRET` (WhatsApp Business Cloud API oficial).
+  - `WA_AKG_ENDPOINT`, `WA_AKG_API_KEY` (caso conecte a uma instância externa do WA-AKG).
   - `GEMINI_API_KEY` (caso habilite recursos server-side de inteligência gerencial).
 
 ### Passo 3: Publicar (Deploy)

@@ -1,9 +1,9 @@
 # AGENTS.md — Diretrizes para Agentes de Desenvolvimento e IA
 
-**Projeto:** DE FARDAS — Plataforma Integrada de Gestão Comercial, Produção, Financeiro e Portfólio Digital  
+**Projeto:** DE FARDAS — Plataforma Integrada de Gestão Comercial, Produção, Suprimentos, Financeiro e Portfólio Digital  
 **Localização da Empresa:** São Luís, Maranhão  
 **Documento Normativo de Referência:** `PRD_DE_FARDAS_v1.6.md` e seus Adendos (v1.2, v1.3, v1.4, v1.6)  
-**Ambiente de Desenvolvimento:** Google AI Studio com Google Gemini  
+**Versão da Base de Código:** `1.6.1`  
 
 ---
 
@@ -17,82 +17,119 @@ Qualquer agente ou engenheiro que trabalhe nesta base de código **DEVE** seguir
    $$\text{Preço Sugerido} = \text{Custo-base} \times \left(1 + \frac{k}{100}\right)$$
    A fórmula antiga de margem sobre receita existente no texto histórico da seção 5.6 do PRD **NÃO** deve ser utilizada como motor de preços principal. A margem gerencial estimada sobre a receita é calculada separadamente:
    $$\text{Margem Estimada (\%)} = \frac{\text{Preço Negociado} - \text{Custo-base}}{\text{Preço Negociado}} \times 100$$
+   Sempre utilize o operador nullish coalescing (`??`) em campos numéricos onde `0` é valor válido (frete, perda técnica, customização, markup).
 3. **Tríade de Estados Desacoplados (Regra B.2.2):**  
    Nunca unifique status comercial, financeiro e operacional em uma única variável:
    - `commercialStatus`: `'rascunho' | 'enviado' | 'em_negociacao' | 'aprovado' | 'recusado' | 'cancelado' | 'convertido_em_pedido'`
    - `financialStatus`: `'entrada_pendente' | 'entrada_confirmada' | 'saldo_em_aberto' | 'quitado'`
    - `stage`: `'aguardando_liberacao' | 'corte' | 'bordado_silk' | 'costura' | 'conferencia_qualidade' | 'retrabalho' | 'expedicao' | 'entregue'`
-4. **Portões Rígidos de Liberação Fabril (Gate A.3.2):**  
+4. **Aprovação Comercial Desacoplada da Aprovação de Arte:**  
+   O cliente pode **aprovar comercialmente o orçamento e solicitar revisão de arte** simultaneamente (`artStatus`: `'pendente' | 'em_revisao' | 'aguardando_cliente' | 'aprovada'`). Cada revisão de proposta incrementa `version` mantendo histórico, e cada arquivo/revisão de arte é versionado (`artworkVersions`). A OP pode ser criada, mas permanece retida no Gate A.3.2 até a aprovação formal da arte final.
+5. **Portões Rígidos de Liberação Fabril (Gate A.3.2):**  
    Uma Ordem de Produção (OP) **não pode avançar para o corte** enquanto:
-   - O sinal de entrada (padrão 50%) não for confirmado com registro de comprovante (`entryPaymentConfirmed === false`).
+   - O sinal de entrada (padrão 50%) não for confirmado no Financeiro com comprovante bancário real e evidência auditável (`entryPaymentConfirmed === false`).
    - A arte/layout personalizado não tiver sido formalmente aprovada pelo cliente (`artApproved === false`).
-5. **Idempotência em Conversões:**  
-   A conversão de Proposta Comercial (`Quote`) em Ordem de Produção (`ProductionOrder`) e lançamentos financeiros deve ser idempotente: repetições do clique ou falhas parciais de rede **nunca** podem duplicar ordens no chão de fábrica nem títulos a receber.
-6. **Segregação e Privacidade:**  
-   Os dados da DE FARDAS são privados e segregados. Não embutir credenciais, dados pessoais ou senhas no código versionado.
+6. **Idempotência em Conversões e Lançamentos:**  
+   A conversão de Proposta Comercial (`Quote`) em Ordem de Produção (`ProductionOrder`), a geração de títulos financeiros (`entrada_pedido` / `saldo_entrega`), a geração de Contas a Pagar a partir de Pedidos de Compra (`PC`) e o recebimento de webhooks WhatsApp (`externalId`) devem ser estritamente idempotentes — repetições nunca podem duplicar ordens, títulos ou mensagens.
+7. **Separação Estrita entre Parceiros/Facções e Fornecedores de Insumos:**  
+   - **Parceiros & Facções (`FAC-YYYY-XXXX`):** prestadores de serviço terceirizado (costura, bordado, silk, corte), com **custódia de tecidos remetidos** e **provisão/previsão de pagamento por OP/cliente**.
+   - **Fornecedores & Compras (`FOR-YYYY-XXXX` / `PC-YYYY-XXXX`):** fornecedores de matéria-prima (tecidos, aviamentos, insumos, embalagens, manutenção), com **Pedidos de Compra**, recebimento parcial/total integrando **Kardex + Custo Médio Ponderado (CMP)** e geração de **Contas a Pagar**.
+8. **Segregação e Privacidade:**  
+   Os dados da DE FARDAS são privados e segregados. Nunca embutir credenciais, telefones de fallback fictícios, dados pessoais ou senhas no código versionado ou no bundle frontend.
 
 ---
 
 ## 2. Três Ambientes do Produto
 
-O PRD especifica três ambientes integrados:
-
 ```
-┌────────────────────────────────────────────────────────┐
-│                   DE FARDAS PLATFORM                   │
-├────────────────────┬──────────────────┬────────────────┤
-│ 1. PORTAL PÚBLICO  │ 2. ERP + CRM     │ 3. INTELIGÊNCIA│
-│    & PORTFÓLIO     │    INTERNO       │    GERENCIAL   │
-│ - Vitrine Digital  │ - CRM & Leads    │ - KPIs Produção│
-│ - 10 Categorias    │ - Orçamentos     │ - Margem Real  │
-│ - Solicitar Cotação│ - PCP & Kanban   │ - Alertas Insum│
-│ - Lead no CRM      │ - Estoque & Facç │ - Consultas IA │
-│                    │ - Finanças       │   (Read-Only)  │
-└────────────────────┴──────────────────┴────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                      DE FARDAS PLATFORM                        │
+├────────────────────┬────────────────────────┬──────────────────┤
+│ 1. PORTAL PÚBLICO  │ 2. ERP + CRM INTERNO   │ 3. INTELIGÊNCIA  │
+│    & PORTFÓLIO     │                        │    & ALERTAS     │
+│ - Vitrine Digital  │ - CRM & Leads          │ - KPIs Produção  │
+│ - 10 Categorias    │ - Orçamentos & Artes   │ - Margem Real    │
+│ - Solicitar Cotação│ - PCP, Kanban & Prazos │ - Central de     │
+│ - Lead no CRM      │ - Estoque, Kardex & CMP│   Notificações   │
+│ - WhatsApp Dinâmico│ - Fornecedores & PCs   │ - Previsão Caixa │
+│                    │ - Parceiros & Facções  │   (Facções/PCs)  │
+│                    │ - Financeiro 50/50     │ - Auditoria      │
+│                    │ - Central WhatsApp     │   Imutável       │
+└────────────────────┴────────────────────────┴──────────────────┘
 ```
 
 ---
 
 ## 3. Modelo de Domínio e Entidades Chave
 
-### 3.1. Custo-Base Transparente (`CostBreakdown`)
-O custo-base de cada item deve discriminar:
+### 3.1. Custo-Base Transparente (`CostBreakdown`) & Versionamento de Propostas
+O custo-base de cada item discrimina:
 - `materialUnitCost`: Consumo de tecidos e aviamentos (zíperes, linhas, botões).
 - `outsourcedSewingUnitCost`: Mão de obra da facção terceirizada por peça.
 - `customizationUnitCost`: Bordados e silk-screen por peça.
 - `freightPerUnit`: Frete e entrega rateados.
-- `technicalLossPercentage`: Perda técnica estimada (ex: 2% a 3%).
+- `technicalLossPercentage`: Perda técnica estimada (ex.: 2% a 3%).
 - `calculatedBaseCost`: Somatório direto acrescido da perda técnica.
 - `markupPercentage`: Percentual $k\%$ de acréscimo.
 - `suggestedUnitPrice`: Preço sugerido resultante.
 - `negotiatedUnitPrice`: Preço final praticado na proposta.
-- `belowSuggestedAuthorized`: Booleano indicando autorização caso $\text{Negociado} < \text{Sugerido}$.
+- `belowSuggestedAuthorized`: Booleano indicando autorização explícita de Administrador caso $\text{Negociado} < \text{Sugerido}$.
 
-### 3.2. Estoque e Rastreabilidade de Terceiros
-- O estoque distingue **Saldo Físico Próprio**, **Saldo Alocado para OPs** e **Saldo em Poder de Terceiros (Facções)**.
-- Materiais enviados para facções permanecem sob custódia rastreada até confirmação de consumo ou devolução.
-- Ajustes de inventário devem ser registrados por eventos compensatórios, nunca por sobrescrita cega de saldo.
+Propostas mantêm histórico de versões (`version`, `revisionHistory`) e versionamento de arte (`artStatus`, `artVersionNumber`, `artworkVersions`, `artRevisionNotes`) validados por `server/services/artworkValidation.ts`.
+
+### 3.2. Estoque, Kardex, Custo Médio Ponderado (CMP) e Custódia de Terceiros
+- Cada insumo distingue **Saldo Físico Próprio**, **Saldo Alocado para OPs** e **Saldo em Poder de Terceiros (Facções)**, além de vínculo estruturado com fornecedor padrão (`supplierId`).
+- Materiais enviados para facções permanecem sob custódia rastreada (`PartnerCustody`) até confirmação de devolução, consumo ou perda; retornos acima do saldo em custódia são bloqueados (`HTTP 400`).
+- Ajustes de inventário ocorrem exclusivamente via eventos compensatórios auditáveis no Kardex — nunca por sobrescrita cega de saldo.
+- Entradas via **Recebimento de Pedido de Compra** recalculam automaticamente o **Custo Médio Ponderado (CMP)** no servidor e bloqueiam recebimento acima da quantidade pedida.
+
+### 3.3. Fornecedores & Pedidos de Compra (`FOR-YYYY-XXXX` / `PC-YYYY-XXXX`)
+- Ciclo de vida do Pedido de Compra: `rascunho` → `enviado` → `confirmado` → `recebido_parcial` / `recebido_total` (ou `cancelado`).
+- Recebimentos lançam entradas automáticas no Estoque/Kardex com CMP e podem efetivar/gerar o título correspondente em Contas a Pagar (`compra_tecido`) de forma idempotente.
+- O Dossiê 360° do Fornecedor (`GET /api/suppliers/:id`) aplica isolamento RBAC para ocultar títulos financeiros de perfis sem alçada financeira.
+- Exclusão de fornecedores com insumos vinculados, PCs abertos ou títulos ativos é bloqueada no servidor.
+
+### 3.4. Parceiros & Facções (`FAC-YYYY-XXXX`)
+- Gestão de oficinas e terceirizados (`costura`, `bordado`, `silk`, `corte`, `acabamento`) com controle de custódia de materiais e previsão/provisão financeira (`server/services/partnerFinanceService.ts`).
+- Acompanhamento consolidado de valores **já pagos**, **provisionados/pendentes**, **em atraso** e **saldo restante** por parceiro, com referência explícita de serviço, OP e cliente vinculada ao Financeiro.
+
+### 3.5. Cronograma por Etapa (PCP) & Central de Notificações
+- Cada OP possui cronograma detalhado por etapa (`stageSchedule`, gerenciado por `server/services/productionScheduleService.ts`) com datas planejadas/realizadas, responsável, observações e recálculo proporcional até a data prometida de entrega (`targetDeliveryDate`).
+- O motor centralizado de notificações (`server/services/notificationService.ts` → `GET /api/notifications`) consolida alertas acionáveis de: etapas de OP em atraso ou alerta, entregas vencendo/atrasadas, bloqueios do Gate A.3.2, tecidos abaixo do mínimo, Pedidos de Compra com entrega atrasada, títulos financeiros vencendo/atrasados e custódias abertas — filtrados conforme o RBAC do usuário autenticado.
+
+### 3.6. Central WhatsApp Omnichannel (Multiprovedor)
+- Suporte nativo a **Meta WhatsApp Business Cloud API** e **WA-AKG (QR Code)** via `server/services/whatsappService.ts` e `server/routes/communicationRoutes.ts`.
+- **Diagnóstico Honesto:** canais exibem status real (`live` vs. `sandbox`), variáveis de ambiente pendentes e sondagem efetiva de reconexão (proibido simular reconexão falsa ou exibir selo fixo "Ativo" sem env vars).
+- **Normalização & Vínculo:** telefones brasileiros normalizados para DDI `55` (`remoteJid`), com vínculo automático a **Clientes CRM**, **Leads**, **Parceiros/Facções** (`parceiro_faccao`) e **Fornecedores** (`fornecedor_insumos`).
+- **6 Templates ERP Homologados (`/api/communication/send-template`):** `quote_ready`, `downpayment_confirmed`, `art_approval`, `order_stage_update`, `purchase_order` e `payment_reminder`.
+- **Handoff & Não Lidas:** abertura de conversas a partir de qualquer módulo seleciona diretamente a conversa na Central WhatsApp; badge da Sidebar sincronizado via `GET /api/communication/unread-summary`.
 
 ---
 
 ## 4. Diretrizes de Implementação Técnica
 
 ### 4.1. Arquitetura Homologada e Fronteiras
-- **Frontend:** React 19 SPA com TypeScript, Vite, Tailwind CSS v4, Lucide React e Motion.
-- **Navegação e Isolamento:** Menu lateral (Sidebar) persistente no ERP interno; Portal Público desautenticado isolado sem montagem da navegação interna. Proibido uso de `window.alert`, `window.confirm` e `window.open` (usar notificações Toast e modais in-app).
-- **Backend:** Node.js + TypeScript + Express (`server.ts`) com rotas modulares em `server/routes/*`, serviços de domínio em `server/services/*` e repositórios tipados em `server/repositories/*`.
+- **Frontend:** React 19 SPA com TypeScript estrito, Vite 8 (`allowedHosts: true` em dev para compatibilidade com previews remotos), Tailwind CSS v4, Lucide React e Motion.
+- **Navegação e Isolamento:** Menu lateral (`Sidebar`) persistente no ERP interno; Portal Público desautenticado isolado sem montagem da navegação interna. Proibido uso de `window.alert`, `window.confirm` e `window.open` (usar notificações Toast e modais in-app).
+- **Backend:** Node.js + TypeScript + Express (`server.ts` / `api/index.ts` compartilhando `server/app.ts`) com:
+  - **14 rotas modulares** em `server/routes/*` (`auth`, `quotes`, `orders`, `finance`, `inventory`, `leads`, `clients`, `communication`, `audit`, `migration`, `lookups`, `partners`, `suppliers`, `notifications`).
+  - **8 serviços de domínio** em `server/services/*` (`pricingEngine`, `artworkValidation`, `productionScheduleService`, `partnerFinanceService`, `notificationService`, `whatsappService`, `sequenceService`, `auditService`).
+  - **10 repositórios tipados** em `server/repositories/*`.
 - **Banco de Produção (Fonte Única de Verdade):** PostgreSQL próprio da DE FARDAS com **Drizzle ORM** e migrações via **Drizzle Kit** (`drizzle/`), estruturado nos schemas `core`, `crm`, `producao`, `estoque`, `financeiro` e `communication`. Proibido introduzir Prisma, Sequelize ou TypeORM no domínio do ERP.
 - **Armazenamento Privado:** Provedor compatível com S3 para artes, fichas técnicas e comprovantes bancários com evidência auditável (`receiptEvidenceUrl`).
-- **Comunicação Omnichannel:** Central WhatsApp nativa multiprovedor suportando **Meta WhatsApp Business Cloud API** e **WA-AKG (QR Code)** em container Docker isolado.
-- **Infraestrutura:** Docker multi-stage (`Dockerfile`) + Docker Compose (`compose.yaml` / `compose.dev.yaml`) com PostgreSQL 16, Redis 7, ERP e WA-AKG, além de scripts de backup/restore (`scripts/backup.sh`, `scripts/restore.sh`).
+- **Infraestrutura:** Docker multi-stage (`Dockerfile`) + Docker Compose (`compose.yaml` / `compose.dev.yaml`) com PostgreSQL 16, Redis 7, ERP e WA-AKG, Vercel Full-Stack Serverless (`api/index.ts` + `vercel.json`) e scripts de backup/restore SHA-256 (`scripts/backup.sh`, `scripts/restore.sh`).
 
 ### 4.2. Invariantes de Segurança Obrigatórios
-1. **Autenticação e Sessões:** Senhas com `bcrypt` (12 rounds); sessões CSPRNG persistidas em `core.sessions` com cookie `HttpOnly` + `SameSite=Lax`. Cabeçalhos forjados pelo cliente (`x-user-role`, `x-user-id`) devem ser sempre ignorados.
+1. **Autenticação e Sessões:** Senhas com `bcrypt` (12 rounds); sessões CSPRNG persistidas em `core.sessions` com cookie `HttpOnly` (`Secure; SameSite=None` quando atrás de proxy HTTPS / iframe, `SameSite=Lax` em HTTP local). Cabeçalhos forjados pelo cliente (`x-user-role`, `x-user-id`) devem ser sempre ignorados.
 2. **Proteção CSRF:** Double-Submit Cookie (`X-CSRF-Token` comparado com `crypto.timingSafeEqual`) obrigatório em todas as mutações (`POST`, `PUT`, `PATCH`, `DELETE`), avaliando `${req.baseUrl}${req.path}`. Apenas `POST /api/leads`, autenticação inicial e webhooks validados são isentos.
-3. **RBAC e Allowlist:** Toda rota interna exige `requireAuth` e `requirePermission(...)` compatível com a matriz em `server/auth/rbac.ts`. Rotas `PUT`/`PATCH` devem usar *allowlist* explícita de campos editáveis (sem *mass assignment* e sem permitir bypass do Gate A.3.2).
-4. **Webhooks Assinados:** Webhooks da Meta Cloud API exigem verificação HMAC-SHA256 (`X-Hub-Signature-256` sobre `rawBody`) quando `META_WA_APP_SECRET` estiver definido; webhooks WA-AKG exigem validação `timingSafeEqual` via `WA_AKG_API_KEY`.
+3. **RBAC e Allowlist:** Toda rota interna exige `requireAuth` e `requirePermission(...)` compatível com a matriz em `server/auth/rbac.ts` (incluindo `partners:*`, `suppliers:*` e `communication:*`). Rotas `PUT`/`PATCH` devem usar *allowlist* explícita de campos editáveis (sem *mass assignment* e sem permitir bypass do Gate A.3.2).
+4. **Webhooks Assinados & Anti-SSRF/XSS (WhatsApp):**
+   - Webhooks da Meta Cloud API exigem verificação HMAC-SHA256 (`X-Hub-Signature-256` sobre `rawBody` com `META_WA_APP_SECRET`, obrigatório em produção) e resposta `text/plain` no challenge `GET /webhooks/meta` com `timingSafeEqual` (sem token hardcoded).
+   - Webhooks WA-AKG exigem validação `timingSafeEqual` via `WA_AKG_API_KEY` (obrigatório em produção).
+   - Toda `mediaUrl` enviada ou recebida passa por validação anti-SSRF (`isSafeWhatsAppMediaUrl`), bloqueando loopback, RFC-1918, `.local`/`.internal` e metadados de nuvem (`169.254.169.254`).
+   - Chaves sensíveis de configuração de canal são sanitizadas (`sanitizeChannelConfig`) antes de qualquer resposta HTTP.
 5. **Blindagem de Produção:** Em `NODE_ENV=production`, seeds de desenvolvimento, endpoint `/api/auth/dev-credentials` e fallback em memória são terminantemente desativados. Nunca embutir senhas ou credenciais de teste no bundle do frontend.
-6. **Identificadores Canônicos:** Todas as chaves primárias e eventos de auditoria utilizam `crypto.randomUUID()`. Códigos legíveis (`OP-2026-XXXX`, `ORC-2026-XXXX`, `FIN-2026-XXXX`, `CLI-XXXX`) são gerados por sequenciadores PostgreSQL (`sequenceService`) e mantidos separados do UUID.
+6. **Identificadores Canônicos:** Todas as chaves primárias (incluindo canais, conversas e mensagens WhatsApp) e eventos de auditoria utilizam `crypto.randomUUID()`. Códigos legíveis (`OP-YYYY-XXXX`, `ORC-YYYY-XXXX`, `FIN-YYYY-XXXX`, `CLI-XXXX`, `FAC-YYYY-XXXX`, `FOR-YYYY-XXXX`, `PC-YYYY-XXXX`) são gerados por sequenciadores PostgreSQL (`sequenceService`) e mantidos separados do UUID.
 
 ### 4.3. Fluxo de Trabalho do Agente (Verificação Obrigatória)
 Ao executar modificações no código:
@@ -109,4 +146,3 @@ Ao executar modificações no código:
 - **Alçada de Preço:** A proposta técnica do PRD (Adendo B.2.5) estabelece que qualquer preço negociado abaixo do sugerido exige autorização explícita de Administrador com registro do responsável (`authorizerName`), validada no backend (`HTTP 403 DISCOUNT_REQUIRES_ADMIN_APPROVAL`). A eventual extensão dessa alçada ao gerente comercial continua pendente de decisão formal da diretoria da DE FARDAS.
 - **Comissões:** A estrutura de dados suporta cálculo de comissões, mas a ativação do cálculo automático deve permanecer desativada até assinatura da política oficial (base bruta vs. líquida de frete e regras de cancelamento).
 - **Emissão Fiscal:** Nenhuma emissão de documento fiscal (NF-e/NFS-e) deve ser automatizada em produção sem prévia homologação técnica e validação formal do contador da empresa.
-
