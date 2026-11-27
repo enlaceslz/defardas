@@ -209,9 +209,9 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
       <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full overflow-hidden border border-slate-200">
         
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
           <div className="flex items-center gap-2">
-            <Shirt className="w-5 h-5 text-blue-400" />
+            <Shirt className="w-5 h-5 text-[#E3263E]" />
             <h2 className="text-base font-bold">
               {isEditing ? `Editar Ordem de Produção [${existingOrder?.orderNumber || existingOrder?.id}]` : 'Emitir Nova Ordem de Produção (PCP)'}
             </h2>
@@ -517,7 +517,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer disabled:opacity-60"
+              className="px-5 py-2 bg-[#C8102E] text-white font-semibold rounded-lg hover:bg-[#A60D26] transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
             >
               {isSubmitting
                 ? 'Salvando...'

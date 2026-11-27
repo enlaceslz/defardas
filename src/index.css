@@ -1,26 +1,64 @@
 @import "tailwindcss";
 
+:root {
+  /* DE FARDAS Tailored Editorial Industrial Palette */
+  --df-bg-canvas: #F6F6F7;
+  --df-bg-surface: #FFFFFF;
+  --df-bg-obsidian: #111113;
+  --df-bg-obsidian-elevated: #19191D;
+  --df-ink-primary: #141416;
+  --df-ink-secondary: #52525B;
+  --df-border-hairline: #E4E4E7;
+  --df-crimson: #C8102E;
+  --df-crimson-hover: #A60D26;
+  --df-crimson-soft: rgba(200, 16, 46, 0.1);
+}
+
 @layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #f8fafc;
-    color: #0f172a;
+    background-color: var(--df-bg-canvas);
+    color: var(--df-ink-primary);
   }
-  
+
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Plus Jakarta Sans', sans-serif;
     letter-spacing: -0.02em;
   }
 
-  .font-mono, [data-tabular="true"] {
-    font-family: 'JetBrains Mono', monospace;
+  .font-mono,
+  .tabular-nums,
+  [data-tabular="true"] {
     font-variant-numeric: tabular-nums;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Global accessible focus ring in brand crimson */
+  :focus-visible {
+    outline: 2px solid var(--df-crimson);
+    outline-offset: 2px;
   }
 }
 
-/* Custom scrollbars for data tables and Kanban lanes */
+/* Safe-area utilities for installed iOS / Android PWA standalone mode */
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Refined scrollbars for data tables, Kanban lanes & dark navigation rail */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -29,40 +67,111 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #D4D4D8;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #A1A1AA;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #2E2E35;
   border-radius: 9999px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #52525B;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm;
+  }
+
+  html,
+  body,
+  #root,
+  .h-screen,
+  .min-h-screen,
+  .overflow-hidden,
+  .overflow-y-auto,
+  .overflow-x-auto {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
   body {
     background-color: white !important;
-    color: black !important;
+    color: #141416 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
+
   .no-print {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
   }
+
+  .print-modal-root {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+
+  .print-modal-card {
+    max-width: none !important;
+    width: 100% !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
   .print-page {
-    page-break-after: always;
     padding: 0 !important;
     margin: 0 !important;
     box-shadow: none !important;
     border: none !important;
+    width: 100% !important;
+  }
+
+  .print-avoid-break {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  table {
+    page-break-inside: auto !important;
+    border-collapse: collapse !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }

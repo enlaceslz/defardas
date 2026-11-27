@@ -24,6 +24,10 @@ import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
 import { diffDaysISO, getTodayISO } from '../services/productionScheduleService';
 import {
+  composeServerAddressLine,
+  sanitizeAddressGeoInput,
+} from '../services/addressMetadataService';
+import {
   FinancialTransactionEntity,
   PurchaseOrderEntity,
   PurchaseOrderItemEntity,
@@ -34,6 +38,9 @@ import {
 } from '../types/db';
 
 export const suppliersRouter = Router();
+
+// Trava em memória contra recebimentos simultâneos duplicados no mesmo Pedido de Compra
+const receivingPoIds = new Set<string>();
 
 const VALID_CATEGORIES = new Set<SupplierCategory>([
   'tecidos_malhas',
@@ -496,6 +503,22 @@ suppliersRouter.post(
 
     const todayISO = getTodayISO();
     const nowIso = new Date().toISOString();
+    const allFinance = await financeRepository.findAll();
+    const existingPayables = allFinance.filter(
+      (f) => f.type === 'pagar' && f.status !== 'estornado' && f.purchaseOrderId === po.id
+    );
+
+    // Regra de integridade financeira: não permitir cancelar PC que já possui título pago
+    if (nextStatus === 'cancelado') {
+      const paidPayables = existingPayables.filter((f) => f.status === 'pago');
+      if (paidPayables.length > 0) {
+        return res.status(409).json({
+          error: `Não é possível cancelar o Pedido de Compra ${po.poNumber} pois existem ${paidPayables.length} título(s) já pago(s) (${paidPayables.map((p) => p.transactionNumber).join(', ')}). Estorne o pagamento no Financeiro antes de cancelar.`,
+          code: 'PO_HAS_PAID_PAYABLE',
+        });
+      }
+    }
+
     const updated: PurchaseOrderEntity = {
       ...po,
       status: nextStatus,
@@ -505,10 +528,6 @@ suppliersRouter.post(
     await supplierRepository.savePurchaseOrder(updated);
 
     let createdPayable: FinancialTransactionEntity | undefined;
-    const allFinance = await financeRepository.findAll();
-    const existingPayables = allFinance.filter(
-      (f) => f.type === 'pagar' && f.status !== 'estornado' && f.purchaseOrderId === po.id
-    );
 
     // Ao confirmar o pedido, provisiona automaticamente no Financeiro se ainda não houver título vinculado
     if (
@@ -587,11 +606,27 @@ suppliersRouter.post(
   requirePermission('suppliers:receive_orders'),
   async (req: RequestWithUser, res: Response) => {
     const actor = req.user!;
-    const po = await supplierRepository.findPurchaseOrderById(req.params.poId);
+    const poId = req.params.poId;
+    if (receivingPoIds.has(poId)) {
+      return res.status(409).json({
+        error: 'Recebimento já em andamento para este Pedido de Compra. Aguarde a conclusão.',
+        code: 'PO_RECEIPT_IN_PROGRESS',
+      });
+    }
+
+    receivingPoIds.add(poId);
+    try {
+    const po = await supplierRepository.findPurchaseOrderById(poId);
     if (!po) {
       return res.status(404).json({ error: 'Pedido de Compra não encontrado.' });
     }
 
+    if (po.status === 'rascunho') {
+      return res.status(409).json({
+        error: `O Pedido de Compra ${po.poNumber} ainda está em rascunho. Envie ou confirme o pedido antes de registrar o recebimento no almoxarifado.`,
+        code: 'PO_NOT_SENT',
+      });
+    }
     if (po.status === 'cancelado') {
       return res.status(409).json({
         error: `O Pedido de Compra ${po.poNumber} está cancelado e não pode ser recebido.`,
@@ -810,6 +845,9 @@ suppliersRouter.post(
       movements: createdMovements,
       payable: linkedPayable,
     });
+    } finally {
+      receivingPoIds.delete(poId);
+    }
   }
 );
 
@@ -1009,6 +1047,13 @@ suppliersRouter.post('/', requirePermission('suppliers:manage'), async (req: Req
   const minOrderValue = round2(Math.max(0, Number(body.minOrderValue ?? 0) || 0));
   const rating = Math.min(5, Math.max(1, round2(Number(body.rating ?? 5) || 5)));
 
+  const geo = sanitizeAddressGeoInput(body);
+  const composedAddress = composeServerAddressLine(geo);
+  const resolvedAddress =
+    (typeof body.address === 'string' ? body.address.trim().slice(0, 240) : '') ||
+    composedAddress ||
+    undefined;
+
   const code = await sequenceService.nextSupplierCodeAsync();
   const nowIso = new Date().toISOString();
 
@@ -1023,10 +1068,10 @@ suppliersRouter.post('/', requirePermission('suppliers:manage'), async (req: Req
     contactName: contactName.slice(0, 120),
     phone: phone.slice(0, 30),
     email: typeof body.email === 'string' ? body.email.trim().slice(0, 150) || undefined : undefined,
-    address: typeof body.address === 'string' ? body.address.trim().slice(0, 240) || undefined : undefined,
+    ...geo,
+    address: resolvedAddress,
     city: typeof body.city === 'string' && body.city.trim() ? body.city.trim().slice(0, 80) : 'São Luís',
     state: typeof body.state === 'string' && body.state.trim() ? body.state.trim().toUpperCase().slice(0, 2) : 'MA',
-    cep: typeof body.cep === 'string' ? body.cep.trim().slice(0, 12) || undefined : undefined,
     category,
     paymentTerms:
       typeof body.paymentTerms === 'string' && body.paymentTerms.trim()
@@ -1100,6 +1145,13 @@ suppliersRouter.put('/:id', requirePermission('suppliers:manage'), async (req: R
     return res.status(400).json({ error: 'Forma de pagamento padrão inválida.' });
   }
 
+  const geo = sanitizeAddressGeoInput(body, existing);
+  const composedAddress = composeServerAddressLine(geo);
+  const resolvedAddress =
+    body.address !== undefined
+      ? String(body.address || '').trim().slice(0, 240) || composedAddress || undefined
+      : composedAddress || existing.address;
+
   const updated: SupplierEntity = {
     ...existing,
     companyName: companyName.slice(0, 180),
@@ -1112,14 +1164,13 @@ suppliersRouter.put('/:id', requirePermission('suppliers:manage'), async (req: R
     contactName: contactName.slice(0, 120),
     phone: phone.slice(0, 30),
     email: body.email !== undefined ? String(body.email || '').trim().slice(0, 150) || undefined : existing.email,
-    address:
-      body.address !== undefined ? String(body.address || '').trim().slice(0, 240) || undefined : existing.address,
+    ...geo,
+    address: resolvedAddress,
     city: body.city !== undefined ? String(body.city || '').trim().slice(0, 80) || existing.city : existing.city,
     state:
       body.state !== undefined
         ? String(body.state || '').trim().toUpperCase().slice(0, 2) || existing.state
         : existing.state,
-    cep: body.cep !== undefined ? String(body.cep || '').trim().slice(0, 12) || undefined : existing.cep,
     category,
     paymentTerms:
       body.paymentTerms !== undefined

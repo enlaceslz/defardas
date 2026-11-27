@@ -4,6 +4,7 @@
  */
 import 'dotenv/config';
 import express from 'express';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
@@ -17,11 +18,19 @@ const isProd = process.env.NODE_ENV === 'production';
 
 async function bootstrap() {
   const app = createApiApp();
+  const httpServer = http.createServer(app);
 
   // Integração com Vite: Middleware Mode em desenvolvimento
   if (!isProd) {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true, allowedHosts: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: true,
+        ws: { server: httpServer },
+        hmr: isHmrDisabled ? false : true,
+        watch: isHmrDisabled ? null : undefined,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -35,7 +44,7 @@ async function bootstrap() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 [DE FARDAS ERP] Servidor ouvindo em http://0.0.0.0:${PORT}`);
   });
 }

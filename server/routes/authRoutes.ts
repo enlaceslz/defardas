@@ -17,6 +17,17 @@ export const authRouter = Router();
 
 const isProd = process.env.NODE_ENV === 'production';
 
+// Hash bcrypt sintético (12 rounds) usado para mitigar enumeração de contas por tempo de resposta
+const DUMMY_PASSWORD_HASH =
+  '$2b$12$C6UzMDM.H6dfI/f/IKxGhu5l2T2bH5v2E8S2yY8w7g8uK9oV6bO5W';
+
+// Impede que navegadores ou proxies intermediários façam cache de respostas de autenticação
+authRouter.use((_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+});
+
 function getCookieSecurityOptions(req: RequestWithUser) {
   const isHttpsRequest =
     req.secure ||
@@ -51,25 +62,37 @@ authRouter.get('/csrf-token', (req, res) => {
  * Realiza autenticação com credenciais reais protegida por rate limiting
  */
 authRouter.post('/login', authRateLimiter, async (req: RequestWithUser, res: Response) => {
-  const { email, password } = req.body;
+  const rawEmail = req.body?.email;
+  const rawPassword = req.body?.password;
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const userAgent = req.headers['user-agent'] || 'unknown';
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
+  if (
+    typeof rawEmail !== 'string' ||
+    typeof rawPassword !== 'string' ||
+    !rawEmail.trim() ||
+    !rawPassword ||
+    rawEmail.length > 254 ||
+    rawPassword.length > 128
+  ) {
+    return res.status(400).json({ error: 'Informe um e-mail e uma senha válidos.' });
   }
+
+  const email = rawEmail.trim().toLowerCase();
+  const password = rawPassword;
 
   await db.ensureReady();
   if (isProd && !db.isConnected()) {
     return res.status(503).json({
       error:
-        'Banco de dados PostgreSQL não conectado em produção. Configure a variável DATABASE_URL no ambiente e execute as migrações Drizzle (npm run db:migrate).',
+        'Serviço temporariamente indisponível. Tente novamente em alguns instantes.',
       code: 'DATABASE_UNAVAILABLE',
     });
   }
 
   const user = await userRepository.findByEmail(email);
   if (!user) {
+    await PasswordService.comparePassword(password, DUMMY_PASSWORD_HASH);
     auditService.log({
       actorName: email,
       actorRole: 'unauthenticated',
@@ -242,11 +265,12 @@ authRouter.get('/dev-credentials', (_req: RequestWithUser, res: Response) => {
  * Gera token seguro para recuperação de senha sem enumerar contas
  */
 authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: RequestWithUser, res: Response) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).json({ error: 'Informe o e-mail cadastrado.' });
+  const rawEmail = req.body?.email;
+  if (typeof rawEmail !== 'string' || !rawEmail.trim() || rawEmail.length > 254) {
+    return res.status(400).json({ error: 'Informe um e-mail cadastrado válido.' });
   }
 
+  const email = rawEmail.trim().toLowerCase();
   const user = await userRepository.findByEmail(email);
   if (user) {
     const resetToken = userRepository.createPasswordResetToken(user.id, user.email);
@@ -282,11 +306,22 @@ authRouter.post('/recover-password', passwordRecoveryRateLimiter, async (req: Re
  * POST /api/auth/reset-password
  * Redefine a senha utilizando token válido
  */
-authRouter.post('/reset-password', async (req: RequestWithUser, res: Response) => {
-  const { token, newPassword } = req.body;
-  if (!token || !newPassword) {
-    return res.status(400).json({ error: 'Token e nova senha são obrigatórios.' });
+authRouter.post('/reset-password', passwordRecoveryRateLimiter, async (req: RequestWithUser, res: Response) => {
+  const rawToken = req.body?.token;
+  const rawNewPassword = req.body?.newPassword;
+  if (
+    typeof rawToken !== 'string' ||
+    typeof rawNewPassword !== 'string' ||
+    !rawToken.trim() ||
+    !rawNewPassword ||
+    rawToken.length > 256 ||
+    rawNewPassword.length > 128
+  ) {
+    return res.status(400).json({ error: 'Código de recuperação e nova senha são obrigatórios.' });
   }
+
+  const token = rawToken.trim();
+  const newPassword = rawNewPassword;
 
   const strength = PasswordService.validatePasswordStrength(newPassword);
   if (!strength.valid) {
@@ -362,9 +397,7 @@ authRouter.post('/switch-role', requireAuth, async (req: RequestWithUser, res: R
 
   res.cookie('defardas_session', newSession.token, {
     httpOnly: true,
-    secure: false,
-    sameSite: 'lax',
-    path: '/',
+    ...getCookieSecurityOptions(req),
     maxAge: 8 * 60 * 60 * 1000,
   });
 

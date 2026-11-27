@@ -247,7 +247,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({
           <button
             type="button"
             onClick={onOpenNewQuoteModal}
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 shadow-sm transition-colors cursor-pointer self-start sm:self-auto"
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#C8102E] rounded-lg hover:bg-[#A60D26] shadow-sm transition-colors cursor-pointer self-start sm:self-auto whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
             <span>Nova Proposta Comercial</span>
@@ -592,7 +592,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({
                               setConvertingId(null);
                             }
                           }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-60"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold text-white bg-[#C8102E] hover:bg-[#A60D26] rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
                           title="Converter de forma idempotente em Ordem de Produção no PCP"
                         >
                           {isConverting ? (
@@ -766,7 +766,7 @@ export const QuotesView: React.FC<QuotesViewProps> = ({
       {approvalModalQuote && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+            <div className="px-6 py-4 bg-[#111113] text-white flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                 <div>

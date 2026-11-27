@@ -38,6 +38,8 @@ export interface AuditLogEntity {
   createdAt: string;
 }
 
+export type GeoPrecision = 'numero' | 'logradouro' | 'cep' | 'cidade' | 'manual';
+
 export interface ClientEntity {
   id: string;
   code: string; // Ex: CLI-2026-0201
@@ -48,9 +50,18 @@ export interface ClientEntity {
   contactName: string;
   phone: string;
   email: string;
+  cep?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
   address: string;
   city: string;
   state: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
   segment: string;
   standardUniformNotes?: string;
   totalOrdersCount: number;
@@ -406,9 +417,17 @@ export interface PartnerEntity {
   phone: string;
   email?: string;
   address?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
   city: string;
   state?: string;
   cep?: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
   partnerType: PartnerServiceCategory;
   capacityPiecesPerMonth?: string;
   defaultCostPerPiece?: number;
@@ -458,9 +477,17 @@ export interface SupplierEntity {
   phone: string;
   email?: string;
   address?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
   city: string;
   state: string;
   cep?: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
   category: SupplierCategory;
   paymentTerms: string;
   paymentTermsDays: number;

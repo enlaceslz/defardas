@@ -364,7 +364,12 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
   const cleanEvidenceUrl = typeof receiptEvidenceUrl === 'string' ? receiptEvidenceUrl.trim() : '';
 
   // Invariante P0-004 / AUD-05: Rejeitar dados fictícios e exigir comprovante real
-  if (cleanVoucher.length < 4 || FORBIDDEN_PLACEHOLDER_VOUCHERS.has(cleanVoucher.toLowerCase())) {
+  const lowerVoucher = cleanVoucher.toLowerCase();
+  const isPlaceholderPattern =
+    FORBIDDEN_PLACEHOLDER_VOUCHERS.has(lowerVoucher) ||
+    /^(teste|test|fake|mock|dummy|exemplo|asdf|xxxx|abcd)[-_.\s0-9]*$/i.test(lowerVoucher) ||
+    /^([0-9a-z])\1{3,}$/i.test(lowerVoucher);
+  if (cleanVoucher.length < 4 || isPlaceholderPattern) {
     return res.status(422).json({
       error: 'Invariante violada: Informe um código de autenticação bancária real (mínimo 4 caracteres; valores genéricos/fictícios são rejeitados).',
     });
@@ -451,7 +456,8 @@ financeRouter.post('/transactions/:id/confirm-payment', requirePermission('finan
           notes: `Sinal de 50% confirmado com comprovante ${trx.receiptVoucherNumber}. Portão de pagamento da OP ${order.orderNumber} liberado com sucesso!`,
         });
       } else if (trx.subType === 'saldo_entrega') {
-        if (allSettled) {
+        // Só marca OP como 'quitado' se o sinal de 50% também estiver efetivamente confirmado (integridade Gate A.3.2)
+        if (allSettled && order.entryPaymentConfirmed) {
           order.financialStatus = 'quitado';
           order.updatedAt = new Date().toISOString();
           await orderRepository.save(order);

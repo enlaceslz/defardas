@@ -1,418 +1,391 @@
-import React from 'react';
-import { X, Printer, BarChart3, Wallet } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
 import {
+  X,
+  Printer,
+  BarChart3,
+  Wallet,
+  Share2,
+  Download,
+  FileSpreadsheet,
+} from 'lucide-react';
+import {
+  Client,
   CompanyProfile,
   FinancialTransaction,
   InventoryItem,
+  Partner,
   ProductionOrder,
   Quote,
+  ReportSnapshot,
+  Supplier,
 } from '../types/erp';
-import { formatCurrencyBRL, formatDateBR, getStageLabel } from '../utils/formatters';
+import { DEFAULT_BRAND_LOGO_URL } from '../data/initialData';
+import {
+  buildReportSnapshot,
+  createDefaultReportFilters,
+  downloadSnapshotAsCsv,
+} from '../utils/reportBuilder';
+import { useAuth } from '../api/authContext';
+import { WhatsAppReportShareModal } from './WhatsAppReportShareModal';
 
 interface PrintReportModalProps {
-  mode: 'executive' | 'financial';
+  /** Snapshot completo gerado pelo módulo de Relatórios */
+  snapshot?: ReportSnapshot;
+  /** Modo simplificado legado (Painel Executivo / Financeiro) */
+  mode?: 'executive' | 'financial';
   profile: CompanyProfile;
   orders?: ProductionOrder[];
   quotes?: Quote[];
   inventory?: InventoryItem[];
   transactions?: FinancialTransaction[];
+  clients?: Client[];
+  partners?: Partner[];
+  suppliers?: Supplier[];
   filterSummary?: string;
   generatedBy?: string;
+  onSendViaCentralWhatsApp?: (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => Promise<void> | void;
   onClose: () => void;
 }
 
+const KPI_TONE_STYLES: Record<string, string> = {
+  neutral: 'text-zinc-900',
+  crimson: 'text-[#C8102E]',
+  emerald: 'text-emerald-700',
+  amber: 'text-amber-700',
+  rose: 'text-rose-700',
+};
+
 export const PrintReportModal: React.FC<PrintReportModalProps> = ({
-  mode,
+  snapshot: externalSnapshot,
+  mode = 'executive',
   profile,
   orders = [],
   quotes = [],
   inventory = [],
   transactions = [],
+  clients = [],
+  partners = [],
+  suppliers = [],
   filterSummary,
   generatedBy,
+  onSendViaCentralWhatsApp,
   onClose,
 }) => {
-  const now = new Date();
-  const generatedDate = now.toLocaleDateString('pt-BR');
-  const generatedTime = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const { user } = useAuth();
+  const role = user?.role || '';
+  const canViewFinance = ['admin', 'financeiro', 'gerente_comercial'].includes(role);
+  const canViewQuotes = ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role);
+  const canViewWhatsApp = ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role);
 
-  // Executive metrics
-  const activeOrders = orders.filter((o) => o.stage !== 'entregue');
-  const blockedOrders = activeOrders.filter((o) => !o.canStartProduction);
-  const totalPiecesActive = activeOrders.reduce((sum, o) => sum + o.totalPieces, 0);
-  const monthlyCapacity = Math.max(1, profile.productionCapacityPiecesMonth || 5000);
-  const capacityPercent = Math.min(100, Math.round((totalPiecesActive / monthlyCapacity) * 100));
-  const lowStockItems = inventory.filter((i) => i.currentStock <= i.minStock);
-  const openQuotes = quotes.filter((q) => ['enviado', 'em_negociacao', 'aprovado'].includes(q.status));
-  const openQuotesAmount = openQuotes.reduce((sum, q) => sum + q.totalAmount, 0);
+  const [isShareOpen, setIsShareOpen] = useState(false);
 
-  // Financial metrics (exclude reversed from operational balances)
-  const activeFin = transactions.filter((t) => t.status !== 'estornado');
-  const totalReceberOpen = activeFin
-    .filter((t) => t.type === 'receber' && (t.status === 'pendente' || t.status === 'atrasado'))
-    .reduce((sum, t) => sum + t.amount, 0);
-  const totalPagarOpen = activeFin
-    .filter((t) => t.type === 'pagar' && (t.status === 'pendente' || t.status === 'atrasado'))
-    .reduce((sum, t) => sum + t.amount, 0);
-  const totalReceived = activeFin
-    .filter((t) => t.type === 'receber' && t.status === 'pago')
-    .reduce((sum, t) => sum + t.amount, 0);
-  const totalPaid = activeFin
-    .filter((t) => t.type === 'pagar' && t.status === 'pago')
-    .reduce((sum, t) => sum + t.amount, 0);
-  const realizedCash = totalReceived - totalPaid;
-  const projectedBalance = realizedCash + totalReceberOpen - totalPagarOpen;
+  const snapshot = useMemo<ReportSnapshot>(() => {
+    if (externalSnapshot) return externalSnapshot;
 
-  const title =
-    mode === 'financial'
-      ? 'Relatório Financeiro & Fluxo de Caixa'
-      : 'Relatório Executivo de Produção, Comercial & Estoque';
+    const filters = createDefaultReportFilters(mode === 'financial' ? 'financeiro' : 'executivo');
+    const built = buildReportSnapshot(
+      filters,
+      {
+        profile,
+        orders,
+        quotes,
+        inventory,
+        movements: [],
+        transactions,
+        clients,
+        leads: [],
+        partners,
+        partnerCustody: [],
+        partnerForecast: null,
+        suppliers,
+        purchaseOrders: [],
+      },
+      {
+        canViewFinance,
+        canViewQuotes,
+        canViewLeads: false,
+        canViewPartners: false,
+        canViewSuppliers: false,
+        canViewWhatsApp,
+      },
+      generatedBy || user?.fullName || 'Usuário ERP'
+    );
 
-  const reportCode =
-    mode === 'financial'
-      ? `REL-FIN-${now.toISOString().slice(0, 10).replace(/-/g, '')}`
-      : `REL-GER-${now.toISOString().slice(0, 10).replace(/-/g, '')}`;
+    if (filterSummary) {
+      built.filterSummary = filterSummary;
+    }
+    return built;
+  }, [
+    externalSnapshot,
+    mode,
+    profile,
+    orders,
+    quotes,
+    inventory,
+    transactions,
+    clients,
+    partners,
+    suppliers,
+    filterSummary,
+    generatedBy,
+    user?.fullName,
+    canViewFinance,
+    canViewQuotes,
+    canViewWhatsApp,
+  ]);
+
+  const generatedDateObj = new Date(snapshot.generatedAt);
+  const generatedDate = generatedDateObj.toLocaleDateString('pt-BR');
+  const generatedTime = generatedDateObj.toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/65 backdrop-blur-xs flex items-start justify-center p-2 sm:p-4 print-modal-root">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full overflow-hidden border border-zinc-200 my-2 sm:my-4 print-modal-card">
         {/* Toolbar (hidden when printing) */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white no-print">
-          <div className="flex items-center gap-2">
-            {mode === 'financial' ? (
-              <Wallet className="w-4 h-4 text-emerald-400" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3.5 bg-[#111113] text-white no-print">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {snapshot.reportType === 'financeiro' ? (
+              <Wallet className="w-4 h-4 text-emerald-400 shrink-0" />
             ) : (
-              <BarChart3 className="w-4 h-4 text-blue-400" />
+              <BarChart3 className="w-4 h-4 text-[#E3263E] shrink-0" />
             )}
-            <span className="text-sm font-bold">{title}</span>
-            <span className="text-xs text-slate-400 font-mono">[{reportCode}]</span>
+            <span className="text-xs sm:text-sm font-bold truncate">{snapshot.title}</span>
+            <span className="hidden md:inline text-[11px] text-zinc-400 font-mono shrink-0">
+              [{snapshot.reportCode}]
+            </span>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+            <button
+              type="button"
+              onClick={() => downloadSnapshotAsCsv(snapshot)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              title="Baixar planilha CSV compatível com Excel"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">CSV</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsShareOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>Link WhatsApp</span>
+            </button>
+
             <button
               type="button"
               onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 rounded-lg shadow-sm transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-zinc-900 bg-white hover:bg-zinc-100 rounded-lg shadow-sm transition-colors cursor-pointer whitespace-nowrap"
             >
-              <Printer className="w-4 h-4" />
-              <span>Imprimir / Salvar PDF (Ctrl+P)</span>
+              <Printer className="w-3.5 h-3.5 text-[#C8102E]" />
+              <span>Imprimir / PDF (Ctrl+P)</span>
             </button>
+
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
-              aria-label="Fechar relatório"
+              className="p-1.5 text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+              aria-label="Fechar pré-visualização do relatório"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Printable Report Page */}
-        <div className="p-8 sm:p-10 space-y-6 text-slate-900 bg-white print-page text-xs">
-          {/* Institutional Letterhead with Logo */}
-          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b-2 border-slate-900 pb-5 gap-4">
+        {/* Printable A4 Report Page */}
+        <div className="p-6 sm:p-10 space-y-6 text-zinc-900 bg-white print-page text-xs">
+          {/* Institutional Letterhead with Official DE FARDAS Logo */}
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b-2 border-[#111113] pb-5 gap-4 print-avoid-break">
             <div className="flex items-start gap-4">
-              {profile.logoUrl && (
-                <div className="shrink-0 flex items-center justify-center bg-white border border-slate-200 rounded-lg p-2 max-w-[140px] max-h-[72px]">
-                  <img
-                    src={profile.logoUrl}
-                    alt={`Logomarca ${profile.tradeName}`}
-                    className="max-h-14 max-w-[124px] w-auto object-contain"
-                  />
-                </div>
-              )}
+              <div className="shrink-0 flex items-center justify-center bg-white border border-zinc-200 rounded-xl p-2 max-w-[140px] max-h-[76px]">
+                <img
+                  src={snapshot.company.logoUrl || DEFAULT_BRAND_LOGO_URL}
+                  alt={`Logomarca ${snapshot.company.tradeName}`}
+                  className="max-h-14 max-w-[124px] w-auto object-contain"
+                />
+              </div>
               <div>
-                <div className="text-xl font-black tracking-tight text-slate-900">
-                  {profile.tradeName}
+                <div className="text-xl font-black tracking-tight text-zinc-950">
+                  {snapshot.company.tradeName}
                 </div>
-                <div className="text-xs text-slate-600 font-mono mt-0.5">
-                  {profile.name} · CNPJ: {profile.cnpj} {profile.ie ? `· I.E.: ${profile.ie}` : ''}
+                <div className="text-[11px] text-zinc-600 font-mono mt-0.5">
+                  {snapshot.company.name} · CNPJ: {snapshot.company.cnpj}
+                  {snapshot.company.ie ? ` · I.E.: ${snapshot.company.ie}` : ''}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  {profile.address}
-                  {profile.neighborhood ? ` - ${profile.neighborhood}` : ''}, {profile.city}/{profile.state} · CEP:{' '}
-                  {profile.cep}
+                <div className="text-[11px] text-zinc-500 mt-0.5">
+                  {snapshot.company.address}
+                  {snapshot.company.neighborhood ? ` - ${snapshot.company.neighborhood}` : ''},{' '}
+                  {snapshot.company.city}/{snapshot.company.state} · CEP: {snapshot.company.cep}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  Tel/WhatsApp: {profile.phone} · E-mail: {profile.email}
+                <div className="text-[11px] text-zinc-500 mt-0.5">
+                  Tel/WhatsApp: {snapshot.company.phone} · E-mail: {snapshot.company.email}
                 </div>
               </div>
             </div>
 
-            <div className="text-left sm:text-right shrink-0">
-              <div className="text-[11px] uppercase font-bold text-slate-500 tracking-wider">
-                Relatório Gerencial Oficial
+            <div className="text-left sm:text-right shrink-0 sm:max-w-[320px]">
+              <div className="inline-block px-2 py-0.5 rounded bg-[#111113] text-white text-[10px] font-bold uppercase tracking-wider">
+                Relatório Oficial Auditável
               </div>
-              <div className="text-lg font-black text-blue-700 mt-0.5">{title}</div>
-              <div className="text-xs text-slate-600 font-mono mt-1">
-                Código: {reportCode} · Emissão: {generatedDate} às {generatedTime}
+              <div className="text-base sm:text-lg font-black text-[#C8102E] mt-1 leading-tight">
+                {snapshot.title}
               </div>
-              {generatedBy && (
-                <div className="text-[11px] text-slate-500 mt-0.5">
-                  Emitido por: <span className="font-semibold text-slate-800">{generatedBy}</span>
+              <div className="text-[11px] text-zinc-600 font-mono mt-1 tabular-nums">
+                Código: {snapshot.reportCode} · {generatedDate} às {generatedTime}
+              </div>
+              {snapshot.generatedBy && (
+                <div className="text-[11px] text-zinc-500 mt-0.5">
+                  Emitido por: <span className="font-semibold text-zinc-800">{snapshot.generatedBy}</span>
                 </div>
               )}
             </div>
           </div>
 
-          {filterSummary && (
-            <div className="px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600">
-              <strong className="text-slate-800">Escopo / Filtros Aplicados:</strong> {filterSummary}
+          {/* Filter Scope Banner */}
+          <div className="px-3.5 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-[11px] text-zinc-600 print-avoid-break">
+            <strong className="text-zinc-900">Escopo &amp; Filtros Aplicados:</strong>{' '}
+            {snapshot.filterSummary || 'Todos os registros'}
+          </div>
+
+          {/* KPI Cards */}
+          {snapshot.kpis.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 print-avoid-break">
+              {snapshot.kpis.map((kpi, idx) => (
+                <div key={idx} className="p-3.5 bg-zinc-50/90 border border-zinc-200 rounded-xl">
+                  <div className="text-[11px] text-zinc-500 font-semibold">{kpi.label}</div>
+                  <div
+                    className={`text-base font-black font-mono tabular-nums mt-1 ${
+                      KPI_TONE_STYLES[kpi.tone || 'neutral'] || 'text-zinc-900'
+                    }`}
+                  >
+                    {kpi.value}
+                  </div>
+                  {kpi.sublabel && (
+                    <div className="text-[10px] text-zinc-500 mt-0.5 leading-snug">{kpi.sublabel}</div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
-          {/* Mode: Financial Report */}
-          {mode === 'financial' ? (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">A Receber (Em Aberto)</div>
-                  <div className="text-base font-black font-mono text-emerald-700 mt-1">
-                    {formatCurrencyBRL(totalReceberOpen)}
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">A Pagar (Em Aberto)</div>
-                  <div className="text-base font-black font-mono text-rose-700 mt-1">
-                    {formatCurrencyBRL(totalPagarOpen)}
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">Caixa Realizado Líquido</div>
-                  <div className={`text-base font-black font-mono mt-1 ${realizedCash >= 0 ? 'text-slate-900' : 'text-rose-700'}`}>
-                    {formatCurrencyBRL(realizedCash)}
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">Saldo Projetado Final</div>
-                  <div className={`text-base font-black font-mono mt-1 ${projectedBalance >= 0 ? 'text-blue-700' : 'text-rose-700'}`}>
-                    {formatCurrencyBRL(projectedBalance)}
-                  </div>
-                </div>
+          {/* Sections & Tables */}
+          {snapshot.sections.map((section) => (
+            <div key={section.id} className="border border-zinc-200 rounded-xl overflow-hidden">
+              <div className="bg-zinc-100 px-4 py-2.5 font-bold uppercase tracking-wider text-[11px] text-zinc-800 border-b border-zinc-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <span>{section.title}</span>
+                {section.summaryRight && (
+                  <span className="font-mono text-zinc-700 normal-case">{section.summaryRight}</span>
+                )}
               </div>
 
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <div className="bg-slate-100 px-4 py-2 font-bold uppercase tracking-wider text-slate-700 border-b border-slate-200 flex justify-between">
-                  <span>Detalhamento de Lançamentos ({transactions.length} registros)</span>
-                  <span className="font-mono text-slate-600">
-                    Entradas Liquidadas: {formatCurrencyBRL(totalReceived)} · Saídas Liquidadas: {formatCurrencyBRL(totalPaid)}
-                  </span>
-                </div>
-                <table className="w-full text-left border-collapse">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-[11px]">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
-                      <th className="py-2 px-3">Nº Título</th>
-                      <th className="py-2 px-3">Tipo</th>
-                      <th className="py-2 px-3">Descrição / Ref.</th>
-                      <th className="py-2 px-3">Vencimento</th>
-                      <th className="py-2 px-3">Forma</th>
-                      <th className="py-2 px-3">Status</th>
-                      <th className="py-2 px-3 text-right">Valor (R$)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {transactions.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="py-6 text-center text-slate-400">
-                          Nenhum lançamento financeiro no escopo selecionado.
-                        </td>
-                      </tr>
-                    ) : (
-                      transactions.map((t) => (
-                        <tr key={t.id} className={t.status === 'estornado' ? 'text-slate-400 line-through' : ''}>
-                          <td className="py-2 px-3 font-mono text-[11px]">{t.transactionNumber || t.id.slice(0, 8)}</td>
-                          <td className="py-2 px-3 font-semibold">{t.type === 'receber' ? 'Receber' : 'Pagar'}</td>
-                          <td className="py-2 px-3">
-                            <div className="font-semibold text-slate-900">{t.description}</div>
-                            {t.referenceId && (
-                              <span className="text-[10px] font-mono text-blue-700">Ref: {t.referenceId}</span>
-                            )}
-                          </td>
-                          <td className="py-2 px-3 font-mono">{formatDateBR(t.dueDate)}</td>
-                          <td className="py-2 px-3 uppercase font-mono text-[11px]">{t.paymentMethod}</td>
-                          <td className="py-2 px-3 uppercase font-semibold text-[11px]">{t.status}</td>
-                          <td className="py-2 px-3 text-right font-mono font-bold">
-                            {formatCurrencyBRL(t.amount)}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          ) : (
-            /* Mode: Executive Production & Commercial Report */
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">OPs Ativas no Chão de Fábrica</div>
-                  <div className="text-base font-black font-mono text-slate-900 mt-1">
-                    {activeOrders.length} OPs ({totalPiecesActive} pçs)
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">
-                    {blockedOrders.length} bloqueada(s) pelo Gate A.3.2
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">Ocupação da Capacidade Mensal</div>
-                  <div className="text-base font-black font-mono text-blue-700 mt-1">{capacityPercent}%</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">
-                    Meta: {monthlyCapacity.toLocaleString('pt-BR')} pçs/mês
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">Carteira de Propostas Abertas</div>
-                  <div className="text-base font-black font-mono text-emerald-700 mt-1">
-                    {formatCurrencyBRL(openQuotesAmount)}
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">{openQuotes.length} proposta(s) em aberto</div>
-                </div>
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className="text-[11px] text-slate-500 font-semibold">Alertas de Estoque Crítico</div>
-                  <div className={`text-base font-black font-mono mt-1 ${lowStockItems.length > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
-                    {lowStockItems.length} item(ns)
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">
-                    De {inventory.length} insumos cadastrados
-                  </div>
-                </div>
-              </div>
-
-              {/* Active Production Orders */}
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <div className="bg-slate-100 px-4 py-2 font-bold uppercase tracking-wider text-slate-700 border-b border-slate-200">
-                  1. Ordens de Produção Ativas ({activeOrders.length})
-                </div>
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
-                      <th className="py-2 px-3">OP</th>
-                      <th className="py-2 px-3">Cliente</th>
-                      <th className="py-2 px-3">Modelo / Tecido</th>
-                      <th className="py-2 px-3 text-right">Qtd</th>
-                      <th className="py-2 px-3">Estágio</th>
-                      <th className="py-2 px-3">Gate A.3.2</th>
-                      <th className="py-2 px-3">Entrega</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {activeOrders.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="py-4 text-center text-slate-400">
-                          Nenhuma ordem de produção ativa no momento.
-                        </td>
-                      </tr>
-                    ) : (
-                      activeOrders.map((o) => (
-                        <tr key={o.id}>
-                          <td className="py-2 px-3 font-mono font-bold text-blue-700">{o.orderNumber || o.id}</td>
-                          <td className="py-2 px-3 font-semibold text-slate-900">{o.clientName}</td>
-                          <td className="py-2 px-3">
-                            <div>{o.itemTitle}</div>
-                            <div className="text-[10px] text-slate-500">
-                              {o.fabricName} · {o.fabricColor}
-                            </div>
-                          </td>
-                          <td className="py-2 px-3 text-right font-mono font-bold">{o.totalPieces}</td>
-                          <td className="py-2 px-3">{getStageLabel(o.stage)}</td>
-                          <td className="py-2 px-3">
-                            {o.canStartProduction ? (
-                              <span className="font-semibold text-emerald-700">Liberado</span>
-                            ) : (
-                              <span className="font-semibold text-rose-700">Bloqueado</span>
-                            )}
-                          </td>
-                          <td className="py-2 px-3 font-mono">{formatDateBR(o.targetDeliveryDate)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Critical Inventory Section */}
-              {lowStockItems.length > 0 && (
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
-                  <div className="bg-rose-50 px-4 py-2 font-bold uppercase tracking-wider text-rose-900 border-b border-rose-200">
-                    2. Insumos Abaixo do Estoque Mínimo ({lowStockItems.length})
-                  </div>
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
-                        <th className="py-2 px-3">Código</th>
-                        <th className="py-2 px-3">Material</th>
-                        <th className="py-2 px-3">Fornecedor</th>
-                        <th className="py-2 px-3 text-right">Saldo Próprio</th>
-                        <th className="py-2 px-3 text-right">Em Terceiros</th>
-                        <th className="py-2 px-3 text-right">Mínimo</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {lowStockItems.map((item) => (
-                        <tr key={item.id}>
-                          <td className="py-2 px-3 font-mono">{item.code}</td>
-                          <td className="py-2 px-3 font-semibold text-slate-900">{item.name}</td>
-                          <td className="py-2 px-3 text-slate-600">{item.supplier}</td>
-                          <td className="py-2 px-3 text-right font-mono font-bold text-rose-700">
-                            {item.currentStock} {item.unit}
-                          </td>
-                          <td className="py-2 px-3 text-right font-mono text-slate-700">
-                            {item.inPartnersCustodyStock ?? 0} {item.unit}
-                          </td>
-                          <td className="py-2 px-3 text-right font-mono">
-                            {item.minStock} {item.unit}
-                          </td>
-                        </tr>
+                    <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-600 font-bold">
+                      {section.columns.map((col) => (
+                        <th
+                          key={col.key}
+                          className={`py-2 px-3 ${
+                            col.align === 'right'
+                              ? 'text-right'
+                              : col.align === 'center'
+                                ? 'text-center'
+                                : 'text-left'
+                          }`}
+                        >
+                          {col.label}
+                        </th>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200">
+                    {section.rows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={section.columns.length}
+                          className="py-6 text-center text-zinc-400"
+                        >
+                          {section.emptyMessage || 'Nenhum registro neste escopo.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      section.rows.map((row, rowIdx) => (
+                        <tr key={rowIdx} className="hover:bg-zinc-50/70">
+                          {section.columns.map((col) => (
+                            <td
+                              key={col.key}
+                              className={`py-2 px-3 align-top ${
+                                col.align === 'right'
+                                  ? 'text-right'
+                                  : col.align === 'center'
+                                    ? 'text-center'
+                                    : 'text-left'
+                              } ${col.mono ? 'font-mono tabular-nums' : ''}`}
+                            >
+                              {row[col.key] ?? '-'}
+                            </td>
+                          ))}
+                        </tr>
+                      ))
+                    )}
+                    {section.totalsRow && section.rows.length > 0 && (
+                      <tr className="bg-zinc-100/90 border-t-2 border-zinc-300 font-bold text-zinc-950">
+                        {section.columns.map((col) => (
+                          <td
+                            key={col.key}
+                            className={`py-2.5 px-3 ${
+                              col.align === 'right'
+                                ? 'text-right'
+                                : col.align === 'center'
+                                  ? 'text-center'
+                                  : 'text-left'
+                            } ${col.mono ? 'font-mono tabular-nums' : ''}`}
+                          >
+                            {section.totalsRow?.[col.key] ?? ''}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
 
-              {/* Consolidated Financial Snapshot when provided */}
-              {transactions.length > 0 && (
-                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-slate-500">Caixa Realizado</div>
-                    <div className="font-mono font-bold text-sm text-slate-900 mt-0.5">
-                      {formatCurrencyBRL(realizedCash)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-slate-500">A Receber Aberto</div>
-                    <div className="font-mono font-bold text-sm text-emerald-700 mt-0.5">
-                      {formatCurrencyBRL(totalReceberOpen)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-slate-500">A Pagar Aberto</div>
-                    <div className="font-mono font-bold text-sm text-rose-700 mt-0.5">
-                      {formatCurrencyBRL(totalPagarOpen)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-slate-500">Saldo Projetado</div>
-                    <div className="font-mono font-bold text-sm text-blue-700 mt-0.5">
-                      {formatCurrencyBRL(projectedBalance)}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Footer */}
-          <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-slate-500">
+          {/* Institutional Footer */}
+          <div className="pt-4 border-t border-zinc-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-zinc-500 print-avoid-break">
             <span>
-              Documento gerado pelo sistema ERP {profile.tradeName} · {profile.city}/{profile.state}
+              Documento gerado pelo sistema ERP {snapshot.company.tradeName} · {snapshot.company.city}/
+              {snapshot.company.state}
             </span>
-            <span className="font-mono">
-              {reportCode} · {generatedDate} {generatedTime}
+            <span className="font-mono tabular-nums">
+              {snapshot.reportCode} · {generatedDate} {generatedTime}
             </span>
           </div>
         </div>
       </div>
+
+      {isShareOpen && (
+        <WhatsAppReportShareModal
+          snapshot={snapshot}
+          clients={clients}
+          partners={partners}
+          suppliers={suppliers}
+          canSendViaCentral={canViewWhatsApp}
+          onSendViaCentralWhatsApp={onSendViaCentralWhatsApp}
+          onClose={() => setIsShareOpen(false)}
+        />
+      )}
     </div>
   );
 };

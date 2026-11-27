@@ -453,9 +453,9 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full overflow-hidden border border-slate-200">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
           <div className="flex items-center gap-2.5">
-            <FileText className="w-5 h-5 text-blue-400" />
+            <FileText className="w-5 h-5 text-[#E3263E]" />
             <div>
               <h2 className="text-base font-bold">
                 {isEdit
@@ -1054,7 +1054,7 @@ export const NewQuoteModal: React.FC<NewQuoteModalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 transition-colors shadow-sm cursor-pointer disabled:opacity-60"
+              className="inline-flex items-center gap-2 px-5 py-2 bg-[#C8102E] text-white font-semibold rounded-lg hover:bg-[#A60D26] transition-colors shadow-sm cursor-pointer disabled:opacity-60 whitespace-nowrap"
             >
               {isSubmitting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />

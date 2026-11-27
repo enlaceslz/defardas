@@ -26,8 +26,11 @@ import {
   AlertTriangle,
   Eye,
   Loader2,
+  Navigation,
 } from 'lucide-react';
 import {
+  CompanyProfile,
+  LocationSharePayload,
   Partner,
   PartnerCustody,
   PartnerDetailResponse,
@@ -37,19 +40,28 @@ import {
   EnrichedPartnerOrder,
   InventoryItem,
   ProductionOrder,
+  StructuredAddressValue,
 } from '../types/erp';
 import { formatCurrencyBRL, formatDateBR, getStageLabel } from '../utils/formatters';
 import {
   CnpjLookupInput,
-  CepLookupInput,
   PhoneInputBR,
   CurrencyInput,
   DateInputBR,
   CnpjAutoFillData,
-  CepAutoFillData,
 } from './FormInputs';
 import { useAuth } from '../api/authContext';
 import { api } from '../api/client';
+import { initialCompanyProfile } from '../data/initialData';
+import {
+  applyCnpjAddressUpdate,
+  buildEntityLocationPayload,
+  buildStructuredAddressFromEntity,
+  composeAddressLine,
+  isValidCoordinates,
+} from '../utils/addressUtils';
+import { StructuredAddressFieldset } from './StructuredAddressFieldset';
+import { WhatsAppLocationShareModal } from './WhatsAppLocationShareModal';
 
 interface PartnersViewProps {
   partners: Partner[];
@@ -57,6 +69,7 @@ interface PartnersViewProps {
   forecast?: PartnerFinancialForecastResponse | null;
   inventory: InventoryItem[];
   orders: ProductionOrder[];
+  profile?: CompanyProfile;
   onSavePartner: (payload: Partial<Partner>, existingId?: string) => Promise<boolean>;
   onDeletePartner: (partnerId: string) => void;
   onDispatchCustody: (
@@ -93,6 +106,11 @@ interface PartnersViewProps {
     }
   ) => Promise<boolean>;
   onOpenWhatsApp: (partner: Partner) => Promise<void>;
+  onSendViaCentralWhatsApp?: (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => Promise<void> | void;
   onNavigateTab: (tab: string) => void;
 }
 
@@ -191,16 +209,19 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
   forecast,
   inventory,
   orders,
+  profile,
   onSavePartner,
   onDeletePartner,
   onDispatchCustody,
   onReturnCustody,
   onCreatePartnerProvision,
   onOpenWhatsApp,
+  onSendViaCentralWhatsApp,
   onNavigateTab,
 }) => {
   const { user } = useAuth();
   const role = user?.role || '';
+  const companyProfile = profile || initialCompanyProfile;
 
   const canManage = ['admin', 'gerente_comercial', 'pcp_producao'].includes(role);
   const canManageCustody = ['admin', 'pcp_producao'].includes(role);
@@ -229,10 +250,10 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
   const [partnerType, setPartnerType] = useState<PartnerServiceCategory>('costura');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [cep, setCep] = useState('');
-  const [address, setAddress] = useState('');
-  const [city, setCity] = useState('São Luís');
-  const [stateUf, setStateUf] = useState('MA');
+  const [addressData, setAddressData] = useState<StructuredAddressValue>(() =>
+    buildStructuredAddressFromEntity({ city: 'São Luís', state: 'MA' })
+  );
+  const [addressSyncKey, setAddressSyncKey] = useState(0);
   const [capacityPiecesPerMonth, setCapacityPiecesPerMonth] = useState('1000');
   const [defaultCostPerPiece, setDefaultCostPerPiece] = useState<number>(12.0);
   const [leadTimeDays, setLeadTimeDays] = useState<number>(5);
@@ -240,6 +261,10 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
   const [rating, setRating] = useState<number>(5);
   const [notes, setNotes] = useState('');
   const [active, setActive] = useState<boolean>(true);
+
+  // WhatsApp Location Share Modal
+  const [locationShareTarget, setLocationShareTarget] = useState<LocationSharePayload | null>(null);
+  const [locatingPartnerId, setLocatingPartnerId] = useState<string | null>(null);
 
   // 360° Partner Detail Modal
   const [detailData, setDetailData] = useState<PartnerDetailResponse | null>(null);
@@ -406,10 +431,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
     setPartnerType('costura');
     setPhone('');
     setEmail('');
-    setCep('');
-    setAddress('');
-    setCity('São Luís');
-    setStateUf('MA');
+    setAddressData(buildStructuredAddressFromEntity({ city: 'São Luís', state: 'MA' }));
     setCapacityPiecesPerMonth('1000');
     setDefaultCostPerPiece(12.0);
     setLeadTimeDays(5);
@@ -429,10 +451,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
     setPartnerType(partner.partnerType);
     setPhone(partner.phone);
     setEmail(partner.email || '');
-    setCep(partner.cep || '');
-    setAddress(partner.address || '');
-    setCity(partner.city || 'São Luís');
-    setStateUf(partner.state || 'MA');
+    setAddressData(buildStructuredAddressFromEntity(partner));
     setCapacityPiecesPerMonth(partner.capacityPiecesPerMonth || '');
     setDefaultCostPerPiece(partner.defaultCostPerPiece || 0);
     setLeadTimeDays(partner.leadTimeDays || 5);
@@ -444,23 +463,124 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
     setIsFormOpen(true);
   };
 
+  const handleSharePartnerLocation = async (partner: Partner) => {
+    const structured = buildStructuredAddressFromEntity(partner);
+    const catLabel = PARTNER_CATEGORY_META[partner.partnerType]?.label || 'Parceiro';
+    if (isValidCoordinates(structured.latitude, structured.longitude)) {
+      setLocationShareTarget(
+        buildEntityLocationPayload({
+          entityType: 'partner',
+          entityId: partner.id,
+          locationCode: partner.code,
+          title: partner.tradeName || partner.name,
+          subtitle: `${catLabel} · Parceiro Homologado`,
+          contactName: partner.tradeName || partner.name,
+          phone: partner.phone,
+          cep: structured.cep,
+          street: structured.street,
+          number: structured.number,
+          complement: structured.complement,
+          neighborhood: structured.neighborhood,
+          address: structured.address,
+          city: structured.city,
+          state: structured.state,
+          latitude: structured.latitude!,
+          longitude: structured.longitude!,
+          geoPrecision: structured.geoPrecision,
+          company: companyProfile,
+        })
+      );
+      return;
+    }
+
+    setLocatingPartnerId(partner.id);
+    const res = await api.geocodeAddress({
+      cep: structured.cep,
+      street: structured.street || structured.address,
+      number: structured.number,
+      neighborhood: structured.neighborhood,
+      city: structured.city,
+      state: structured.state,
+    });
+    setLocatingPartnerId(null);
+
+    if (res.status === 200 && res.data && isValidCoordinates(res.data.latitude, res.data.longitude)) {
+      const resolvedLat = res.data.latitude;
+      const resolvedLng = res.data.longitude;
+      const resolvedPrecision = res.data.precision;
+      const resolvedSource = res.data.source;
+
+      if (canManage) {
+        api.updatePartner(partner.id, {
+          cep: structured.cep || undefined,
+          street: structured.street || undefined,
+          number: structured.number || undefined,
+          complement: structured.complement || undefined,
+          neighborhood: structured.neighborhood || undefined,
+          address: structured.address || undefined,
+          city: structured.city,
+          state: structured.state,
+          latitude: resolvedLat,
+          longitude: resolvedLng,
+          geoPrecision: resolvedPrecision,
+          geoSource: resolvedSource,
+        });
+      }
+
+      setDetailData((prev) =>
+        prev && prev.partner.id === partner.id
+          ? {
+              ...prev,
+              partner: {
+                ...prev.partner,
+                latitude: resolvedLat,
+                longitude: resolvedLng,
+                geoPrecision: resolvedPrecision,
+                geoSource: resolvedSource,
+              },
+            }
+          : prev
+      );
+
+      setLocationShareTarget(
+        buildEntityLocationPayload({
+          entityType: 'partner',
+          entityId: partner.id,
+          locationCode: partner.code,
+          title: partner.tradeName || partner.name,
+          subtitle: `${catLabel} · Parceiro Homologado`,
+          contactName: partner.tradeName || partner.name,
+          phone: partner.phone,
+          cep: structured.cep,
+          street: structured.street,
+          number: structured.number,
+          complement: structured.complement,
+          neighborhood: structured.neighborhood,
+          address: structured.address,
+          city: structured.city,
+          state: structured.state,
+          latitude: resolvedLat,
+          longitude: resolvedLng,
+          geoPrecision: resolvedPrecision,
+          company: companyProfile,
+        })
+      );
+      return;
+    }
+
+    setDetailData(null);
+    openEditModal(partner);
+    setFormError('Marque a localização exata da oficina/facção no mapa antes de compartilhar a rota.');
+  };
+
   const handleCnpjFound = (data: CnpjAutoFillData) => {
     if (data.companyName) setName(data.companyName);
     if (data.tradeName || data.companyName) setTradeName(data.tradeName || data.companyName);
     if (data.phone) setPhone(data.phone);
     if (data.email) setEmail(data.email);
-    if (data.cep) setCep(data.cep);
-    if (data.addressLine) setAddress(data.addressLine);
-    if (data.city) setCity(data.city);
-    if (data.state) setStateUf(data.state);
+    setAddressData((prev) => applyCnpjAddressUpdate(prev, data));
+    setAddressSyncKey((k) => k + 1);
     if (!pixKey && data.cnpj) setPixKey(data.cnpj);
-  };
-
-  const handleCepFound = (data: CepAutoFillData) => {
-    const line = [data.street, data.neighborhood].filter(Boolean).join(', ');
-    if (line) setAddress(line);
-    if (data.city) setCity(data.city);
-    if (data.state) setStateUf(data.state);
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -475,7 +595,51 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
       return;
     }
 
+    const composedAddress =
+      composeAddressLine({
+        street: addressData.street,
+        number: addressData.number,
+        complement: addressData.complement,
+        neighborhood: addressData.neighborhood,
+      }) || addressData.address.trim();
+
+    let resolvedLat = isValidCoordinates(addressData.latitude, addressData.longitude)
+      ? addressData.latitude
+      : undefined;
+    let resolvedLng = isValidCoordinates(addressData.latitude, addressData.longitude)
+      ? addressData.longitude
+      : undefined;
+    let resolvedPrecision = addressData.geoPrecision;
+    let resolvedSource = addressData.geoSource;
+
     setFormSaving(true);
+    if (
+      !isValidCoordinates(resolvedLat, resolvedLng) &&
+      (addressData.cep.replace(/\D/g, '').length === 8 ||
+        addressData.street.trim() ||
+        addressData.address.trim() ||
+        addressData.city.trim())
+    ) {
+      const geoRes = await api.geocodeAddress({
+        cep: addressData.cep,
+        street: addressData.street || addressData.address,
+        number: addressData.number,
+        neighborhood: addressData.neighborhood,
+        city: addressData.city,
+        state: addressData.state,
+      });
+      if (
+        geoRes.status === 200 &&
+        geoRes.data &&
+        isValidCoordinates(geoRes.data.latitude, geoRes.data.longitude)
+      ) {
+        resolvedLat = geoRes.data.latitude;
+        resolvedLng = geoRes.data.longitude;
+        resolvedPrecision = geoRes.data.precision;
+        resolvedSource = geoRes.data.source;
+      }
+    }
+
     const ok = await onSavePartner(
       {
         name: name.trim(),
@@ -484,10 +648,18 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
         partnerType,
         phone: phone.trim(),
         email: email.trim() || undefined,
-        cep: cep.trim() || undefined,
-        address: address.trim() || undefined,
-        city: city.trim() || 'São Luís',
-        state: stateUf.trim().toUpperCase() || 'MA',
+        cep: addressData.cep.trim() || undefined,
+        street: addressData.street.trim() || undefined,
+        number: addressData.number.trim() || undefined,
+        complement: addressData.complement.trim() || undefined,
+        neighborhood: addressData.neighborhood.trim() || undefined,
+        address: composedAddress || undefined,
+        city: addressData.city.trim() || 'São Luís',
+        state: addressData.state.trim().toUpperCase().slice(0, 2) || 'MA',
+        latitude: resolvedLat,
+        longitude: resolvedLng,
+        geoPrecision: resolvedPrecision,
+        geoSource: resolvedSource,
         capacityPiecesPerMonth: capacityPiecesPerMonth.replace(/\D/g, '') || undefined,
         defaultCostPerPiece,
         leadTimeDays,
@@ -790,7 +962,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
             <button
               type="button"
               onClick={openCreateModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer shrink-0"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#C8102E] hover:bg-[#A60D26] text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer shrink-0 whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
               <span>Novo Parceiro</span>
@@ -916,7 +1088,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                 onClick={() => setCategoryFilter('all')}
                 className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer ${
                   categoryFilter === 'all'
-                    ? 'bg-slate-900 text-white border-slate-900'
+                    ? 'bg-[#111113] text-white border-[#111113]'
                     : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                 }`}
               >
@@ -931,7 +1103,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                     onClick={() => setCategoryFilter(cat)}
                     className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer ${
                       categoryFilter === cat
-                        ? 'bg-blue-600 text-white border-blue-600'
+                        ? 'bg-[#111113] text-white border-[#111113]'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                     }`}
                   >
@@ -968,7 +1140,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                 onClick={() => setForecastFilter(key)}
                 className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border cursor-pointer ${
                   forecastFilter === key
-                    ? 'bg-slate-900 text-white border-slate-900'
+                    ? 'bg-[#111113] text-white border-[#111113]'
                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                 }`}
               >
@@ -994,7 +1166,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
               onClick={() => setCustodyFilter('all')}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${
                 custodyFilter === 'all'
-                  ? 'bg-slate-900 text-white border-slate-900'
+                  ? 'bg-[#111113] text-white border-[#111113]'
                   : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
               }`}
             >
@@ -1108,9 +1280,18 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                             <span className="truncate">{partner.email}</span>
                           </span>
                         )}
-                        <span className="inline-flex items-center gap-1">
-                          <MapPin className="w-3 h-3 text-slate-400" />
-                          {partner.city}/{partner.state}
+                        <span className="inline-flex items-center gap-1 truncate max-w-[280px]">
+                          <MapPin
+                            className={`w-3 h-3 shrink-0 ${
+                              isValidCoordinates(partner.latitude, partner.longitude)
+                                ? 'text-emerald-600'
+                                : 'text-slate-400'
+                            }`}
+                          />
+                          <span className="truncate">
+                            {partner.address ? `${partner.address} · ` : ''}
+                            {partner.city}/{partner.state}
+                          </span>
                         </span>
                       </div>
 
@@ -1169,7 +1350,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                         <button
                           type="button"
                           onClick={() => loadPartnerDetail(partner.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg transition-colors cursor-pointer text-[11px]"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#111113] hover:bg-[#1E1E22] text-white font-semibold rounded-lg transition-colors cursor-pointer text-[11px]"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Visão 360°</span>
@@ -1208,6 +1389,21 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                             <span className="hidden sm:inline">WhatsApp</span>
                           </button>
                         )}
+
+                        <button
+                          type="button"
+                          disabled={locatingPartnerId === partner.id}
+                          onClick={() => handleSharePartnerLocation(partner)}
+                          title="Abrir mapa e enviar localização/rota da oficina via WhatsApp"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-rose-50 text-[#C8102E] border border-slate-200 hover:border-rose-300 font-semibold rounded-lg transition-colors cursor-pointer text-[11px] disabled:opacity-60"
+                        >
+                          {locatingPartnerId === partner.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Navigation className="w-3.5 h-3.5" />
+                          )}
+                          <span>Mapa / Rota</span>
+                        </button>
                       </div>
 
                       <div className="flex items-center gap-1">
@@ -1257,7 +1453,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigateTab('finance')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold rounded-lg cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#111113] hover:bg-[#1E1E22] text-white text-[11px] font-semibold rounded-lg cursor-pointer whitespace-nowrap"
               >
                 <Wallet className="w-3.5 h-3.5" />
                 <span>Abrir Contas a Pagar no Financeiro</span>
@@ -1503,11 +1699,11 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
 
       {/* MODAL 1: CREATE / EDIT PARTNER */}
       {isFormOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[55] overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2">
-                <Handshake className="w-5 h-5 text-blue-400" />
+                <Handshake className="w-5 h-5 text-[#E3263E]" />
                 <h2 className="text-base font-bold">
                   {editingPartner
                     ? `Editar Parceiro [${editingPartner.code}]`
@@ -1683,44 +1879,42 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                 </div>
               </div>
 
-              {/* Address with CEP Lookup */}
-              <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">CEP</label>
-                  <CepLookupInput value={cep} onChange={setCep} onCepFound={handleCepFound} />
-                </div>
-                <div className="sm:col-span-4">
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Endereço / Oficina
-                  </label>
-                  <input
-                    type="text"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Rua, número e bairro"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-                  />
-                </div>
-                <div className="sm:col-span-4">
-                  <label className="block font-semibold text-slate-700 mb-1">Cidade</label>
-                  <input
-                    type="text"
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">UF</label>
-                  <input
-                    type="text"
-                    maxLength={2}
-                    value={stateUf}
-                    onChange={(e) => setStateUf(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono uppercase text-slate-900"
-                  />
-                </div>
-              </div>
+              {/* Endereço Estruturado & Localização no Mapa (CEP + Número) */}
+              <StructuredAddressFieldset
+                title="Endereço da Oficina / Facção & Pino no Mapa (CEP + Número)"
+                entityLabel={tradeName || name || 'Oficina / Parceiro'}
+                value={addressData}
+                onChange={setAddressData}
+                externalSyncKey={addressSyncKey}
+                onShareLocationClick={(resolved) => {
+                  const addr = resolved || addressData;
+                  if (!isValidCoordinates(addr.latitude, addr.longitude)) return;
+                  const catLabel = PARTNER_CATEGORY_META[partnerType]?.label || 'Parceiro';
+                  setLocationShareTarget(
+                    buildEntityLocationPayload({
+                      entityType: 'partner',
+                      entityId: editingPartner?.id,
+                      locationCode: editingPartner?.code || 'PARCEIRO-FAC',
+                      title: tradeName.trim() || name.trim() || 'Parceiro / Facção',
+                      subtitle: `${catLabel} · Parceiro Homologado`,
+                      contactName: tradeName.trim() || name.trim() || undefined,
+                      phone: phone.trim() || undefined,
+                      cep: addr.cep,
+                      street: addr.street,
+                      number: addr.number,
+                      complement: addr.complement,
+                      neighborhood: addr.neighborhood,
+                      address: addr.address,
+                      city: addr.city,
+                      state: addr.state,
+                      latitude: addr.latitude!,
+                      longitude: addr.longitude!,
+                      geoPrecision: addr.geoPrecision,
+                      company: companyProfile,
+                    })
+                  );
+                }}
+              />
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
@@ -1758,7 +1952,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                 <button
                   type="submit"
                   disabled={formSaving}
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-semibold rounded-lg cursor-pointer inline-flex items-center gap-1.5"
+                  className="px-5 py-2 bg-[#C8102E] hover:bg-[#A60D26] transition-colors disabled:opacity-60 text-white font-semibold rounded-lg cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
                   {formSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>{editingPartner ? 'Salvar Alterações' : 'Cadastrar Parceiro'}</span>
@@ -1775,16 +1969,16 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
           <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full overflow-hidden border border-slate-200">
             {detailLoading && !detailData ? (
               <div className="p-12 text-center">
-                <Loader2 className="w-7 h-7 text-blue-600 animate-spin mx-auto mb-2" />
+                <Loader2 className="w-7 h-7 text-[#C8102E] animate-spin mx-auto mb-2" />
                 <p className="text-xs text-slate-500">Carregando visão 360° do parceiro...</p>
               </div>
             ) : (
               detailData && (
                 <>
-                  <div className="px-6 py-4 bg-slate-900 text-white flex items-start justify-between gap-4">
+                  <div className="px-6 py-4 bg-[#111113] text-white flex items-start justify-between gap-4">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                        <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-[#C8102E]/25 text-[#FFB3BE] border border-[#C8102E]/40">
                           {detailData.partner.code}
                         </span>
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700">
@@ -1818,7 +2012,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                         onClick={() => setDetailTab('orders')}
                         className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
                           detailTab === 'orders'
-                            ? 'bg-blue-600 text-white'
+                            ? 'bg-[#111113] text-white'
                             : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
                         }`}
                       >
@@ -1883,6 +2077,33 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
                           <span>WhatsApp</span>
                         </button>
                       )}
+                      {canManage && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const p = detailData.partner;
+                            setDetailData(null);
+                            openEditModal(p);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-semibold rounded-lg cursor-pointer"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          <span>Editar</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={locatingPartnerId === detailData.partner.id}
+                        onClick={() => handleSharePartnerLocation(detailData.partner)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-rose-50 text-[#C8102E] border border-rose-200 font-semibold rounded-lg cursor-pointer disabled:opacity-60"
+                      >
+                        {locatingPartnerId === detailData.partner.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Navigation className="w-3.5 h-3.5" />
+                        )}
+                        <span>Mapa / Rota</span>
+                      </button>
                     </div>
                   </div>
 
@@ -2301,7 +2522,7 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
       {returnTarget && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+            <div className="px-6 py-4 bg-[#111113] text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ArrowDownLeft className="w-5 h-5 text-emerald-400" />
                 <h3 className="text-sm font-bold">Baixa de Custódia de Terceiro</h3>
@@ -2667,6 +2888,14 @@ export const PartnersView: React.FC<PartnersViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {locationShareTarget && (
+        <WhatsAppLocationShareModal
+          location={locationShareTarget}
+          onSendViaCentralWhatsApp={onSendViaCentralWhatsApp}
+          onClose={() => setLocationShareTarget(null)}
+        />
       )}
     </div>
   );

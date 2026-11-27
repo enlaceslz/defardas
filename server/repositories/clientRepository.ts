@@ -7,18 +7,20 @@ import { db as drizzleDb } from '../db/index';
 import { db as fallbackDb } from '../db/connection';
 import { clients, Client, NewClient } from '../db/schema/clients';
 import { ClientEntity } from '../types/db';
+import { addressMetadataService, extractAddressGeoMetadata } from '../services/addressMetadataService';
 
 export class ClientRepository {
   public async findAll(): Promise<ClientEntity[]> {
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(clients).orderBy(desc(clients.createdAt));
-        return rows.map((r) => this.mapToEntity(r));
+        const mapped = rows.map((r) => this.mapToEntity(r));
+        return addressMetadataService.enrichMany('client', mapped);
       } catch (err) {
         console.warn('⚠️ [ClientRepository] Erro na consulta Drizzle ao PostgreSQL. Recorrendo à memória.', err);
       }
     }
-    return Array.from(fallbackDb.clients.values());
+    return addressMetadataService.enrichMany('client', Array.from(fallbackDb.clients.values()));
   }
 
   public async findById(id: string): Promise<ClientEntity | null> {
@@ -26,13 +28,14 @@ export class ClientRepository {
       try {
         const rows = await drizzleDb.select().from(clients).where(eq(clients.id, id)).limit(1);
         if (rows.length > 0) {
-          return this.mapToEntity(rows[0]);
+          return addressMetadataService.enrich('client', this.mapToEntity(rows[0]));
         }
       } catch (err) {
         console.warn(`⚠️ [ClientRepository] Falha ao buscar cliente ${id} no PostgreSQL.`, err);
       }
     }
-    return fallbackDb.clients.get(id) || null;
+    const mem = fallbackDb.clients.get(id);
+    return mem ? addressMetadataService.enrich('client', mem) : null;
   }
 
   public async findByCnpj(cnpj: string): Promise<ClientEntity | null> {
@@ -40,14 +43,14 @@ export class ClientRepository {
       try {
         const rows = await drizzleDb.select().from(clients).where(eq(clients.cnpj, cnpj)).limit(1);
         if (rows.length > 0) {
-          return this.mapToEntity(rows[0]);
+          return addressMetadataService.enrich('client', this.mapToEntity(rows[0]));
         }
       } catch (err) {
         console.warn(`⚠️ [ClientRepository] Falha ao buscar CNPJ ${cnpj}.`, err);
       }
     }
     for (const c of fallbackDb.clients.values()) {
-      if (c.cnpj === cnpj) return c;
+      if (c.cnpj === cnpj) return addressMetadataService.enrich('client', c);
     }
     return null;
   }
@@ -106,11 +109,13 @@ export class ClientRepository {
       }
     }
 
+    await addressMetadataService.set('client', client.id, extractAddressGeoMetadata(client));
     return client;
   }
 
   public async delete(id: string): Promise<boolean> {
     fallbackDb.clients.delete(id);
+    await addressMetadataService.delete('client', id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(clients).where(eq(clients.id, id));

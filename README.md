@@ -15,7 +15,7 @@
 
 **DE FARDAS CONFECÇÕES & UNIFORMES LTDA** · Fundada em 2015 · São Luís, Maranhão  
 Av. Cel. Colares Moreira, 100 — Renascença · Tel/WhatsApp: `(98) 98135-4130`  
-Referência Normativa: **PRD v1.6 e Adendos Homologados (B.2.1, B.2.2, B.2.5, A.3.2)** · Versão **`1.6.1`**
+Referência Normativa: **PRD v1.6 e Adendos Homologados (B.2.1, B.2.2, B.2.5, A.3.2)** · Versão **`1.6.2`**
 
 </div>
 
@@ -91,7 +91,7 @@ flowchart TB
     Client["🖥️ Navegador / SPA React 19 + Vite 8 + Tailwind v4"]
 
     subgraph Runtime["⚡ Camada de Execução Backend (Express Modular)"]
-        AppFactory["server/app.ts — createApiApp()<br/>CSRF Double-Submit · Auth RBAC · 14 Routers /api/*"]
+        AppFactory["server/app.ts — createApiApp()<br/>CSRF Double-Submit · Auth RBAC · 16 Routers /api/*"]
         NodeSrv["server.ts<br/>(Local Dev + Docker Produção)"]
         VercelFn["api/index.ts<br/>(Vercel Serverless Function)"]
         NodeSrv --> AppFactory
@@ -116,10 +116,11 @@ flowchart TB
 
 | Camada | Tecnologia | Função Principal |
 | :--- | :--- | :--- |
-| **Frontend** | React 19, TypeScript, Vite 8, Tailwind CSS v4, Lucide React, Motion | Interface nativa DE FARDAS (Portal Público isolado + ERP Interno + impressão A4) |
-| **Backend** | Node.js 22, Express 4, TypeScript (`tsx`) | 14 routers REST modulares (`/api/*`), 8 serviços de domínio, RBAC, CSRF e webhooks |
+| **Frontend** | React 19, TypeScript, Vite 8, Tailwind CSS v4, Leaflet, Lucide React, Motion | Interface nativa DE FARDAS (Portal Público isolado, ERP Interno, mapas OpenStreetMap, PWA e impressão A4) |
+| **Backend** | Node.js 22, Express 4, TypeScript (`tsx`) | 16 routers REST modulares (`/api/*`), 11 serviços de domínio, RBAC, CSRF e webhooks |
 | **Banco & ORM** | PostgreSQL 16, Drizzle ORM, Drizzle Kit | Fonte única de verdade com 6 schemas dedicados e sequenciadores SQL |
 | **Autenticação** | `bcryptjs` (12 rounds), Sessões CSPRNG (`core.sessions`) | Cookies `HttpOnly` adaptativos (`SameSite=None; Secure` em HTTPS / `SameSite=Lax` em HTTP local), Bearer Token e auditoria |
+| **Mapas & Rotas** | OpenStreetMap (Nominatim) + Leaflet | Endereçamento estruturado por CEP + número, mapa interativo e link WhatsApp com rota sem dependência de Google Maps |
 | **Comunicação** | Meta WhatsApp Business Cloud API + WA-AKG (Docker) | Central omnichannel nativa, 6 templates ERP, diagnóstico real e webhooks assinados |
 | **Storage** | S3-compatible privado (`S3_*`) | Evidências de comprovantes bancários (`receiptEvidenceUrl`) e versionamento de artes |
 | **Infraestrutura** | Docker multi-stage, Docker Compose, Vercel Serverless | Deploy reproduzível com backups SHA-256 ou publicação contínua via GitHub |
@@ -133,7 +134,7 @@ defardas/
 ├── api/
 │   └── index.ts                  # Entry point Vercel Serverless Function (/api/*)
 ├── server/
-│   ├── app.ts                    # Factory Express compartilhada (middlewares + 14 routers)
+│   ├── app.ts                    # Factory Express compartilhada (middlewares + 16 routers)
 │   ├── auth/                     # RBAC (6 perfis), bcrypt (PasswordService) e SessionStore
 │   ├── db/
 │   │   ├── index.ts              # Pool PostgreSQL (SSL estrito) + instância Drizzle ORM
@@ -141,12 +142,12 @@ defardas/
 │   │   ├── userRepository.ts     # Persistência de usuários em core.users
 │   │   └── schema/               # Schemas Drizzle: users, sessions, audit, clients, leads, quotes, orders, inventory, partners, suppliers, finance, communication
 │   ├── middleware/               # CSRF Double-Submit Cookie e Rate Limiter (HTTP 429)
-│   ├── repositories/             # 10 repositórios tipados (client, lead, quote, order, finance, inventory, partner, supplier, communication)
-│   ├── routes/                   # 14 routers REST: auth, quotes, orders, finance, inventory, leads, clients, partners, suppliers, communication, notifications, lookups, audit, migration
-│   └── services/                 # 8 serviços: pricingEngine, artworkValidation, productionScheduleService, partnerFinanceService, notificationService, whatsappService, sequenceService, auditService
+│   ├── repositories/             # 9 repositórios tipados (client, lead, quote, order, finance, inventory, partner, supplier, communication)
+│   ├── routes/                   # 16 routers REST: auth, quotes, orders, finance, inventory, leads, clients, partners, suppliers, communication, notifications, lookups, locations, reports, audit, migration
+│   └── services/                 # 11 serviços: pricingEngine, artworkValidation, productionScheduleService, partnerFinanceService, notificationService, whatsappService, sequenceService, auditService, addressMetadataService, locationShareService, reportShareService
 ├── src/
 │   ├── api/                      # ApiClient (CSRF/Bearer) e AuthContext
-│   ├── components/               # Telas do ERP (Dashboard, PCP/Cronograma, Orçamentos/Artes, Estoque/Kardex, Fornecedores/PCs, Parceiros/Facções, Clientes/Leads, Financeiro, Central WhatsApp, Portal Público, Impressão A4)
+│   ├── components/               # Telas do ERP (Dashboard, PCP/Cronograma, Orçamentos/Artes, Estoque/Kardex, Fornecedores/PCs, Parceiros/Facções, Clientes/Leads, Financeiro, Relatórios, Central WhatsApp, Mapa/Rotas, Portal Público, Impressão A4)
 │   ├── data/                     # Catálogo institucional e configurações de categorias
 │   └── types/                    # Tipagens TypeScript de domínio
 ├── scripts/
@@ -217,17 +218,19 @@ Controle rigoroso de rolos têxteis e aviamentos com **3 saldos obrigatórios po
 - Vínculo estruturado com **Fornecedor Padrão** e botão **Repor / Comprar** em 1 clique para emitir Pedido de Compra já preenchido.
 
 ### 4.5. Fornecedores & Pedidos de Compra (`FOR-YYYY-XXXX` / `PC-YYYY-XXXX`)
-- Cadastro homologado de fornecedores de matéria-prima (tecidos/malhas, aviamentos, insumos de bordado/silk, embalagens e manutenção industrial) com preenchimento automático de **CNPJ** e **CEP** (`/api/lookups`).
-- Ciclo completo de **Pedidos de Compra** (`rascunho` → `enviado` → `confirmado` → `recebido_parcial` / `recebido_total` / `cancelado`), com recebimento parcial ou total lançando automaticamente no **Estoque/Kardex** com recálculo do **CMP** e geração idempotente de **Contas a Pagar** no Financeiro.
-- **Dossiê 360°** por fornecedor (insumos vinculados, histórico de PCs e títulos CP com isolamento RBAC) e envio do Pedido de Compra via **WhatsApp** em 1 clique.
+- Cadastro homologado de fornecedores de matéria-prima (tecidos/malhas, aviamentos, insumos de bordado/silk, embalagens e manutenção industrial) com preenchimento automático de **CNPJ** e **CEP + mapa OpenStreetMap** (`/api/lookups`).
+- Ciclo completo de **Pedidos de Compra** (`rascunho` → `enviado` → `confirmado` → `recebido_parcial` / `recebido_total` / `cancelado`), bloqueando recebimento de rascunho (`HTTP 409`), recebimento concorrente duplicado e cancelamento de PC com título já pago (`HTTP 409`). O recebimento parcial/total lança automaticamente no **Estoque/Kardex** com recálculo do **CMP** e geração idempotente de **Contas a Pagar** no Financeiro.
+- **Dossiê 360°** por fornecedor (insumos vinculados, histórico de PCs e títulos CP com isolamento RBAC), envio do Pedido de Compra via **WhatsApp** em 1 clique e compartilhamento de endereço/rota.
 
 ### 4.6. Parceiros & Facções Terceirizadas (`FAC-YYYY-XXXX`)
-- Módulo dedicado e separado de Fornecedores para gestão de oficinas de costura, bordado, silk-screen e corte.
-- **Custódia de Materiais:** remessas vinculadas a OPs e baixas por devolução ao estoque físico, consumo ou perda técnica.
-- **Previsão & Provisão Financeira:** acompanhamento de valores **já pagos**, **restantes/provisionados** e **em atraso** por parceiro, com referência de serviço, OP e cliente integrada diretamente ao Contas a Pagar do Financeiro.
+- Módulo dedicado e separado de Fornecedores para gestão de oficinas de costura, bordado, silk-screen, acabamento e corte externo.
+- **Custódia de Materiais:** remessas vinculadas a OPs (preservando `allocatedStock <= physicalStock`) e baixas por devolução ao estoque físico, consumo ou perda técnica.
+- **Previsão & Provisão Financeira:** acompanhamento de valores **já pagos**, **restantes/provisionados** e **em atraso** por parceiro, com referência de serviço, OP e cliente integrada diretamente ao Contas a Pagar do Financeiro e isolamento RBAC no Dossiê 360°.
 
-### 4.7. Financeiro Auditável (50/50) & Central WhatsApp Omnichannel
-- **Financeiro:** contas a receber (`Sinal 50%` e `Saldo na Entrega 50%`) e contas a pagar (Fornecedores/PCs, Provisões de Parceiros/Facções e Despesas Gerais), liquidação obrigatória com comprovante bancário + evidência (`receiptEvidenceUrl`), proteção contra baixa duplicada (`HTTP 409`), estorno compensatório auditável (Admin) e emissão de recibos/relatórios A4.
+### 4.7. Financeiro Auditável (50/50), Relatórios & Central WhatsApp Omnichannel
+- **Financeiro:** contas a receber (`Sinal 50%` e `Saldo na Entrega 50%`) e contas a pagar (Fornecedores/PCs, Provisões de Parceiros/Facções e Despesas Gerais), liquidação obrigatória com comprovante bancário real + evidência (`receiptEvidenceUrl`, rejeitando comprovantes fictícios/genéricos), exigência de sinal 50% confirmado antes de marcar OP como `quitado`, proteção contra baixa duplicada (`HTTP 409`), estorno compensatório auditável (Admin) e emissão de recibos/relatórios A4.
+- **Endereçamento com Mapa & Compartilhamento de Rota via WhatsApp:** geocodificação por CEP + número em Clientes, Fornecedores e Parceiros usando **OpenStreetMap/Nominatim + Leaflet** (sem Google Maps), com compartilhamento via link WhatsApp (sem obrigatoriedade de digitar número) abrindo página pública com mapa interativo, coordenadas e traçado de rota.
+- **Central de Relatórios Compartilháveis (`/api/reports/share`):** exportação e compartilhamento via link somente leitura com token CSPRNG, validade configurável, revogação e isolamento RBAC por domínio.
 - **Central WhatsApp Multiprovedor:** atendimento omnichannel integrado a **Clientes**, **Leads**, **Parceiros** e **Fornecedores** suportando **Meta WhatsApp Business Cloud API** (HMAC-SHA256 `X-Hub-Signature-256`) e **WA-AKG (QR Code)** (`timingSafeEqual` via `WA_AKG_API_KEY`). Inclui:
   - Diagnóstico real de provedores (*Live* vs. *Sandbox*), sondagem real de reconexão e validação anti-SSRF em anexos de mídia.
   - Handoff direto de qualquer módulo para a conversa específica, faixa de contexto ERP no chat, badge de mensagens não lidas na Sidebar (`/api/communication/unread-summary`) e **6 templates ERP** disparáveis em 1 clique (Orçamentos, Aprovação de Arte, Etapa da OP, Confirmação de Sinal, Lembrete Financeiro/PIX e Pedido de Compra).
@@ -356,7 +359,7 @@ O repositório conta com `api/index.ts` e `vercel.json` configurados para servir
 | [`AGENTS.md`](./AGENTS.md) | Princípios inegociáveis do PRD v1.6, arquitetura homologada e invariantes de segurança |
 | [`VERCEL.md`](./VERCEL.md) | Deploy Full-Stack na Vercel (`api/index.ts` + `vercel.json` + PostgreSQL gerenciado) |
 | [`docs/DOCKER_DEPLOY.md`](./docs/DOCKER_DEPLOY.md) | Implantação com Docker Compose, migrações, monitoramento e backup/restore SHA-256 |
-| [`docs/DEVELOPMENT_STATUS.md`](./docs/DEVELOPMENT_STATUS.md) | Matriz de entregas, rastreabilidade de módulos e histórico de auditorias (V7 a V12) |
+| [`docs/DEVELOPMENT_STATUS.md`](./docs/DEVELOPMENT_STATUS.md) | Matriz de entregas, rastreabilidade de módulos e histórico de auditorias (V7 a V14) |
 | [`DEPLOY.md`](./DEPLOY.md) | Guia de publicação em VPS/servidor Linux dedicado e checklist de homologação |
 
 ---

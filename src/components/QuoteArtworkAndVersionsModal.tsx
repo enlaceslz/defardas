@@ -306,13 +306,13 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden border border-slate-200">
         {/* Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 bg-[#111113] text-white flex items-center justify-between shrink-0">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-sm font-bold">
                 Artes & Versões — {quote.quoteNumber || quote.id}
               </h2>
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-blue-300 border border-slate-700">
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/10 text-slate-100 border border-white/15">
                 Proposta v{quote.version || 1}
               </span>
               <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${commercialBadge.bg}`}>
@@ -343,13 +343,13 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
         </div>
 
         {/* Tabs */}
-        <div className="px-6 pt-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 shrink-0 text-xs">
+        <div className="px-6 pt-3 bg-slate-50 border-b border-slate-200 flex overflow-x-auto items-center gap-2 shrink-0 text-xs">
           <button
             type="button"
             onClick={() => setActiveTab('artworks')}
-            className={`inline-flex items-center gap-1.5 px-4 py-2.5 font-semibold border-b-2 transition-colors cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-4 py-2.5 font-semibold border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
               activeTab === 'artworks'
-                ? 'border-blue-600 text-blue-700 bg-white rounded-t-lg'
+                ? 'border-[#C8102E] text-[#C8102E] bg-white rounded-t-lg'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -359,9 +359,9 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
           <button
             type="button"
             onClick={() => setActiveTab('versions')}
-            className={`inline-flex items-center gap-1.5 px-4 py-2.5 font-semibold border-b-2 transition-colors cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-4 py-2.5 font-semibold border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
               activeTab === 'versions'
-                ? 'border-blue-600 text-blue-700 bg-white rounded-t-lg'
+                ? 'border-[#C8102E] text-[#C8102E] bg-white rounded-t-lg'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -449,7 +449,7 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
                           setUploadError('');
                         }}
                         className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
-                          uploadMode === 'file' ? 'bg-blue-600 text-white' : 'text-slate-600'
+                          uploadMode === 'file' ? 'bg-[#111113] text-white' : 'text-slate-600'
                         }`}
                       >
                         Upload de Arquivo
@@ -461,7 +461,7 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
                           setUploadError('');
                         }}
                         className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
-                          uploadMode === 'link' ? 'bg-blue-600 text-white' : 'text-slate-600'
+                          uploadMode === 'link' ? 'bg-[#111113] text-white' : 'text-slate-600'
                         }`}
                       >
                         Link HTTPS Seguro
@@ -555,7 +555,7 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
                     <button
                       type="submit"
                       disabled={isUploading}
-                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow-xs cursor-pointer disabled:opacity-60 shrink-0"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#C8102E] hover:bg-[#A60D26] transition-colors text-white font-semibold rounded-lg shadow-xs cursor-pointer disabled:opacity-60 shrink-0 whitespace-nowrap"
                     >
                       {isUploading ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -929,7 +929,7 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
                             Versão v{snap.version}
                           </span>
                           {snap.version === quote.version && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-600 text-white">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#111113] text-white">
                               ATUAL
                             </span>
                           )}
@@ -1023,7 +1023,7 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg cursor-pointer"
+            className="px-4 py-2 bg-[#111113] hover:bg-[#1E1E22] transition-colors text-white text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap"
           >
             Fechar
           </button>
@@ -1040,7 +1040,7 @@ export const QuoteArtworkAndVersionsModal: React.FC<QuoteArtworkAndVersionsModal
             className="bg-white rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl border border-slate-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-3 bg-slate-900 text-white flex items-center justify-between text-xs">
+            <div className="px-5 py-3 bg-[#111113] text-white flex items-center justify-between text-xs">
               <span className="font-bold">
                 Arte v{previewArt.version} — {previewArt.fileName}
               </span>

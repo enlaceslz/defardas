@@ -8,6 +8,7 @@ import {
   PublicCatalogItem,
 } from '../types/erp';
 import {
+  DEFAULT_BRAND_LOGO_URL,
   initialCompanyProfile,
   initialClients,
   initialInventory,
@@ -66,10 +67,19 @@ export function loadERPState(): ERPState {
 
     const parsedProfile = rawProfile ? JSON.parse(rawProfile) : null;
 
+    const mergedProfile: CompanyProfile = parsedProfile
+      ? {
+          ...initialCompanyProfile,
+          ...parsedProfile,
+          logoUrl:
+            typeof parsedProfile.logoUrl === 'string' && parsedProfile.logoUrl.trim().length > 0
+              ? parsedProfile.logoUrl
+              : DEFAULT_BRAND_LOGO_URL,
+        }
+      : initialCompanyProfile;
+
     return {
-      profile: parsedProfile
-        ? { ...initialCompanyProfile, ...parsedProfile }
-        : initialCompanyProfile,
+      profile: mergedProfile,
       clients: rawClients ? JSON.parse(rawClients) : initialClients,
       inventory: rawInventory ? JSON.parse(rawInventory) : initialInventory,
       orders: rawOrders ? JSON.parse(rawOrders) : initialProductionOrders,
@@ -211,15 +221,16 @@ export function parseAndValidateBackupJSON(rawText: string, fallbackState?: ERPS
 
     const rawProfile = payload.profile && typeof payload.profile === 'object' ? payload.profile : {};
 
-    // Sanitização básica de logoUrl: aceita apenas data:image/ seguro (sem scripts em SVG) ou URL https/http
-    let sanitizedLogoUrl: string | undefined = undefined;
+    // Sanitização básica de logoUrl: aceita data:image/ seguro, URL https/http ou caminho local /assets/
+    let sanitizedLogoUrl: string | undefined = DEFAULT_BRAND_LOGO_URL;
     if (typeof rawProfile.logoUrl === 'string' && rawProfile.logoUrl.trim().length > 0) {
       const candidate = rawProfile.logoUrl.trim();
       const isSafeDataImage =
         /^data:image\/(png|jpeg|jpg|webp|gif|svg\+xml);base64,/i.test(candidate) &&
         !candidate.toLowerCase().includes('<script');
       const isHttpUrl = /^https?:\/\//i.test(candidate);
-      if (isSafeDataImage || isHttpUrl) {
+      const isLocalAsset = /^\/assets\/[a-zA-Z0-9._/-]+$/.test(candidate);
+      if (isSafeDataImage || isHttpUrl || isLocalAsset) {
         sanitizedLogoUrl = candidate;
       }
     }

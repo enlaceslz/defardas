@@ -392,7 +392,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
           {canCreateOrEdit && (
             <button
               onClick={onOpenNewOrderModal}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 shadow-sm transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#C8102E] rounded-lg hover:bg-[#A60D26] shadow-sm transition-colors cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
               <span>Nova OP</span>
@@ -881,7 +881,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                                     className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded transition-colors ${
                                       order.stage === 'aguardando_liberacao' && isBlocked
                                         ? 'bg-rose-100 text-rose-800 hover:bg-rose-200 cursor-pointer'
-                                        : 'text-white bg-blue-600 hover:bg-blue-500 cursor-pointer'
+                                        : 'text-white bg-[#C8102E] hover:bg-[#A60D26] cursor-pointer'
                                     }`}
                                     title={
                                       order.stage === 'aguardando_liberacao' && isBlocked
@@ -988,7 +988,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                             className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                               order.stage === 'aguardando_liberacao' && isBlocked
                                 ? 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                                : 'bg-blue-600 text-white hover:bg-blue-500'
+                                : 'bg-[#C8102E] text-white hover:bg-[#A60D26]'
                             }`}
                           >
                             <span>Avançar</span>
@@ -1229,7 +1229,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                                 className={`px-2 py-1 text-[11px] font-semibold rounded transition-colors cursor-pointer ${
                                   order.stage === 'aguardando_liberacao' && isBlocked
                                     ? 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                                    : 'text-white bg-blue-600 hover:bg-blue-500'
+                                    : 'text-white bg-[#C8102E] hover:bg-[#A60D26]'
                                 }`}
                                 title={
                                   order.stage === 'aguardando_liberacao' && isBlocked
@@ -1274,7 +1274,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
       {gateModalOrder && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2.5">
                 <ShieldAlert className="w-5 h-5 text-rose-400" />
                 <div>
@@ -1382,7 +1382,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                           setGateModalOrder(null);
                           openArtApprovalModal(target);
                         }}
-                        className="px-2.5 py-1 bg-blue-600 text-white font-semibold rounded text-[11px] hover:bg-blue-500 transition-colors cursor-pointer"
+                        className="px-2.5 py-1 bg-[#C8102E] text-white font-semibold rounded text-[11px] hover:bg-[#A60D26] transition-colors cursor-pointer whitespace-nowrap"
                       >
                         Aprovar Arte
                       </button>
@@ -1415,7 +1415,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
               <button
                 onClick={() => setGateModalOrder(null)}
-                className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                className="px-4 py-2 bg-[#111113] text-white text-xs font-semibold rounded-lg hover:bg-[#1E1E22] transition-colors cursor-pointer whitespace-nowrap"
               >
                 Entendido
               </button>
@@ -1428,9 +1428,9 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
       {artApprovalModalOrder && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2.5">
-                <FileCheck className="w-5 h-5 text-blue-400" />
+                <FileCheck className="w-5 h-5 text-[#E3263E]" />
                 <div>
                   <h3 className="text-sm font-bold">Registrar Aprovação Formal da Arte</h3>
                   <p className="text-[11px] text-slate-400">
@@ -1487,7 +1487,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
                 <button
                   type="submit"
                   disabled={isProcessingModal}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg cursor-pointer disabled:opacity-60"
+                  className="px-4 py-2 bg-[#C8102E] hover:bg-[#A60D26] transition-colors text-white font-semibold rounded-lg cursor-pointer disabled:opacity-60 whitespace-nowrap"
                 >
                   {isProcessingModal ? 'Registrando...' : 'Confirmar Aprovação da Arte'}
                 </button>
@@ -1501,7 +1501,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
       {reworkModalOrder && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2.5">
                 <RotateCcw className="w-5 h-5 text-amber-400" />
                 <div>
@@ -1565,7 +1565,7 @@ export const ProductionOrdersView: React.FC<ProductionOrdersViewProps> = ({
       {artRevisionModalOrder && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2.5">
                 <RotateCcw className="w-5 h-5 text-amber-400" />
                 <div>

@@ -21,21 +21,45 @@ import {
   CheckCircle2,
   Clock,
   Inbox,
+  Navigation,
 } from 'lucide-react';
-import { Client, ClientProfileResponse, LeadItem } from '../types/erp';
+import {
+  Client,
+  ClientProfileResponse,
+  CompanyProfile,
+  LeadItem,
+  LocationSharePayload,
+  StructuredAddressValue,
+} from '../types/erp';
 import { formatCurrencyBRL, formatDateBR, getStageLabel } from '../utils/formatters';
-import { CepLookupInput, CnpjLookupInput, PhoneInputBR } from './FormInputs';
+import { CnpjLookupInput, PhoneInputBR } from './FormInputs';
 import { isValidCNPJ, maskCNPJ, maskPhoneBR, onlyDigits } from '../utils/masks';
 import { useAuth } from '../api/authContext';
 import { api } from '../api/client';
+import { initialCompanyProfile } from '../data/initialData';
+import {
+  applyCnpjAddressUpdate,
+  buildEntityLocationPayload,
+  buildStructuredAddressFromEntity,
+  composeAddressLine,
+  isValidCoordinates,
+} from '../utils/addressUtils';
+import { StructuredAddressFieldset } from './StructuredAddressFieldset';
+import { WhatsAppLocationShareModal } from './WhatsAppLocationShareModal';
 
 interface ClientsViewProps {
   clients: Client[];
   leads: LeadItem[];
+  profile?: CompanyProfile;
   onSaveClient: (client: Client) => Promise<boolean>;
   onDeleteClient: (clientId: string) => void;
   onSelectClientForQuote: (client: Client) => void;
   onOpenWhatsApp: (client: { id?: string; name: string; phone: string }) => Promise<void>;
+  onSendViaCentralWhatsApp?: (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => Promise<void> | void;
   onUpdateLeadStatus: (leadId: string, status: LeadItem['status']) => Promise<boolean>;
   onNavigateTab: (tab: string) => void;
 }
@@ -54,15 +78,18 @@ const LEAD_STATUS_META: Record<
 export const ClientsView: React.FC<ClientsViewProps> = ({
   clients,
   leads,
+  profile,
   onSaveClient,
   onDeleteClient,
   onSelectClientForQuote,
   onOpenWhatsApp,
+  onSendViaCentralWhatsApp,
   onUpdateLeadStatus,
   onNavigateTab,
 }) => {
   const { user } = useAuth();
   const role = user?.role || '';
+  const companyProfile = profile || initialCompanyProfile;
 
   // RBAC alinhado com server/auth/rbac.ts
   const canManageClients = ['admin', 'gerente_comercial', 'vendedor'].includes(role);
@@ -90,12 +117,16 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [address, setAddress] = useState('');
-  const [cep, setCep] = useState('');
-  const [city, setCity] = useState('São Luís');
-  const [state, setState] = useState('MA');
+  const [addressData, setAddressData] = useState<StructuredAddressValue>(() =>
+    buildStructuredAddressFromEntity({ city: 'São Luís', state: 'MA' })
+  );
+  const [addressSyncKey, setAddressSyncKey] = useState(0);
   const [segment, setSegment] = useState('Indústria');
   const [standardUniformNotes, setStandardUniformNotes] = useState('');
+
+  // WhatsApp Location Share Modal
+  const [locationShareTarget, setLocationShareTarget] = useState<LocationSharePayload | null>(null);
+  const [locatingClientId, setLocatingClientId] = useState<string | null>(null);
 
   // 360° Client Profile Modal
   const [profileData, setProfileData] = useState<ClientProfileResponse | null>(null);
@@ -150,10 +181,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     setContactName('');
     setPhone('');
     setEmail('');
-    setAddress('');
-    setCep('');
-    setCity('São Luís');
-    setState('MA');
+    setAddressData(buildStructuredAddressFromEntity({ city: 'São Luís', state: 'MA' }));
     setSegment('Indústria');
     setStandardUniformNotes('');
     setFormError('');
@@ -169,14 +197,120 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     setContactName(client.contactName);
     setPhone(maskPhoneBR(client.phone));
     setEmail(client.email);
-    setAddress(client.address);
-    setCep('');
-    setCity(client.city);
-    setState(client.state);
+    setAddressData(buildStructuredAddressFromEntity(client));
     setSegment(client.segment);
     setStandardUniformNotes(client.standardUniformNotes);
     setFormError('');
     setIsModalOpen(true);
+  };
+
+  const handleShareClientLocation = async (client: Client) => {
+    const structured = buildStructuredAddressFromEntity(client);
+    if (isValidCoordinates(structured.latitude, structured.longitude)) {
+      setLocationShareTarget(
+        buildEntityLocationPayload({
+          entityType: 'client',
+          entityId: client.id,
+          locationCode: client.code || client.id,
+          title: client.tradeName || client.companyName,
+          subtitle: `Cliente B2B · ${client.segment}`,
+          contactName: client.contactName,
+          phone: client.phone,
+          cep: structured.cep,
+          street: structured.street,
+          number: structured.number,
+          complement: structured.complement,
+          neighborhood: structured.neighborhood,
+          address: structured.address,
+          city: structured.city,
+          state: structured.state,
+          latitude: structured.latitude!,
+          longitude: structured.longitude!,
+          geoPrecision: structured.geoPrecision,
+          company: companyProfile,
+        })
+      );
+      return;
+    }
+
+    setLocatingClientId(client.id);
+    const res = await api.geocodeAddress({
+      cep: structured.cep,
+      street: structured.street || structured.address,
+      number: structured.number,
+      neighborhood: structured.neighborhood,
+      city: structured.city,
+      state: structured.state,
+    });
+    setLocatingClientId(null);
+
+    if (res.status === 200 && res.data && isValidCoordinates(res.data.latitude, res.data.longitude)) {
+      const resolvedLat = res.data.latitude;
+      const resolvedLng = res.data.longitude;
+      const resolvedPrecision = res.data.precision;
+      const resolvedSource = res.data.source;
+
+      if (canManageClients) {
+        api.updateClient(client.id, {
+          cep: structured.cep || undefined,
+          street: structured.street || undefined,
+          number: structured.number || undefined,
+          complement: structured.complement || undefined,
+          neighborhood: structured.neighborhood || undefined,
+          address: structured.address || undefined,
+          city: structured.city,
+          state: structured.state,
+          latitude: resolvedLat,
+          longitude: resolvedLng,
+          geoPrecision: resolvedPrecision,
+          geoSource: resolvedSource,
+        });
+      }
+
+      setProfileData((prev) =>
+        prev && prev.client.id === client.id
+          ? {
+              ...prev,
+              client: {
+                ...prev.client,
+                latitude: resolvedLat,
+                longitude: resolvedLng,
+                geoPrecision: resolvedPrecision,
+                geoSource: resolvedSource,
+              },
+            }
+          : prev
+      );
+
+      setLocationShareTarget(
+        buildEntityLocationPayload({
+          entityType: 'client',
+          entityId: client.id,
+          locationCode: client.code || client.id,
+          title: client.tradeName || client.companyName,
+          subtitle: `Cliente B2B · ${client.segment}`,
+          contactName: client.contactName,
+          phone: client.phone,
+          cep: structured.cep,
+          street: structured.street,
+          number: structured.number,
+          complement: structured.complement,
+          neighborhood: structured.neighborhood,
+          address: structured.address,
+          city: structured.city,
+          state: structured.state,
+          latitude: resolvedLat,
+          longitude: resolvedLng,
+          geoPrecision: resolvedPrecision,
+          company: companyProfile,
+        })
+      );
+      return;
+    }
+
+    setProfileData(null);
+    openEditModal(client);
+    setFormError('Marque a localização exata do cliente no mapa antes de compartilhar a rota.');
   };
 
   const loadClientProfile = async (clientId: string) => {
@@ -213,6 +347,51 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
       return;
     }
 
+    const composedAddress =
+      composeAddressLine({
+        street: addressData.street,
+        number: addressData.number,
+        complement: addressData.complement,
+        neighborhood: addressData.neighborhood,
+      }) || addressData.address.trim();
+
+    let resolvedLat = isValidCoordinates(addressData.latitude, addressData.longitude)
+      ? addressData.latitude
+      : undefined;
+    let resolvedLng = isValidCoordinates(addressData.latitude, addressData.longitude)
+      ? addressData.longitude
+      : undefined;
+    let resolvedPrecision = addressData.geoPrecision;
+    let resolvedSource = addressData.geoSource;
+
+    setFormSaving(true);
+    if (
+      !isValidCoordinates(resolvedLat, resolvedLng) &&
+      (addressData.cep.replace(/\D/g, '').length === 8 ||
+        addressData.street.trim() ||
+        addressData.address.trim() ||
+        addressData.city.trim())
+    ) {
+      const geoRes = await api.geocodeAddress({
+        cep: addressData.cep,
+        street: addressData.street || addressData.address,
+        number: addressData.number,
+        neighborhood: addressData.neighborhood,
+        city: addressData.city,
+        state: addressData.state,
+      });
+      if (
+        geoRes.status === 200 &&
+        geoRes.data &&
+        isValidCoordinates(geoRes.data.latitude, geoRes.data.longitude)
+      ) {
+        resolvedLat = geoRes.data.latitude;
+        resolvedLng = geoRes.data.longitude;
+        resolvedPrecision = geoRes.data.precision;
+        resolvedSource = geoRes.data.source;
+      }
+    }
+
     const clientToSave: Client = {
       id: editingClient?.id || `cli-${Date.now()}`,
       companyName: companyName.trim(),
@@ -222,9 +401,18 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
       contactName: contactName.trim() || 'Contato Principal',
       phone: phone.trim(),
       email: email.trim(),
-      address: address.trim(),
-      city: city.trim() || 'São Luís',
-      state: state.trim().toUpperCase().slice(0, 2) || 'MA',
+      cep: addressData.cep.trim() || undefined,
+      street: addressData.street.trim() || undefined,
+      number: addressData.number.trim() || undefined,
+      complement: addressData.complement.trim() || undefined,
+      neighborhood: addressData.neighborhood.trim() || undefined,
+      address: composedAddress,
+      city: addressData.city.trim() || 'São Luís',
+      state: addressData.state.trim().toUpperCase().slice(0, 2) || 'MA',
+      latitude: resolvedLat,
+      longitude: resolvedLng,
+      geoPrecision: resolvedPrecision,
+      geoSource: resolvedSource,
       segment: segment.trim() || 'Corporativo',
       standardUniformNotes: standardUniformNotes.trim(),
       totalOrdersCount: editingClient?.totalOrdersCount || 0,
@@ -232,7 +420,6 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
       createdAt: editingClient?.createdAt || new Date().toISOString().split('T')[0],
     };
 
-    setFormSaving(true);
     const ok = await onSaveClient(clientToSave);
     setFormSaving(false);
 
@@ -340,7 +527,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
             <button
               type="button"
               onClick={openNewModal}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 shadow-sm transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#C8102E] rounded-lg hover:bg-[#A60D26] shadow-sm transition-colors cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
               <span>Novo Cliente B2B</span>
@@ -580,9 +767,17 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                           <span className="truncate">{client.email || '—'}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <MapPin
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              isValidCoordinates(client.latitude, client.longitude)
+                                ? 'text-emerald-600'
+                                : 'text-slate-400'
+                            }`}
+                          />
                           <span className="truncate">
+                            {client.address ? `${client.address} · ` : ''}
                             {client.city}/{client.state}
+                            {client.cep ? ` · CEP ${client.cep}` : ''}
                           </span>
                         </div>
                       </div>
@@ -647,7 +842,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                         <button
                           type="button"
                           onClick={() => loadClientProfile(client.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg text-[11px] transition-colors cursor-pointer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#111113] hover:bg-[#1E1E22] text-white font-semibold rounded-lg text-[11px] transition-colors cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Visão 360°</span>
@@ -680,6 +875,21 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                             <span>WhatsApp</span>
                           </button>
                         )}
+
+                        <button
+                          type="button"
+                          disabled={locatingClientId === client.id}
+                          onClick={() => handleShareClientLocation(client)}
+                          title="Abrir mapa e compartilhar link de rota via WhatsApp"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-rose-50 text-[#C8102E] border border-slate-200 hover:border-rose-300 font-semibold rounded-lg text-[11px] transition-colors cursor-pointer disabled:opacity-60"
+                        >
+                          {locatingClientId === client.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Navigation className="w-3.5 h-3.5" />
+                          )}
+                          <span>Mapa / Rota</span>
+                        </button>
                       </div>
 
                       {m?.lastOrderDate && (
@@ -796,7 +1006,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                         <button
                           type="button"
                           onClick={() => onSelectClientForQuote(linkedClient)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg text-[11px] cursor-pointer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#C8102E] hover:bg-[#A60D26] transition-colors text-white font-semibold rounded-lg text-[11px] cursor-pointer whitespace-nowrap"
                         >
                           <FileText className="w-3.5 h-3.5" />
                           <span>Gerar Orçamento</span>
@@ -823,11 +1033,11 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
             ) : (
               profileData && (
                 <>
-                  <div className="px-6 py-4 bg-slate-900 text-white flex items-start justify-between gap-4">
+                  <div className="px-6 py-4 bg-[#111113] text-white flex items-start justify-between gap-4">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         {profileData.client.code && (
-                          <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                          <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-[#C8102E]/25 text-[#FFB3BE] border border-[#C8102E]/40">
                             {profileData.client.code}
                           </span>
                         )}
@@ -866,7 +1076,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                         onClick={() => setProfileTab('quotes')}
                         className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
                           profileTab === 'quotes'
-                            ? 'bg-blue-600 text-white'
+                            ? 'bg-[#111113] text-white'
                             : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
                         }`}
                       >
@@ -905,7 +1115,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                             setProfileData(null);
                             onSelectClientForQuote(c);
                           }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg cursor-pointer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#C8102E] hover:bg-[#A60D26] transition-colors text-white font-semibold rounded-lg cursor-pointer whitespace-nowrap"
                         >
                           <FileText className="w-3.5 h-3.5" />
                           <span>Novo Orçamento</span>
@@ -928,13 +1138,25 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                       {canManageClients && (
                         <button
                           type="button"
-                          onClick={() => openEditModal(profileData.client)}
+                          onClick={() => {
+                            const c = profileData.client;
+                            setProfileData(null);
+                            openEditModal(c);
+                          }}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-semibold rounded-lg cursor-pointer"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                           <span>Editar</span>
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => handleShareClientLocation(profileData.client)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-rose-50 text-[#C8102E] border border-rose-200 font-semibold rounded-lg cursor-pointer"
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                        <span>Mapa / Rota</span>
+                      </button>
                     </div>
                   </div>
 
@@ -1133,9 +1355,9 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
       {/* MODAL 2: NEW / EDIT CLIENT */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+        <div className="fixed inset-0 z-[55] overflow-y-auto bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full overflow-hidden border border-slate-200">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <h3 className="text-base font-bold">
                 {editingClient
                   ? `Editar Cliente [${editingClient.code || editingClient.tradeName}]`
@@ -1152,7 +1374,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
             <form
               onSubmit={handleFormSubmit}
-              className="p-6 space-y-4 text-xs max-h-[82vh] overflow-y-auto"
+              className="p-6 space-y-4 text-xs max-h-[84vh] overflow-y-auto"
             >
               {formError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg font-medium flex items-center gap-2">
@@ -1184,13 +1406,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                       if (data.segment) setSegment(data.segment);
                       if (data.phone) setPhone(data.phone);
                       if (data.email) setEmail(data.email);
-                      if (data.cep) setCep(data.cep);
-                      const fullAddr = [data.addressLine, data.neighborhood]
-                        .filter(Boolean)
-                        .join(' - ');
-                      if (fullAddr) setAddress(fullAddr);
-                      if (data.city) setCity(data.city);
-                      if (data.state) setState(data.state);
+                      setAddressData((prev) => applyCnpjAddressUpdate(prev, data));
+                      setAddressSyncKey((k) => k + 1);
                     }}
                   />
                 </div>
@@ -1284,56 +1501,39 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    CEP <span className="font-normal text-slate-400">(busca auto)</span>
-                  </label>
-                  <CepLookupInput
-                    value={cep}
-                    onChange={setCep}
-                    onCepFound={(data) => {
-                      const composed = [data.street, data.neighborhood]
-                        .filter(Boolean)
-                        .join(' - ');
-                      if (composed) setAddress(composed);
-                      if (data.city) setCity(data.city);
-                      if (data.state) setState(data.state);
-                    }}
-                  />
-                </div>
-                <div className="sm:col-span-4">
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Endereço Completo
-                  </label>
-                  <input
-                    type="text"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-                    placeholder="Logradouro, número, bairro"
-                  />
-                </div>
-                <div className="sm:col-span-4">
-                  <label className="block font-semibold text-slate-700 mb-1">Cidade</label>
-                  <input
-                    type="text"
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">UF</label>
-                  <input
-                    type="text"
-                    maxLength={2}
-                    value={state}
-                    onChange={(e) => setState(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono uppercase text-slate-900"
-                  />
-                </div>
-              </div>
+              <StructuredAddressFieldset
+                value={addressData}
+                onChange={setAddressData}
+                externalSyncKey={addressSyncKey}
+                entityLabel={tradeName || companyName || 'Cliente B2B'}
+                onShareLocationClick={(resolved) => {
+                  const addr = resolved || addressData;
+                  if (!isValidCoordinates(addr.latitude, addr.longitude)) return;
+                  setLocationShareTarget(
+                    buildEntityLocationPayload({
+                      entityType: 'client',
+                      entityId: editingClient?.id,
+                      locationCode: editingClient?.code || 'CLIENTE-B2B',
+                      title: tradeName.trim() || companyName.trim() || 'Cliente B2B',
+                      subtitle: `Cliente B2B · ${segment || 'Corporativo'}`,
+                      contactName: contactName.trim() || undefined,
+                      phone: phone.trim() || undefined,
+                      cep: addr.cep,
+                      street: addr.street,
+                      number: addr.number,
+                      complement: addr.complement,
+                      neighborhood: addr.neighborhood,
+                      address: addr.address,
+                      city: addr.city,
+                      state: addr.state,
+                      latitude: addr.latitude!,
+                      longitude: addr.longitude!,
+                      geoPrecision: addr.geoPrecision,
+                      company: companyProfile,
+                    })
+                  );
+                }}
+              />
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
@@ -1359,7 +1559,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                 <button
                   type="submit"
                   disabled={formSaving}
-                  className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 disabled:opacity-60 cursor-pointer inline-flex items-center gap-1.5"
+                  className="px-5 py-2 bg-[#C8102E] text-white font-semibold rounded-lg hover:bg-[#A60D26] transition-colors disabled:opacity-60 cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
                   {formSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Salvar Cliente</span>
@@ -1368,6 +1568,14 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {locationShareTarget && (
+        <WhatsAppLocationShareModal
+          location={locationShareTarget}
+          onSendViaCentralWhatsApp={onSendViaCentralWhatsApp}
+          onClose={() => setLocationShareTarget(null)}
+        />
       )}
     </div>
   );

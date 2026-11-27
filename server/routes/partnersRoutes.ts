@@ -6,13 +6,17 @@
  */
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
+import { PERMISSIONS, RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { partnerRepository } from '../repositories/partnerRepository';
 import { orderRepository } from '../repositories/orderRepository';
 import { inventoryRepository } from '../repositories/inventoryRepository';
 import { financeRepository } from '../repositories/financeRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
+import {
+  composeServerAddressLine,
+  sanitizeAddressGeoInput,
+} from '../services/addressMetadataService';
 import {
   PartnerEntity,
   PartnerServiceCategory,
@@ -179,6 +183,8 @@ partnersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
   const openCustodyQty = round2(openCustody.reduce((s, c) => s + c.pendingQuantity, 0));
 
   const finProfile = buildPartnerFinancialProfile(partner, ordersList, financeList, todayISO);
+  const actor = req.user!;
+  const canViewFinance = (PERMISSIONS['finance:view'] || []).includes(actor.role);
 
   return res.json({
     partner: {
@@ -191,7 +197,7 @@ partnersRouter.get('/:id', async (req: RequestWithUser, res: Response) => {
     },
     orders: finProfile.orders,
     custody: linkedCustody,
-    payables: finProfile.payables,
+    payables: canViewFinance ? finProfile.payables : [],
     financialSummary: finProfile.metrics,
   });
 });
@@ -353,6 +359,11 @@ partnersRouter.post('/', requirePermission('partners:manage'), async (req: Reque
   const leadTimeDays = Math.min(180, Math.max(1, Math.floor(Number(body.leadTimeDays ?? 5))));
   const nowIso = new Date().toISOString();
 
+  const geo = sanitizeAddressGeoInput(body);
+  const composedAddress = composeServerAddressLine(geo);
+  const resolvedAddress =
+    (body.address ? String(body.address).trim() : '') || composedAddress || undefined;
+
   const newPartner: PartnerEntity = {
     id: crypto.randomUUID(),
     code: await sequenceService.nextPartnerCodeAsync(),
@@ -361,10 +372,10 @@ partnersRouter.post('/', requirePermission('partners:manage'), async (req: Reque
     cnpjCpf: body.cnpjCpf ? String(body.cnpjCpf).trim() : undefined,
     phone,
     email: body.email ? String(body.email).trim() : undefined,
-    address: body.address ? String(body.address).trim() : undefined,
+    ...geo,
+    address: resolvedAddress,
     city: String(body.city || 'São Luís').trim(),
     state: String(body.state || 'MA').trim().toUpperCase().slice(0, 2),
-    cep: body.cep ? String(body.cep).trim() : undefined,
     partnerType,
     capacityPiecesPerMonth: body.capacityPiecesPerMonth
       ? String(body.capacityPiecesPerMonth).replace(/\D/g, '')
@@ -432,6 +443,13 @@ partnersRouter.put('/:id', requirePermission('partners:manage'), async (req: Req
     Math.max(1, Math.floor(Number(body.leadTimeDays ?? existing.leadTimeDays ?? 5)))
   );
 
+  const geo = sanitizeAddressGeoInput(body, existing);
+  const composedAddress = composeServerAddressLine(geo);
+  const resolvedAddress =
+    body.address !== undefined
+      ? String(body.address || '').trim() || composedAddress || undefined
+      : composedAddress || existing.address;
+
   const updated: PartnerEntity = {
     ...existing,
     name: String(body.name ?? existing.name).trim() || existing.name,
@@ -439,10 +457,10 @@ partnersRouter.put('/:id', requirePermission('partners:manage'), async (req: Req
     cnpjCpf: body.cnpjCpf !== undefined ? String(body.cnpjCpf).trim() || undefined : existing.cnpjCpf,
     phone,
     email: body.email !== undefined ? String(body.email).trim() || undefined : existing.email,
-    address: body.address !== undefined ? String(body.address).trim() || undefined : existing.address,
+    ...geo,
+    address: resolvedAddress,
     city: String(body.city ?? existing.city).trim() || 'São Luís',
     state: String(body.state ?? existing.state ?? 'MA').trim().toUpperCase().slice(0, 2),
-    cep: body.cep !== undefined ? String(body.cep).trim() || undefined : existing.cep,
     partnerType,
     capacityPiecesPerMonth:
       body.capacityPiecesPerMonth !== undefined
@@ -593,8 +611,11 @@ partnersRouter.post(
     const nowIso = new Date().toISOString();
     const todayStr = nowIso.split('T')[0];
 
-    // 1. Atualizar saldos do insumo (Físico -> Em Poder de Terceiros)
+    // 1. Atualizar saldos do insumo (Físico -> Em Poder de Terceiros), preservando invariante allocatedStock <= physicalStock
     item.physicalStock = Math.round((item.physicalStock - qty) * 100) / 100;
+    if (item.allocatedStock > item.physicalStock) {
+      item.allocatedStock = item.physicalStock;
+    }
     item.inPartnersCustodyStock = Math.round((item.inPartnersCustodyStock + qty) * 100) / 100;
     item.updatedAt = nowIso;
     await inventoryRepository.saveItem(item);

@@ -28,12 +28,16 @@ import {
   Loader2,
   Factory,
   RefreshCw,
+  Navigation,
 } from 'lucide-react';
 import {
+  CompanyProfile,
   InventoryItem,
+  LocationSharePayload,
   ProductionOrder,
   PurchaseOrder,
   PurchaseOrderStatus,
+  StructuredAddressValue,
   Supplier,
   SupplierCategory,
   SupplierDetailResponse,
@@ -42,15 +46,23 @@ import {
 import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
 import {
   CnpjLookupInput,
-  CepLookupInput,
   PhoneInputBR,
   CurrencyInput,
   DateInputBR,
   CnpjAutoFillData,
-  CepAutoFillData,
 } from './FormInputs';
 import { useAuth } from '../api/authContext';
 import { api } from '../api/client';
+import { initialCompanyProfile } from '../data/initialData';
+import {
+  applyCnpjAddressUpdate,
+  buildEntityLocationPayload,
+  buildStructuredAddressFromEntity,
+  composeAddressLine,
+  isValidCoordinates,
+} from '../utils/addressUtils';
+import { StructuredAddressFieldset } from './StructuredAddressFieldset';
+import { WhatsAppLocationShareModal } from './WhatsAppLocationShareModal';
 
 export const SUPPLIER_CATEGORY_META: Record<
   SupplierCategory,
@@ -108,6 +120,7 @@ interface SuppliersViewProps {
   summary?: SuppliersSummaryResponse | null;
   inventory: InventoryItem[];
   orders: ProductionOrder[];
+  profile?: CompanyProfile;
   preselectedReplenish?: PreselectedReplenishItem | null;
   onClearPreselectedReplenish?: () => void;
   onSaveSupplier: (payload: Partial<Supplier>, existingId?: string) => Promise<boolean>;
@@ -131,6 +144,11 @@ interface SuppliersViewProps {
   ) => Promise<boolean>;
   onGeneratePurchaseOrderPayable: (poId: string) => Promise<boolean>;
   onOpenSupplierWhatsApp?: (supplier: Supplier, po?: PurchaseOrder) => Promise<void>;
+  onSendViaCentralWhatsApp?: (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => Promise<void> | void;
   onNavigateTab: (tab: string) => void;
 }
 
@@ -153,6 +171,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   summary,
   inventory,
   orders,
+  profile,
   preselectedReplenish,
   onClearPreselectedReplenish,
   onSaveSupplier,
@@ -162,10 +181,12 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   onReceivePurchaseOrder,
   onGeneratePurchaseOrderPayable,
   onOpenSupplierWhatsApp,
+  onSendViaCentralWhatsApp,
   onNavigateTab,
 }) => {
   const { user } = useAuth();
   const role = user?.role || '';
+  const companyProfile = profile || initialCompanyProfile;
 
   // Permissões alinhadas estritamente a server/auth/rbac.ts
   const canManageSuppliers = ['admin', 'pcp_producao', 'financeiro'].includes(role);
@@ -194,10 +215,12 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   const [supContactName, setSupContactName] = useState('');
   const [supPhone, setSupPhone] = useState('');
   const [supEmail, setSupEmail] = useState('');
-  const [supAddress, setSupAddress] = useState('');
-  const [supCity, setSupCity] = useState('São Luís');
-  const [supState, setSupState] = useState('MA');
-  const [supCep, setSupCep] = useState('');
+  const [supAddressData, setSupAddressData] = useState<StructuredAddressValue>(() =>
+    buildStructuredAddressFromEntity({ city: 'São Luís', state: 'MA' })
+  );
+  const [supAddressSyncKey, setSupAddressSyncKey] = useState(0);
+  const [locationShareTarget, setLocationShareTarget] = useState<LocationSharePayload | null>(null);
+  const [locatingSupplierId, setLocatingSupplierId] = useState<string | null>(null);
   const [supCategory, setSupCategory] = useState<SupplierCategory>('tecidos_malhas');
   const [supPaymentTerms, setSupPaymentTerms] = useState('30 dias no boleto');
   const [supPaymentTermsDays, setSupPaymentTermsDays] = useState(30);
@@ -302,7 +325,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [detailSupplierId, purchaseOrders, inventory]);
+  }, [detailSupplierId, suppliers, purchaseOrders, inventory]);
 
   // Filtros de Fornecedores
   const filteredSuppliers = useMemo(() => {
@@ -367,10 +390,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       setSupContactName(sup.contactName);
       setSupPhone(sup.phone);
       setSupEmail(sup.email || '');
-      setSupAddress(sup.address || '');
-      setSupCity(sup.city || 'São Luís');
-      setSupState(sup.state || 'MA');
-      setSupCep(sup.cep || '');
+      setSupAddressData(buildStructuredAddressFromEntity(sup));
       setSupCategory(sup.category);
       setSupPaymentTerms(sup.paymentTerms || '30 dias');
       setSupPaymentTermsDays(sup.paymentTermsDays ?? 30);
@@ -391,10 +411,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       setSupContactName('');
       setSupPhone('');
       setSupEmail('');
-      setSupAddress('');
-      setSupCity('São Luís');
-      setSupState('MA');
-      setSupCep('');
+      setSupAddressData(buildStructuredAddressFromEntity({ city: 'São Luís', state: 'MA' }));
       setSupCategory('tecidos_malhas');
       setSupPaymentTerms('30 dias no boleto');
       setSupPaymentTermsDays(30);
@@ -410,22 +427,123 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     setIsSupplierModalOpen(true);
   };
 
+  const handleShareSupplierLocation = async (sup: Supplier) => {
+    const structured = buildStructuredAddressFromEntity(sup);
+    const catLabel = SUPPLIER_CATEGORY_META[sup.category]?.label || 'Fornecedor';
+    if (isValidCoordinates(structured.latitude, structured.longitude)) {
+      setLocationShareTarget(
+        buildEntityLocationPayload({
+          entityType: 'supplier',
+          entityId: sup.id,
+          locationCode: sup.code,
+          title: sup.tradeName || sup.companyName,
+          subtitle: `${catLabel} · Fornecedor Homologado`,
+          contactName: sup.contactName,
+          phone: sup.phone,
+          cep: structured.cep,
+          street: structured.street,
+          number: structured.number,
+          complement: structured.complement,
+          neighborhood: structured.neighborhood,
+          address: structured.address,
+          city: structured.city,
+          state: structured.state,
+          latitude: structured.latitude!,
+          longitude: structured.longitude!,
+          geoPrecision: structured.geoPrecision,
+          company: companyProfile,
+        })
+      );
+      return;
+    }
+
+    setLocatingSupplierId(sup.id);
+    const res = await api.geocodeAddress({
+      cep: structured.cep,
+      street: structured.street || structured.address,
+      number: structured.number,
+      neighborhood: structured.neighborhood,
+      city: structured.city,
+      state: structured.state,
+    });
+    setLocatingSupplierId(null);
+
+    if (res.status === 200 && res.data && isValidCoordinates(res.data.latitude, res.data.longitude)) {
+      const resolvedLat = res.data.latitude;
+      const resolvedLng = res.data.longitude;
+      const resolvedPrecision = res.data.precision;
+      const resolvedSource = res.data.source;
+
+      if (canManageSuppliers) {
+        api.updateSupplier(sup.id, {
+          cep: structured.cep || undefined,
+          street: structured.street || undefined,
+          number: structured.number || undefined,
+          complement: structured.complement || undefined,
+          neighborhood: structured.neighborhood || undefined,
+          address: structured.address || undefined,
+          city: structured.city,
+          state: structured.state,
+          latitude: resolvedLat,
+          longitude: resolvedLng,
+          geoPrecision: resolvedPrecision,
+          geoSource: resolvedSource,
+        });
+      }
+
+      setSupplierDetail((prev) =>
+        prev && prev.supplier.id === sup.id
+          ? {
+              ...prev,
+              supplier: {
+                ...prev.supplier,
+                latitude: resolvedLat,
+                longitude: resolvedLng,
+                geoPrecision: resolvedPrecision,
+                geoSource: resolvedSource,
+              },
+            }
+          : prev
+      );
+
+      setLocationShareTarget(
+        buildEntityLocationPayload({
+          entityType: 'supplier',
+          entityId: sup.id,
+          locationCode: sup.code,
+          title: sup.tradeName || sup.companyName,
+          subtitle: `${catLabel} · Fornecedor Homologado`,
+          contactName: sup.contactName,
+          phone: sup.phone,
+          cep: structured.cep,
+          street: structured.street,
+          number: structured.number,
+          complement: structured.complement,
+          neighborhood: structured.neighborhood,
+          address: structured.address,
+          city: structured.city,
+          state: structured.state,
+          latitude: resolvedLat,
+          longitude: resolvedLng,
+          geoPrecision: resolvedPrecision,
+          company: companyProfile,
+        })
+      );
+      return;
+    }
+
+    setDetailSupplierId(null);
+    openSupplierModal(sup);
+    setSupFormError('Marque a localização exata do fornecedor no mapa antes de compartilhar a rota.');
+  };
+
   const handleCnpjAutoFill = (data: CnpjAutoFillData) => {
     if (data.companyName) setSupCompanyName(data.companyName);
     if (data.tradeName) setSupTradeName(data.tradeName);
     if (data.phone) setSupPhone(data.phone);
     if (data.email) setSupEmail(data.email);
-    if (data.addressLine) setSupAddress(data.addressLine);
-    if (data.city) setSupCity(data.city);
-    if (data.state) setSupState(data.state);
-    if (data.cep) setSupCep(data.cep);
-  };
-
-  const handleCepAutoFill = (data: CepAutoFillData) => {
-    const composedAddress = [data.street, data.neighborhood].filter(Boolean).join(' - ');
-    if (composedAddress) setSupAddress(composedAddress);
-    if (data.city) setSupCity(data.city);
-    if (data.state) setSupState(data.state);
+    setSupAddressData((prev) => applyCnpjAddressUpdate(prev, data));
+    setSupAddressSyncKey((k) => k + 1);
   };
 
   const handleSubmitSupplier = async (e: React.FormEvent) => {
@@ -444,7 +562,51 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       return;
     }
 
+    const composedAddress =
+      composeAddressLine({
+        street: supAddressData.street,
+        number: supAddressData.number,
+        complement: supAddressData.complement,
+        neighborhood: supAddressData.neighborhood,
+      }) || supAddressData.address.trim();
+
+    let resolvedLat = isValidCoordinates(supAddressData.latitude, supAddressData.longitude)
+      ? supAddressData.latitude
+      : undefined;
+    let resolvedLng = isValidCoordinates(supAddressData.latitude, supAddressData.longitude)
+      ? supAddressData.longitude
+      : undefined;
+    let resolvedPrecision = supAddressData.geoPrecision;
+    let resolvedSource = supAddressData.geoSource;
+
     setIsSavingSupplier(true);
+    if (
+      !isValidCoordinates(resolvedLat, resolvedLng) &&
+      (supAddressData.cep.replace(/\D/g, '').length === 8 ||
+        supAddressData.street.trim() ||
+        supAddressData.address.trim() ||
+        supAddressData.city.trim())
+    ) {
+      const geoRes = await api.geocodeAddress({
+        cep: supAddressData.cep,
+        street: supAddressData.street || supAddressData.address,
+        number: supAddressData.number,
+        neighborhood: supAddressData.neighborhood,
+        city: supAddressData.city,
+        state: supAddressData.state,
+      });
+      if (
+        geoRes.status === 200 &&
+        geoRes.data &&
+        isValidCoordinates(geoRes.data.latitude, geoRes.data.longitude)
+      ) {
+        resolvedLat = geoRes.data.latitude;
+        resolvedLng = geoRes.data.longitude;
+        resolvedPrecision = geoRes.data.precision;
+        resolvedSource = geoRes.data.source;
+      }
+    }
+
     const ok = await onSaveSupplier(
       {
         companyName: supCompanyName.trim(),
@@ -454,10 +616,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
         contactName: supContactName.trim(),
         phone: supPhone.trim(),
         email: supEmail.trim() || undefined,
-        address: supAddress.trim() || undefined,
-        city: supCity.trim() || 'São Luís',
-        state: supState.trim().toUpperCase() || 'MA',
-        cep: supCep.trim() || undefined,
+        cep: supAddressData.cep.trim() || undefined,
+        street: supAddressData.street.trim() || undefined,
+        number: supAddressData.number.trim() || undefined,
+        complement: supAddressData.complement.trim() || undefined,
+        neighborhood: supAddressData.neighborhood.trim() || undefined,
+        address: composedAddress || undefined,
+        city: supAddressData.city.trim() || 'São Luís',
+        state: supAddressData.state.trim().toUpperCase().slice(0, 2) || 'MA',
+        latitude: resolvedLat,
+        longitude: resolvedLng,
+        geoPrecision: resolvedPrecision,
+        geoSource: resolvedSource,
         category: supCategory,
         paymentTerms: supPaymentTerms.trim() || `${supPaymentTermsDays} dias`,
         paymentTermsDays: supPaymentTermsDays,
@@ -735,7 +905,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
               type="button"
               onClick={() => openNewPoModal()}
               disabled={activeSuppliers.length === 0 || inventory.length === 0}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg shadow-sm transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#C8102E] hover:bg-[#A60D26] disabled:opacity-50 rounded-lg shadow-sm transition-colors cursor-pointer whitespace-nowrap"
             >
               <ShoppingCart className="w-3.5 h-3.5" />
               <span>+ Pedido de Compra</span>
@@ -1000,8 +1170,15 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 truncate">
-                          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <MapPin
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              isValidCoordinates(sup.latitude, sup.longitude)
+                                ? 'text-emerald-600'
+                                : 'text-slate-400'
+                            }`}
+                          />
                           <span className="truncate">
+                            {sup.address ? `${sup.address} · ` : ''}
                             {sup.city} — {sup.state}
                           </span>
                         </div>
@@ -1069,7 +1246,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                           <button
                             type="button"
                             onClick={() => openNewPoModal(sup.id)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-[#C8102E] hover:bg-[#A60D26] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                           >
                             <ShoppingCart className="w-3.5 h-3.5" />
                             <span>Comprar</span>
@@ -1086,6 +1263,20 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                             <span>WhatsApp</span>
                           </button>
                         )}
+                        <button
+                          type="button"
+                          disabled={locatingSupplierId === sup.id}
+                          onClick={() => handleShareSupplierLocation(sup)}
+                          title="Abrir mapa e enviar localização/rota do fornecedor via WhatsApp"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#C8102E] bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-300 rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+                        >
+                          {locatingSupplierId === sup.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Navigation className="w-3.5 h-3.5" />
+                          )}
+                          <span>Mapa / Rota</span>
+                        </button>
                       </div>
 
                       <div className="flex items-center gap-1">
@@ -1150,7 +1341,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   onClick={() => setPoStatusFilter(btn.id as any)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                     poStatusFilter === btn.id
-                      ? 'bg-slate-900 text-white'
+                      ? 'bg-[#111113] text-white'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
@@ -1395,7 +1586,23 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                         )}
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {supplierObj && (
+                          <button
+                            type="button"
+                            disabled={locatingSupplierId === supplierObj.id}
+                            onClick={() => handleShareSupplierLocation(supplierObj)}
+                            title="Abrir mapa e compartilhar localização de coleta/fornecedor via WhatsApp"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#C8102E] bg-white hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+                          >
+                            {locatingSupplierId === supplierObj.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Navigation className="w-3.5 h-3.5" />
+                            )}
+                            <span>Mapa / Rota</span>
+                          </button>
+                        )}
                         {canUseWhatsApp && onOpenSupplierWhatsApp && supplierObj && (
                           <button
                             type="button"
@@ -1521,7 +1728,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                                   { itemId: item.id, quantity: suggestedQty, unitCost: item.costPrice || 0 },
                                 ])
                               }
-                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors cursor-pointer"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#C8102E] hover:bg-[#A60D26] text-white font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                             >
                               <ShoppingCart className="w-3.5 h-3.5" />
                               <span>Gerar Pedido</span>
@@ -1556,7 +1763,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigateTab('finance')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#111113] hover:bg-[#1E1E22] transition-colors text-white text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap"
               >
                 <span>Quitar Títulos no Financeiro</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -1629,9 +1836,9 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       {/* MODAL 1: CADASTRAR / EDITAR FORNECEDOR */}
       {/* =================================================================== */}
       {isSupplierModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-[55] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+            <div className="px-6 py-4 bg-[#111113] text-white flex items-center justify-between shrink-0">
               <div>
                 <h2 className="text-base font-bold">
                   {editingSupplier ? `Editar Fornecedor · ${editingSupplier.code}` : 'Cadastrar Novo Fornecedor'}
@@ -1739,41 +1946,43 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                 </div>
               </div>
 
-              {/* Endereço */}
-              <div className="pt-3 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">CEP</label>
-                  <CepLookupInput value={supCep} onChange={setSupCep} onCepFound={handleCepAutoFill} />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">Endereço Completo</label>
-                  <input
-                    type="text"
-                    value={supAddress}
-                    onChange={(e) => setSupAddress(e.target.value)}
-                    placeholder="Logradouro, número e bairro"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">Cidade</label>
-                  <input
-                    type="text"
-                    value={supCity}
-                    onChange={(e) => setSupCity(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">UF</label>
-                  <input
-                    type="text"
-                    maxLength={2}
-                    value={supState}
-                    onChange={(e) => setSupState(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg uppercase"
-                  />
-                </div>
+              {/* Endereço Estruturado & Mapa (CEP + Número) */}
+              <div className="pt-3 border-t border-slate-200">
+                <StructuredAddressFieldset
+                  title="Endereço do Fornecedor & Pino no Mapa (CEP + Número)"
+                  entityLabel={supTradeName || supCompanyName || 'Fornecedor'}
+                  value={supAddressData}
+                  onChange={setSupAddressData}
+                  externalSyncKey={supAddressSyncKey}
+                  onShareLocationClick={(resolved) => {
+                    const addr = resolved || supAddressData;
+                    if (!isValidCoordinates(addr.latitude, addr.longitude)) return;
+                    const catLabel = SUPPLIER_CATEGORY_META[supCategory]?.label || 'Fornecedor';
+                    setLocationShareTarget(
+                      buildEntityLocationPayload({
+                        entityType: 'supplier',
+                        entityId: editingSupplier?.id,
+                        locationCode: editingSupplier?.code || 'FORNECEDOR',
+                        title: supTradeName.trim() || supCompanyName.trim() || 'Fornecedor',
+                        subtitle: `${catLabel} · Fornecedor Homologado`,
+                        contactName: supContactName.trim() || undefined,
+                        phone: supPhone.trim() || undefined,
+                        cep: addr.cep,
+                        street: addr.street,
+                        number: addr.number,
+                        complement: addr.complement,
+                        neighborhood: addr.neighborhood,
+                        address: addr.address,
+                        city: addr.city,
+                        state: addr.state,
+                        latitude: addr.latitude!,
+                        longitude: addr.longitude!,
+                        geoPrecision: addr.geoPrecision,
+                        company: companyProfile,
+                      })
+                    );
+                  }}
+                />
               </div>
 
               {/* Condições Comerciais & Financeiro */}
@@ -1895,7 +2104,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                 <button
                   type="submit"
                   disabled={isSavingSupplier}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg shadow-xs cursor-pointer"
+                  className="px-5 py-2 text-xs font-semibold text-white bg-[#C8102E] hover:bg-[#A60D26] transition-colors disabled:opacity-50 rounded-lg shadow-xs cursor-pointer whitespace-nowrap"
                 >
                   {isSavingSupplier ? 'Salvando...' : editingSupplier ? 'Salvar Alterações' : 'Cadastrar Fornecedor'}
                 </button>
@@ -1911,10 +2120,10 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       {isPoModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+            <div className="px-6 py-4 bg-[#111113] text-white flex items-center justify-between shrink-0">
               <div>
                 <h2 className="text-base font-bold flex items-center gap-2">
-                  <ShoppingCart className="w-4 h-4 text-blue-400" />
+                  <ShoppingCart className="w-4 h-4 text-[#E3263E]" />
                   <span>Emitir Novo Pedido de Compra (PC)</span>
                 </h2>
                 <p className="text-[11px] text-slate-300 mt-0.5">
@@ -2145,7 +2354,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                 <button
                   type="submit"
                   disabled={isSavingPo}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg shadow-xs cursor-pointer"
+                  className="px-5 py-2 text-xs font-semibold text-white bg-[#C8102E] hover:bg-[#A60D26] transition-colors disabled:opacity-50 rounded-lg shadow-xs cursor-pointer whitespace-nowrap"
                 >
                   {isSavingPo ? 'Emitindo...' : 'Emitir Pedido de Compra'}
                 </button>
@@ -2303,7 +2512,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       {detailSupplierId && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+            <div className="px-6 py-4 bg-[#111113] text-white flex items-center justify-between shrink-0">
               <div>
                 <h2 className="text-base font-bold">
                   Dossiê 360° do Fornecedor{' '}
@@ -2353,6 +2562,41 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                       <div className="text-slate-600">
                         <strong>PIX:</strong> {supplierDetail.supplier.pixKey || '—'} ·{' '}
                         <strong>Banco:</strong> {supplierDetail.supplier.bankDetails || '—'}
+                      </div>
+                      <div className="pt-1 flex flex-wrap items-center justify-between gap-2 text-slate-600">
+                        <span>
+                          <strong>Endereço:</strong>{' '}
+                          {supplierDetail.supplier.address || `${supplierDetail.supplier.city}/${supplierDetail.supplier.state}`}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {canManageSuppliers && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const supObj = supplierDetail.supplier;
+                                setDetailSupplierId(null);
+                                openSupplierModal(supObj);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg font-semibold text-[11px] cursor-pointer"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>Editar</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={locatingSupplierId === supplierDetail.supplier.id}
+                            onClick={() => handleShareSupplierLocation(supplierDetail.supplier)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-rose-50 text-[#C8102E] border border-rose-200 rounded-lg font-semibold text-[11px] cursor-pointer disabled:opacity-60"
+                          >
+                            {locatingSupplierId === supplierDetail.supplier.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Navigation className="w-3 h-3" />
+                            )}
+                            <span>Mapa / Rota</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -2544,6 +2788,14 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {locationShareTarget && (
+        <WhatsAppLocationShareModal
+          location={locationShareTarget}
+          onSendViaCentralWhatsApp={onSendViaCentralWhatsApp}
+          onClose={() => setLocationShareTarget(null)}
+        />
       )}
     </div>
   );

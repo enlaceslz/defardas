@@ -3,6 +3,7 @@ import { X, Printer, CheckCircle, AlertTriangle } from 'lucide-react';
 import { Quote, CompanyProfile } from '../types/erp';
 import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
 import { useAuth } from '../api/authContext';
+import { DEFAULT_BRAND_LOGO_URL } from '../data/initialData';
 
 interface PrintQuoteModalProps {
   quote: Quote;
@@ -43,10 +44,10 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full overflow-hidden border border-slate-200">
         {/* Modal Toolbar (hidden when printing) */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white no-print">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white no-print">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold">Proposta Comercial Formal</span>
-            <span className="text-xs text-slate-400 font-mono">
+            <span className="text-xs text-zinc-400 font-mono">
               [{quote.quoteNumber || quote.id} v{quote.version || 1}]
             </span>
           </div>
@@ -82,17 +83,15 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
         {/* Printable Proposal Content */}
         <div className="p-8 sm:p-10 space-y-6 text-slate-900 bg-white print-page text-sm">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b-2 border-slate-900 pb-5 gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b-2 border-[#111113] pb-5 gap-4">
             <div className="flex items-start gap-4">
-              {profile.logoUrl && (
-                <div className="shrink-0 flex items-center justify-center bg-white border border-slate-200 rounded-lg p-2 max-w-[140px] max-h-[76px]">
-                  <img
-                    src={profile.logoUrl}
-                    alt={`Logomarca ${profile.tradeName}`}
-                    className="max-h-14 max-w-[124px] w-auto object-contain"
-                  />
-                </div>
-              )}
+              <div className="shrink-0 flex items-center justify-center bg-white border border-zinc-200 rounded-lg p-2 max-w-[140px] max-h-[76px]">
+                <img
+                  src={profile.logoUrl || DEFAULT_BRAND_LOGO_URL}
+                  alt={`Logomarca ${profile.tradeName}`}
+                  className="max-h-14 max-w-[124px] w-auto object-contain"
+                />
+              </div>
               <div>
                 <div className="text-2xl font-black tracking-tight text-slate-900">
                   {profile.tradeName}
@@ -108,7 +107,7 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
                 <div className="text-xs text-slate-500 mt-0.5">
                   Telefone/WhatsApp: {profile.phone} · E-mail: {profile.email}
                 </div>
-                <div className="text-[11px] text-blue-700 font-semibold mt-1">
+                <div className="text-[11px] text-[#C8102E] font-semibold mt-1">
                   Fundada em {profile.foundedYear} · {profile.openingHours}
                 </div>
               </div>
@@ -118,7 +117,7 @@ export const PrintQuoteModal: React.FC<PrintQuoteModalProps> = ({
               <div className="text-xs uppercase font-bold text-slate-500 tracking-wider">
                 Proposta Comercial de Fardamento
               </div>
-              <div className="text-2xl font-black font-mono text-blue-700">
+              <div className="text-2xl font-black font-mono text-[#C8102E]">
                 {quote.quoteNumber || quote.id}{' '}
                 <span className="text-xs text-slate-500">v{quote.version || 1}</span>
               </div>

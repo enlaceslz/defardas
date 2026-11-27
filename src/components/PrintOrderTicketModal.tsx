@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Printer, CheckCircle2, Scissors, Shirt, Sparkles, Truck, ShieldCheck } from 'lucide-react';
 import { ProductionOrder, CompanyProfile } from '../types/erp';
 import { formatDateBR, getStageLabel } from '../utils/formatters';
+import { DEFAULT_BRAND_LOGO_URL } from '../data/initialData';
 
 interface PrintOrderTicketModalProps {
   order: ProductionOrder;
@@ -23,10 +24,10 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
       <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full overflow-hidden border border-slate-200">
         
         {/* Modal Toolbar (hidden when printing) */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white no-print">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white no-print">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold">Ficha de Produção Fabril & Roteiro de Qualidade</span>
-            <span className="text-xs text-slate-400 font-mono">[{order.orderNumber || order.id}]</span>
+            <span className="text-xs text-zinc-400 font-mono">[{order.orderNumber || order.id}]</span>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -49,17 +50,15 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
         <div className="p-8 space-y-6 text-slate-900 bg-white print-page text-sm">
           
           {/* Header */}
-          <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4 gap-4">
+          <div className="flex items-start justify-between border-b-2 border-[#111113] pb-4 gap-4">
             <div className="flex items-start gap-3.5">
-              {profile.logoUrl && (
-                <div className="shrink-0 flex items-center justify-center bg-white border border-slate-200 rounded-lg p-1.5 max-w-[128px] max-h-[68px]">
-                  <img
-                    src={profile.logoUrl}
-                    alt={`Logomarca ${profile.tradeName}`}
-                    className="max-h-12 max-w-[114px] w-auto object-contain"
-                  />
-                </div>
-              )}
+              <div className="shrink-0 flex items-center justify-center bg-white border border-zinc-200 rounded-lg p-1.5 max-w-[128px] max-h-[68px]">
+                <img
+                  src={profile.logoUrl || DEFAULT_BRAND_LOGO_URL}
+                  alt={`Logomarca ${profile.tradeName}`}
+                  className="max-h-12 max-w-[114px] w-auto object-contain"
+                />
+              </div>
               <div>
                 <div className="text-xl font-black tracking-tight text-slate-900">
                   {profile.tradeName}
@@ -83,7 +82,7 @@ export const PrintOrderTicketModal: React.FC<PrintOrderTicketModalProps> = ({
               <div className="text-xs uppercase font-bold text-slate-500 tracking-wider">
                 Ordem de Produção (PCP)
               </div>
-              <div className="text-2xl font-black font-mono text-blue-700">
+              <div className="text-2xl font-black font-mono text-[#C8102E]">
                 {order.orderNumber || order.id}
               </div>
               <div className="text-xs text-slate-600 mt-0.5 font-mono">

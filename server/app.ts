@@ -22,6 +22,8 @@ import { lookupRouter } from './routes/lookupRoutes';
 import { partnersRouter } from './routes/partnersRoutes';
 import { suppliersRouter } from './routes/suppliersRoutes';
 import { notificationsRouter } from './routes/notificationsRoutes';
+import { reportsRouter } from './routes/reportsRoutes';
+import { locationsRouter } from './routes/locationsRoutes';
 import { db } from './db/connection';
 import {
   clientRepository,
@@ -46,7 +48,7 @@ export function createApiApp(): express.Express {
   app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
     next();
   });
 
@@ -93,6 +95,8 @@ export function createApiApp(): express.Express {
   app.use('/api/partners', partnersRouter);
   app.use('/api/suppliers', suppliersRouter);
   app.use('/api/notifications', notificationsRouter);
+  app.use('/api/reports', reportsRouter);
+  app.use('/api/locations', locationsRouter);
 
   // Endpoint de Saúde e Diagnóstico da Fundação
   app.get('/api/health', async (_req: Request, res: Response) => {

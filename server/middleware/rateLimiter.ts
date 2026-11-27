@@ -106,3 +106,11 @@ export const passwordRecoveryRateLimiter = new InMemoryRateLimiter({
   message: 'Muitas solicitações de recuperação de senha. Por segurança, aguarde alguns minutos.',
   actionName: 'AUTH_RECOVERY_RATE_LIMIT',
 }).middleware();
+
+// Limitador para endpoints públicos de roteamento/geocodificação (?mapa=<token>)
+export const publicLocationRateLimiter = new InMemoryRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 30,
+  message: 'Muitas consultas de mapa ou rota a partir deste IP. Aguarde alguns segundos.',
+  actionName: 'PUBLIC_LOCATION_RATE_LIMIT',
+}).middleware();

@@ -70,9 +70,9 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
         
         {/* Top Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-400">
+            <div className="w-10 h-10 rounded-xl bg-[#C8102E]/20 border border-[#C8102E]/40 flex items-center justify-center text-[#E3263E]">
               <ShieldCheck className="w-6 h-6" />
             </div>
             <div>
@@ -118,7 +118,7 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
               <select
                 value={user.role}
                 onChange={(e) => switchRoleDev(e.target.value as UserRole)}
-                className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+                className="bg-[#111113] border border-slate-600 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:ring-2 focus:ring-[#C8102E] focus:outline-none cursor-pointer"
               >
                 {availableRoles.map((r) => (
                   <option key={r.role} value={r.role}>
@@ -131,12 +131,12 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-200 bg-slate-50 px-6 pt-2">
+        <div className="flex overflow-x-auto border-b border-slate-200 bg-slate-50 px-6 pt-2">
           <button
             onClick={() => setActiveTab('tests')}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
+            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-2 whitespace-nowrap ${
               activeTab === 'tests'
-                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                ? 'border-[#C8102E] text-[#C8102E] bg-white rounded-t-lg'
                 : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -145,9 +145,9 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
           </button>
           <button
             onClick={() => setActiveTab('architecture')}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
+            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-2 whitespace-nowrap ${
               activeTab === 'architecture'
-                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                ? 'border-[#C8102E] text-[#C8102E] bg-white rounded-t-lg'
                 : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -159,9 +159,9 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
               setActiveTab('audit_logs');
               loadHealthAndLogs();
             }}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
+            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-2 whitespace-nowrap ${
               activeTab === 'audit_logs'
-                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                ? 'border-[#C8102E] text-[#C8102E] bg-white rounded-t-lg'
                 : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -188,7 +188,7 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
                 <button
                   onClick={handleRunTests}
                   disabled={isRunningTests}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-500 disabled:opacity-50 transition-colors shadow-xs cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#C8102E] text-white rounded-lg text-xs font-semibold hover:bg-[#A60D26] disabled:opacity-50 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isRunningTests ? 'animate-spin' : ''}`} />
                   <span>{isRunningTests ? 'Executando...' : 'Reexecutar Testes'}</span>
@@ -342,7 +342,7 @@ export const FoundationAuditModal: React.FC<FoundationAuditModalProps> = ({ isOp
           </div>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold hover:bg-slate-800 transition-colors cursor-pointer"
+            className="px-4 py-2 bg-[#111113] text-white rounded-lg font-semibold hover:bg-[#1E1E22] transition-colors cursor-pointer whitespace-nowrap"
           >
             Fechar Painel
           </button>

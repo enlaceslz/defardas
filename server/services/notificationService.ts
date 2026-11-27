@@ -96,6 +96,7 @@ export function buildSystemNotifications(params: {
   const canViewQuotes = (PERMISSIONS['quotes:view'] || []).includes(role);
   const canViewFinance = (PERMISSIONS['finance:view'] || []).includes(role);
   const canViewSuppliers = (PERMISSIONS['suppliers:view'] || []).includes(role);
+  const canViewInventory = (PERMISSIONS['inventory:view'] || []).includes(role);
 
   const notifications: SystemNotificationItem[] = [];
 
@@ -264,8 +265,10 @@ export function buildSystemNotifications(params: {
     }
   }
 
-  // 2. Estoque abaixo do mínimo
-  const lowStockItems = inventory.filter((item) => item.physicalStock <= item.minStock);
+  // 2. Estoque abaixo do mínimo (RBAC inventory:view)
+  const lowStockItems = canViewInventory
+    ? inventory.filter((item) => item.physicalStock <= item.minStock)
+    : [];
   for (const item of lowStockItems) {
     const isZero = item.physicalStock <= 0;
     notifications.push({

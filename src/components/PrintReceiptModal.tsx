@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Printer, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { CompanyProfile, FinancialTransaction } from '../types/erp';
 import { formatCurrencyBRL, formatDateBR } from '../utils/formatters';
+import { DEFAULT_BRAND_LOGO_URL } from '../data/initialData';
 
 interface PrintReceiptModalProps {
   transaction: FinancialTransaction;
@@ -38,12 +39,12 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full overflow-hidden border border-slate-200">
         {/* Toolbar (hidden on print) */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white no-print">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white no-print">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold">
               {isReceber ? 'Recibo Oficial de Recebimento' : 'Recibo / Comprovante de Pagamento'}
             </span>
-            <span className="text-xs text-slate-400 font-mono">[{receiptCode}]</span>
+            <span className="text-xs text-zinc-400 font-mono">[{receiptCode}]</span>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -68,17 +69,15 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
         {/* Printable Receipt Body */}
         <div className="p-8 sm:p-10 space-y-6 text-slate-900 bg-white print-page text-sm">
           {/* Letterhead with Logo */}
-          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b-2 border-slate-900 pb-5 gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b-2 border-[#111113] pb-5 gap-4">
             <div className="flex items-start gap-4">
-              {profile.logoUrl && (
-                <div className="shrink-0 flex items-center justify-center bg-white border border-slate-200 rounded-lg p-2 max-w-[140px] max-h-[72px]">
-                  <img
-                    src={profile.logoUrl}
-                    alt={`Logomarca ${profile.tradeName}`}
-                    className="max-h-14 max-w-[124px] w-auto object-contain"
-                  />
-                </div>
-              )}
+              <div className="shrink-0 flex items-center justify-center bg-white border border-zinc-200 rounded-lg p-2 max-w-[140px] max-h-[72px]">
+                <img
+                  src={profile.logoUrl || DEFAULT_BRAND_LOGO_URL}
+                  alt={`Logomarca ${profile.tradeName}`}
+                  className="max-h-14 max-w-[124px] w-auto object-contain"
+                />
+              </div>
               <div>
                 <div className="text-xl font-black tracking-tight text-slate-900">
                   {profile.tradeName}
@@ -101,7 +100,7 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
               <div className="text-xs uppercase font-bold text-slate-500 tracking-wider">
                 {isReceber ? 'Recibo de Quitação' : 'Comprovante de Pagamento'}
               </div>
-              <div className="text-xl font-black font-mono text-blue-700 mt-0.5">
+              <div className="text-xl font-black font-mono text-[#C8102E] mt-0.5">
                 {receiptCode}
               </div>
               <div className="text-xs text-slate-600 mt-1 font-mono">

@@ -21,6 +21,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import {
+  Client,
   CompanyProfile,
   FinancialTransaction,
   Partner,
@@ -38,6 +39,7 @@ interface FinancialViewProps {
   profile: CompanyProfile;
   transactions: FinancialTransaction[];
   orders?: ProductionOrder[];
+  clients?: Client[];
   partners?: Partner[];
   suppliers?: Supplier[];
   partnerForecast?: PartnerFinancialForecastResponse | null;
@@ -52,6 +54,11 @@ interface FinancialViewProps {
   ) => Promise<boolean> | void;
   onReverseTransaction?: (trxId: string, reason: string) => Promise<boolean> | void;
   onSendTransactionWhatsApp?: (trx: FinancialTransaction) => Promise<void> | void;
+  onSendViaCentralWhatsApp?: (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => Promise<void> | void;
   onNavigateTab?: (tab: string) => void;
 }
 
@@ -67,6 +74,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   profile,
   transactions,
   orders = [],
+  clients = [],
   partners = [],
   suppliers = [],
   partnerForecast,
@@ -75,6 +83,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
   onConfirmPaymentWithVoucher,
   onReverseTransaction,
   onSendTransactionWhatsApp,
+  onSendViaCentralWhatsApp,
   onNavigateTab,
 }) => {
   const { user } = useAuth();
@@ -316,7 +325,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 setNewTrxError('');
                 setIsModalOpen(true);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 shadow-sm transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#C8102E] rounded-lg hover:bg-[#A60D26] shadow-sm transition-colors cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
               <span>+ Novo Lançamento</span>
@@ -349,7 +358,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
               setTypeFilter('receber');
               setStatusFilter(statusFilter === 'sinais_pendentes' ? 'all' : 'sinais_pendentes');
             }}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shrink-0 cursor-pointer transition-colors"
+            className="px-3 py-1.5 bg-[#111113] hover:bg-[#1E1E22] text-white font-semibold rounded-lg shrink-0 cursor-pointer transition-colors whitespace-nowrap"
           >
             {statusFilter === 'sinais_pendentes' ? 'Mostrar Todos' : 'Filtrar Sinais 50%'}
           </button>
@@ -850,7 +859,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
       {isModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <h3 className="text-base font-bold">Novo Lançamento Financeiro</h3>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -1090,7 +1099,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer"
+                  className="px-5 py-2 bg-[#C8102E] text-white font-semibold rounded-lg hover:bg-[#A60D26] transition-colors cursor-pointer whitespace-nowrap"
                 >
                   Lançar Título
                 </button>
@@ -1104,7 +1113,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
       {selectedTrxForVoucher && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-5 h-5 text-emerald-400" />
                 <div>
@@ -1259,9 +1268,9 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
       {inspectedTrx && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2">
-                <FileCheck2 className="w-5 h-5 text-blue-400" />
+                <FileCheck2 className="w-5 h-5 text-[#E3263E]" />
                 <div>
                   <h3 className="text-base font-bold">Evidência Financeira Auditável</h3>
                   <p className="text-[11px] text-slate-400 font-mono">{inspectedTrx.transactionNumber || inspectedTrx.id}</p>
@@ -1340,7 +1349,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
                 )}
                 <button
                   onClick={() => setInspectedTrx(null)}
-                  className="px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800 cursor-pointer"
+                  className="px-4 py-2 bg-[#111113] text-white font-semibold rounded-lg hover:bg-[#1E1E22] transition-colors cursor-pointer whitespace-nowrap"
                 >
                   Fechar
                 </button>
@@ -1354,7 +1363,7 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
       {reversingTrx && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div className="flex items-center gap-2">
                 <RotateCcw className="w-5 h-5 text-amber-400" />
                 <div>
@@ -1449,8 +1458,12 @@ export const FinancialView: React.FC<FinancialViewProps> = ({
           mode="financial"
           profile={profile}
           transactions={filtered}
+          clients={clients}
+          partners={partners}
+          suppliers={suppliers}
           filterSummary={`Tipo: ${typeFilter === 'all' ? 'Todos' : typeFilter === 'receber' ? 'A Receber' : 'A Pagar'} · Status: ${statusFilter}${searchQuery ? ` · Busca: "${searchQuery}"` : ''}`}
           generatedBy={user?.fullName}
+          onSendViaCentralWhatsApp={onSendViaCentralWhatsApp}
           onClose={() => setIsFinancialReportOpen(false)}
         />
       )}

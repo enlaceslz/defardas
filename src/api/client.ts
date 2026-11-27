@@ -657,6 +657,39 @@ class ApiClient {
     return this.request<any[]>(`/audit/logs?limit=${limit}`, { method: 'GET' });
   }
 
+  // Reports & Shareable Links (WhatsApp / PDF)
+  public async createSharedReportLink(payload: {
+    snapshot: any;
+    expiresInHours?: number;
+    recipientLabel?: string;
+  }) {
+    return this.request<{
+      success: boolean;
+      id: string;
+      token: string;
+      reportCode: string;
+      expiresAt: string;
+      createdAt: string;
+    }>('/reports/share', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async getSharedReportByToken(token: string) {
+    return this.request<any>(`/reports/share/${encodeURIComponent(token)}`, { method: 'GET' });
+  }
+
+  public async listSharedReportLinks() {
+    return this.request<any[]>('/reports/shares', { method: 'GET' });
+  }
+
+  public async revokeSharedReportLink(shareId: string) {
+    return this.request<{ success: boolean; message: string }>(`/reports/share/${shareId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Migration
   public async importLocalStorageData(payload: any) {
     return this.request<any>('/migration/import-local-storage', {
@@ -665,7 +698,7 @@ class ApiClient {
     });
   }
 
-  // Lookups (CEP & CNPJ)
+  // Lookups (CEP, Geocodificação & CNPJ)
   public async lookupCep(cep: string) {
     const digits = cep.replace(/\D/g, '');
     return this.request<{
@@ -674,8 +707,92 @@ class ApiClient {
       neighborhood: string;
       city: string;
       state: string;
+      coordinates?: {
+        latitude: number;
+        longitude: number;
+      };
       source: string;
     }>(`/lookups/cep/${digits}`, { method: 'GET' });
+  }
+
+  public async geocodeAddress(params: {
+    cep?: string;
+    street?: string;
+    number?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+  }) {
+    const qs = new URLSearchParams();
+    if (params.cep) qs.set('cep', params.cep);
+    if (params.street) qs.set('street', params.street);
+    if (params.number) qs.set('number', params.number);
+    if (params.neighborhood) qs.set('neighborhood', params.neighborhood);
+    if (params.city) qs.set('city', params.city);
+    if (params.state) qs.set('state', params.state);
+    return this.request<any>(`/lookups/geocode?${qs.toString()}`, { method: 'GET' });
+  }
+
+  // Compartilhamento de Localização & Rotas (?mapa=<token>)
+  public async createSharedLocationLink(payload: {
+    location: any;
+    expiresInHours?: number;
+    recipientLabel?: string;
+  }) {
+    return this.request<{
+      success: boolean;
+      id: string;
+      token: string;
+      locationCode: string;
+      expiresAt: string;
+      createdAt: string;
+    }>('/locations/share', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async getSharedLocationByToken(token: string) {
+    return this.request<any>(`/locations/share/${encodeURIComponent(token)}`, {
+      method: 'GET',
+    });
+  }
+
+  public async listSharedLocationLinks() {
+    return this.request<any[]>('/locations/shares', { method: 'GET' });
+  }
+
+  public async revokeSharedLocationLink(id: string) {
+    return this.request<{ success: boolean; message: string }>(`/locations/share/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  public async calculateRoute(params: {
+    fromLat: number;
+    fromLng: number;
+    toLat: number;
+    toLng: number;
+  }) {
+    const qs = new URLSearchParams({
+      fromLat: String(params.fromLat),
+      fromLng: String(params.fromLng),
+      toLat: String(params.toLat),
+      toLng: String(params.toLng),
+    });
+    return this.request<any>(`/locations/route?${qs.toString()}`, { method: 'GET' });
+  }
+
+  public async lookupPublicOriginGeocode(params: {
+    cep?: string;
+    number?: string;
+    q?: string;
+  }) {
+    const qs = new URLSearchParams();
+    if (params.cep) qs.set('cep', params.cep);
+    if (params.number) qs.set('number', params.number);
+    if (params.q) qs.set('q', params.q);
+    return this.request<any>(`/locations/public-geocode?${qs.toString()}`, { method: 'GET' });
   }
 
   public async lookupCnpj(cnpj: string) {
@@ -697,6 +814,11 @@ class ApiClient {
       segment: string;
       foundedYear?: number;
       situation?: string;
+      latitude?: number;
+      longitude?: number;
+      geoPrecision?: 'numero' | 'logradouro' | 'cep' | 'cidade' | 'manual';
+      geoSource?: string;
+      geoDisplayName?: string;
       source: string;
     }>(`/lookups/cnpj/${digits}`, { method: 'GET' });
   }

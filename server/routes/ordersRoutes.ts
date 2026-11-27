@@ -396,6 +396,19 @@ ordersRouter.post('/', requirePermission('orders:create'), async (req: RequestWi
       ? Math.max(0, Math.round(Number(payload.partnerCostPerPiece) * 100) / 100)
       : 0;
 
+  const requestedQuoteId = payload.quoteId ? String(payload.quoteId).trim() : undefined;
+  if (requestedQuoteId) {
+    const existingOrders = await orderRepository.findAll();
+    const duplicateForQuote = existingOrders.find((o) => o.quoteId === requestedQuoteId);
+    if (duplicateForQuote) {
+      return res.status(409).json({
+        error: `A proposta vinculada já possui a Ordem de Produção ${duplicateForQuote.orderNumber} aberta (idempotência de conversão).`,
+        code: 'QUOTE_ALREADY_CONVERTED',
+        existingOrderNumber: duplicateForQuote.orderNumber,
+      });
+    }
+  }
+
   const orderId = crypto.randomUUID();
   const orderNumber = await sequenceService.nextOrderNumberAsync();
   const nowIso = new Date().toISOString();
@@ -403,7 +416,7 @@ ordersRouter.post('/', requirePermission('orders:create'), async (req: RequestWi
   const newOrder: ProductionOrderEntity = {
     id: orderId,
     orderNumber,
-    quoteId: payload.quoteId ? String(payload.quoteId).trim() : undefined,
+    quoteId: requestedQuoteId,
     quoteVersion: Number(payload.quoteVersion) || 1,
     idempotencyKey: payload.idempotencyKey ? String(payload.idempotencyKey).trim() : `manual_op_${orderId}`,
     clientId,
@@ -978,6 +991,18 @@ ordersRouter.delete('/:id', requirePermission('orders:delete'), async (req: Requ
   }
 
   await orderRepository.delete(req.params.id);
+
+  // Evita referência órfã na proposta comercial caso a OP não iniciada/não paga tenha sido removida
+  if (order.quoteId) {
+    const linkedQuote = await quoteRepository.findById(order.quoteId);
+    if (linkedQuote && linkedQuote.convertedOrderId === order.id) {
+      linkedQuote.convertedOrderId = undefined;
+      linkedQuote.isLocked = false;
+      linkedQuote.commercialStatus = 'aprovado';
+      linkedQuote.updatedAt = new Date().toISOString();
+      await quoteRepository.save(linkedQuote);
+    }
+  }
 
   auditService.log({
     actorId: req.user!.id,

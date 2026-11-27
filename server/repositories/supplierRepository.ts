@@ -19,6 +19,7 @@ import {
   PurchaseOrderEntity,
   PurchaseOrderItemEntity,
 } from '../types/db';
+import { addressMetadataService, extractAddressGeoMetadata } from '../services/addressMetadataService';
 
 export class SupplierRepository {
   // =========================================================================
@@ -32,14 +33,18 @@ export class SupplierRepository {
           .select()
           .from(suppliers)
           .orderBy(desc(suppliers.createdAt));
-        return rows.map((row) => this.mapSupplierToEntity(row));
+        return addressMetadataService.enrichMany(
+          'supplier',
+          rows.map((row) => this.mapSupplierToEntity(row))
+        );
       } catch (err) {
         console.warn('⚠️ [SupplierRepository] Erro ao listar fornecedores via Drizzle. Recorrendo à memória.', err);
       }
     }
-    return Array.from(fallbackDb.suppliers.values()).sort(
+    const list = Array.from(fallbackDb.suppliers.values()).sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
+    return addressMetadataService.enrichMany('supplier', list);
   }
 
   public async findById(id: string): Promise<SupplierEntity | null> {
@@ -50,12 +55,15 @@ export class SupplierRepository {
           .from(suppliers)
           .where(eq(suppliers.id, id))
           .limit(1);
-        if (rows.length > 0) return this.mapSupplierToEntity(rows[0]);
+        if (rows.length > 0) {
+          return addressMetadataService.enrich('supplier', this.mapSupplierToEntity(rows[0]));
+        }
       } catch (err) {
         console.warn(`⚠️ [SupplierRepository] Erro ao buscar fornecedor ${id} via Drizzle.`, err);
       }
     }
-    return fallbackDb.suppliers.get(id) || null;
+    const mem = fallbackDb.suppliers.get(id);
+    return mem ? addressMetadataService.enrich('supplier', mem) : null;
   }
 
   public async save(supplier: SupplierEntity): Promise<SupplierEntity> {
@@ -127,11 +135,13 @@ export class SupplierRepository {
       }
     }
 
+    await addressMetadataService.set('supplier', supplier.id, extractAddressGeoMetadata(supplier));
     return supplier;
   }
 
   public async delete(id: string): Promise<boolean> {
     fallbackDb.suppliers.delete(id);
+    await addressMetadataService.delete('supplier', id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(suppliers).where(eq(suppliers.id, id));

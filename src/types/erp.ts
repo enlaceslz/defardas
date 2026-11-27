@@ -324,6 +324,23 @@ export interface ClientMetrics {
   lastOrderDate?: string | null;
 }
 
+export type GeoPrecision = 'numero' | 'logradouro' | 'cep' | 'cidade' | 'manual';
+
+export interface StructuredAddressValue {
+  cep: string;
+  street: string;
+  number: string;
+  complement: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+  address: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
+}
+
 export interface Client {
   id: string;
   code?: string;
@@ -335,9 +352,18 @@ export interface Client {
   contactName: string;
   phone: string;
   email: string;
+  cep?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
   address: string;
   city: string;
   state: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
   segment: string;
   standardUniformNotes: string;
   totalOrdersCount: number;
@@ -417,10 +443,17 @@ export interface CompanyProfile {
   whatsapp: string;
   email: string;
   address: string;
+  street?: string;
+  addressNumber?: string;
+  complement?: string;
   neighborhood: string;
   city: string;
   state: string;
   cep: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
   openingHours: string;
   productionCapacityPiecesMonth: number;
   logoUrl?: string;
@@ -540,9 +573,17 @@ export interface Partner {
   phone: string;
   email?: string;
   address?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
   city: string;
   state: string;
   cep?: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
   partnerType: PartnerServiceCategory;
   capacityPiecesPerMonth?: string;
   defaultCostPerPiece: number;
@@ -740,9 +781,17 @@ export interface Supplier {
   phone: string;
   email?: string;
   address?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
   city: string;
   state: string;
   cep?: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
   category: SupplierCategory;
   paymentTerms: string;
   paymentTermsDays: number;
@@ -854,5 +903,185 @@ export interface SupplierDetailResponse {
   payables: FinancialTransaction[];
 }
 
+// =========================================================================
+// MÓDULO DE RELATÓRIOS AUDITÁVEIS & COMPARTILHAMENTO VIA LINK WHATSAPP / PDF
+// =========================================================================
 
+export type ReportDomain =
+  | 'executivo'
+  | 'producao'
+  | 'comercial'
+  | 'financeiro'
+  | 'estoque'
+  | 'parceiros'
+  | 'fornecedores';
 
+export interface ReportKpiItem {
+  label: string;
+  value: string;
+  sublabel?: string;
+  tone?: 'neutral' | 'crimson' | 'emerald' | 'amber' | 'rose';
+}
+
+export interface ReportColumn {
+  key: string;
+  label: string;
+  align?: 'left' | 'right' | 'center';
+  mono?: boolean;
+}
+
+export interface ReportSection {
+  id: string;
+  title: string;
+  subtitle?: string;
+  summaryRight?: string;
+  columns: ReportColumn[];
+  rows: Array<Record<string, string>>;
+  emptyMessage?: string;
+  totalsRow?: Record<string, string>;
+}
+
+export interface ReportSnapshot {
+  reportCode: string;
+  reportType: ReportDomain;
+  title: string;
+  subtitle?: string;
+  filterSummary: string;
+  filtersMeta?: Record<string, string | number | boolean>;
+  generatedAt: string;
+  generatedBy: string;
+  company: {
+    tradeName: string;
+    name: string;
+    cnpj: string;
+    ie?: string;
+    phone: string;
+    whatsapp?: string;
+    email: string;
+    address: string;
+    neighborhood?: string;
+    city: string;
+    state: string;
+    cep: string;
+    logoUrl?: string;
+  };
+  kpis: ReportKpiItem[];
+  sections: ReportSection[];
+  notes?: string;
+}
+
+export interface SharedReportPublicPayload {
+  reportCode: string;
+  reportType: ReportDomain;
+  createdAt: string;
+  expiresAt: string;
+  createdByName: string;
+  accessCount: number;
+  snapshot: ReportSnapshot;
+}
+
+export interface SharedReportListItem {
+  id: string;
+  reportCode: string;
+  reportType: ReportDomain;
+  title: string;
+  filterSummary: string;
+  createdByName: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  accessCount: number;
+  recipientLabel: string | null;
+  isExpired: boolean;
+}
+
+// =========================================================================
+// GEOLOCALIZAÇÃO POR CEP+NÚMERO, ROTAS E COMPARTILHAMENTO VIA WHATSAPP
+// =========================================================================
+
+export interface GeocodeResult {
+  latitude: number;
+  longitude: number;
+  precision: GeoPrecision;
+  displayName: string;
+  cep?: string;
+  street?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  source: string;
+}
+
+export type LocationEntityType = 'client' | 'partner' | 'supplier' | 'company';
+
+export interface LocationSharePayload {
+  locationCode: string;
+  entityType: LocationEntityType;
+  entityId?: string;
+  title: string;
+  subtitle?: string;
+  contactName?: string;
+  phone?: string;
+  cep?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
+  city: string;
+  state: string;
+  fullAddressLine: string;
+  latitude: number;
+  longitude: number;
+  geoPrecision?: GeoPrecision;
+  notes?: string;
+  company: {
+    tradeName: string;
+    name: string;
+    phone: string;
+    whatsapp?: string;
+    email: string;
+    city: string;
+    state: string;
+    logoUrl?: string;
+  };
+}
+
+export interface SharedLocationPublicPayload {
+  locationCode: string;
+  entityType: LocationEntityType;
+  createdAt: string;
+  expiresAt: string;
+  createdByName: string;
+  accessCount: number;
+  location: LocationSharePayload;
+}
+
+export interface SharedLocationListItem {
+  id: string;
+  locationCode: string;
+  entityType: LocationEntityType;
+  title: string;
+  fullAddressLine: string;
+  createdByName: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  accessCount: number;
+  recipientLabel: string | null;
+  isExpired: boolean;
+}
+
+export interface RouteStepItem {
+  instruction: string;
+  distanceMeters: number;
+  durationSeconds: number;
+  name?: string;
+}
+
+export interface RouteCalculationResult {
+  distanceMeters: number;
+  durationSeconds: number;
+  geometry: Array<[number, number]>;
+  steps: RouteStepItem[];
+  source: 'OSRM' | 'Haversine';
+}

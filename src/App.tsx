@@ -14,6 +14,9 @@ import { LoginView } from './components/LoginView';
 import { WhatsAppOmnichannelView } from './components/WhatsAppOmnichannelView';
 import { PartnersView } from './components/PartnersView';
 import { SuppliersView } from './components/SuppliersView';
+import { ReportsView } from './components/ReportsView';
+import { SharedReportViewer } from './components/SharedReportViewer';
+import { SharedLocationViewer } from './components/SharedLocationViewer';
 
 import { NewOrderModal } from './components/NewOrderModal';
 import { NewQuoteModal } from './components/NewQuoteModal';
@@ -21,6 +24,10 @@ import { PrintOrderTicketModal } from './components/PrintOrderTicketModal';
 import { PrintQuoteModal } from './components/PrintQuoteModal';
 import { HelpManualModal } from './components/HelpManualModal';
 import { FoundationAuditModal } from './components/FoundationAuditModal';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { DEFAULT_BRAND_LOGO_URL } from './data/initialData';
 import { api } from './api/client';
 import { useAuth } from './api/authContext';
 
@@ -30,6 +37,7 @@ import {
   saveERPState,
   resetERPState,
 } from './utils/storage';
+import { isValidCoordinates } from './utils/addressUtils';
 import {
   ProductionOrder,
   Quote,
@@ -79,11 +87,28 @@ export default function App() {
   const [notificationsPayload, setNotificationsPayload] = useState<NotificationsPayload | null>(null);
   const [whatsappUnreadCount, setWhatsappUnreadCount] = useState<number>(0);
   const [whatsappHandoff, setWhatsappHandoff] = useState<{
-    conversationId: string;
+    conversationId?: string;
     draftMessage?: string;
   } | null>(null);
   const [focusedScheduleOrderId, setFocusedScheduleOrderId] = useState<string | null>(null);
+  const [sharedReportToken, setSharedReportToken] = useState<string | null>(() => {
+    try {
+      const param = new URLSearchParams(window.location.search).get('relatorio');
+      return param && param.trim().length > 0 ? param.trim() : null;
+    } catch {
+      return null;
+    }
+  });
+  const [sharedLocationToken, setSharedLocationToken] = useState<string | null>(() => {
+    try {
+      const param = new URLSearchParams(window.location.search).get('mapa');
+      return param && param.trim().length > 0 ? param.trim() : null;
+    } catch {
+      return null;
+    }
+  });
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
+  const [showLoginScreen, setShowLoginScreen] = useState<boolean>(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem('defardas_sidebar_collapsed') === 'true';
@@ -134,6 +159,13 @@ export default function App() {
   useEffect(() => {
     saveERPState(state);
   }, [state]);
+
+  // Ao concluir autenticação, fecha a tela de login para entrar direto no ERP
+  useEffect(() => {
+    if (isAuthenticated) {
+      setShowLoginScreen(false);
+    }
+  }, [isAuthenticated]);
 
   // Carregar dados reais e autoritativos do backend PostgreSQL preservando UUIDs canônicos
   const fetchServerState = useCallback(async () => {
@@ -416,9 +448,18 @@ export default function App() {
             contactName: c.contactName,
             phone: c.phone,
             email: c.email,
+            cep: c.cep,
+            street: c.street,
+            number: c.number,
+            complement: c.complement,
+            neighborhood: c.neighborhood,
             address: c.address,
             city: c.city,
             state: c.state,
+            latitude: typeof c.latitude === 'number' ? c.latitude : undefined,
+            longitude: typeof c.longitude === 'number' ? c.longitude : undefined,
+            geoPrecision: c.geoPrecision,
+            geoSource: c.geoSource,
             segment: c.segment,
             standardUniformNotes: c.standardUniformNotes || '',
             totalOrdersCount: Number(c.totalOrdersCount ?? 0),
@@ -1617,6 +1658,53 @@ export default function App() {
     }
   };
 
+  const handleSendReportViaWhatsApp = async (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => {
+    const cleanPhone = phone.trim();
+    if (!cleanPhone) {
+      setWhatsappHandoff({
+        conversationId: undefined,
+        draftMessage: message,
+      });
+      setCurrentTab('whatsapp');
+      notify(
+        'info',
+        'Link pronto na Central WhatsApp',
+        'Selecione uma conversa ao lado ou clique em Nova Conversa para enviar a mensagem com o link.'
+      );
+      return;
+    }
+    const res = await api.startConversation({
+      phone: cleanPhone,
+      customerName: recipientName.trim() || 'Destinatário',
+    });
+    if (res.status < 200 || res.status >= 300 || !res.data?.id) {
+      notify(
+        'error',
+        'Central WhatsApp indisponível',
+        res.error || `Não foi possível abrir a conversa (HTTP ${res.status}).`
+      );
+      return;
+    }
+    setWhatsappHandoff({
+      conversationId: res.data.id,
+      draftMessage: message,
+    });
+    setCurrentTab('whatsapp');
+    notify(
+      'success',
+      'Mensagem preparada na Central WhatsApp',
+      `Conversa com ${recipientName || cleanPhone} selecionada e link pronto para envio.`
+    );
+  };
+
+  const canUseCentralWhatsApp =
+    Boolean(user?.role) &&
+    ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(user!.role);
+
   // Real operational counts for Sidebar badges & capacity bar
   const activeOrders = state.orders.filter((o) => o.stage !== 'entregue');
   const activeOrdersCount = activeOrders.length;
@@ -1648,45 +1736,167 @@ export default function App() {
     (f) => f.status === 'atrasado' || (f.status === 'pendente' && f.dueDate && f.dueDate < todayISO)
   ).length;
 
+  if (sharedLocationToken) {
+    const defaultOrigin = isValidCoordinates(state.profile.latitude, state.profile.longitude)
+      ? {
+          lat: state.profile.latitude!,
+          lng: state.profile.longitude!,
+          label: `Matriz ${state.profile.tradeName || 'DE FARDAS'}`,
+        }
+      : null;
+
+    return (
+      <>
+        <SharedLocationViewer
+          token={sharedLocationToken}
+          defaultOrigin={defaultOrigin}
+          onExitToLogin={() => {
+            try {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('mapa');
+              url.searchParams.delete('d');
+              window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+            } catch {
+              // Ignorar erro de history API
+            }
+            setSharedLocationToken(null);
+          }}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
+  if (sharedReportToken) {
+    return (
+      <>
+        <SharedReportViewer
+          token={sharedReportToken}
+          onExitToLogin={() => {
+            try {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('relatorio');
+              window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+            } catch {
+              // Ignorar erro de history API
+            }
+            setSharedReportToken(null);
+          }}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white select-none">
-        <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-sm text-slate-300 font-semibold tracking-wide">DE FARDAS ERP</p>
-        <p className="text-xs text-slate-500 mt-1">Verificando sessão segura...</p>
+      <div className="min-h-screen bg-[#0C0C0E] flex flex-col items-center justify-center text-white select-none p-6">
+        <div className="bg-white rounded-2xl p-2 shadow-2xl border border-white/10 mb-5 overflow-hidden">
+          <img
+            src={state.profile.logoUrl || DEFAULT_BRAND_LOGO_URL}
+            alt="DE FARDAS"
+            className="h-24 w-auto object-contain"
+          />
+        </div>
+        <div className="w-7 h-7 border-[3px] border-zinc-800 border-t-[#C8102E] rounded-full animate-spin mb-3" />
+        <p className="text-xs text-zinc-400 font-medium tracking-wide">
+          Verificando sessão segura...
+        </p>
+        <OfflineIndicator />
       </div>
     );
   }
 
-  // Visitante não autenticado navegando na Vitrine Pública (Ambiente 1 isolado — sem Sidebar interna!)
-  if (!isAuthenticated && currentTab === 'portal') {
+  // Tela de Login acionada pelo botão "Acesso ao Sistema" na Vitrine principal
+  if (!isAuthenticated && showLoginScreen) {
     return (
-      <div className="min-h-screen bg-slate-50 text-slate-900 antialiased flex flex-col">
-        <header className="sticky top-0 z-30 bg-slate-950 text-white border-b border-slate-800 px-4 sm:px-8 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            {state.profile.logoUrl ? (
-              <div className="h-8 max-w-[110px] bg-white rounded-md px-1.5 py-0.5 flex items-center justify-center overflow-hidden">
+      <>
+        <LoginView
+          logoUrl={state.profile.logoUrl}
+          companyName={state.profile.tradeName || 'DE FARDAS'}
+          locationLabel={`${state.profile.city || 'São Luís'} — ${state.profile.state || 'MA'}`}
+          onGoToPortal={() => {
+            setShowLoginScreen(false);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
+  // Site Principal Público: Vitrine & Catálogo DE FARDAS (Ambiente 1 isolado — sem Sidebar interna!)
+  if (!isAuthenticated) {
+    const handleOpenSystemLogin = () => {
+      setShowLoginScreen(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    return (
+      <div className="min-h-screen bg-[#F6F6F7] text-[#141416] antialiased flex flex-col">
+        <header className="sticky top-0 z-30 bg-[#111113]/95 backdrop-blur-md text-white border-b border-zinc-800/90 pt-safe">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
+            {/* Zona 1: Marca em linha única */}
+            <a
+              href="#vitrine-catalogo"
+              className="flex items-center gap-3 whitespace-nowrap shrink-0 focus-visible:outline-2"
+            >
+              <span className="h-11 w-12 bg-white rounded-lg p-1 inline-flex items-center justify-center overflow-hidden shrink-0 shadow-xs ring-1 ring-white/20">
                 <img
-                  src={state.profile.logoUrl}
+                  src={state.profile.logoUrl || DEFAULT_BRAND_LOGO_URL}
                   alt={`Logomarca ${state.profile.tradeName}`}
-                  className="max-h-full max-w-full object-contain"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-contain"
                 />
-              </div>
-            ) : (
-              <ShieldCheck className="w-5 h-5 text-blue-400" />
-            )}
-            <span className="font-bold tracking-tight text-sm">{state.profile.tradeName || 'DE FARDAS'}</span>
-            <span className="text-[11px] text-slate-400 hidden sm:inline">
-              · Vitrine Digital & Catálogo B2B ({state.profile.city} - {state.profile.state})
-            </span>
+              </span>
+              <span className="font-bold tracking-tight text-base text-white whitespace-nowrap shrink-0">
+                DE FARDAS
+              </span>
+            </a>
+
+            {/* Zona 2: 4 links de navegação em linha única */}
+            <nav
+              aria-label="Navegação da vitrine"
+              className="hidden md:flex items-center gap-7 text-sm font-medium text-zinc-300"
+            >
+              <a
+                href="#vitrine-catalogo"
+                className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+              >
+                Catálogo
+              </a>
+              <a
+                href="#vitrine-diferenciais"
+                className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+              >
+                Diferenciais
+              </a>
+              <a
+                href="#vitrine-processo"
+                className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+              >
+                Processo
+              </a>
+              <a
+                href="#vitrine-orcamento"
+                className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+              >
+                Orçamento
+              </a>
+            </nav>
+
+            {/* Zona 3: Botão principal de Acesso ao Sistema */}
+            <div className="flex items-center shrink-0">
+              <button
+                type="button"
+                onClick={handleOpenSystemLogin}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#C8102E] hover:bg-[#A60D26] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Acesso ao Sistema</span>
+              </button>
+            </div>
           </div>
-          <button
-            onClick={() => setCurrentTab('dashboard')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-          >
-            <LogIn className="w-3.5 h-3.5" />
-            <span>Acesso Interno ERP</span>
-          </button>
         </header>
 
         {toast && (
@@ -1712,19 +1922,16 @@ export default function App() {
             catalog={state.catalog}
             profile={state.profile}
             onRequestQuote={handleRequestQuoteFromPortal}
+            onOpenSystemLogin={handleOpenSystemLogin}
           />
         </main>
+        <OfflineIndicator />
       </div>
     );
   }
 
-  // Se o usuário não está autenticado e não está na vitrine pública, exige login
-  if (!isAuthenticated) {
-    return <LoginView onGoToPortal={() => setCurrentTab('portal')} />;
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 flex text-slate-900 antialiased">
+    <div className="min-h-screen bg-[#F6F6F7] flex text-[#141416] antialiased">
       {/* Primary Left Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}
@@ -1767,6 +1974,7 @@ export default function App() {
           }}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
           lowStockCount={lowStockCount}
+          logoUrl={state.profile.logoUrl}
           notificationsPayload={notificationsPayload}
           onNotificationAction={handleNotificationAction}
           onOpenHelpManual={() => setIsHelpManualOpen(true)}
@@ -1780,14 +1988,14 @@ export default function App() {
               toast.type === 'error'
                 ? 'bg-rose-50 border-rose-200 text-rose-900'
                 : toast.type === 'info'
-                ? 'bg-blue-50 border-blue-200 text-blue-900'
+                ? 'bg-zinc-900 border-zinc-800 text-zinc-100'
                 : 'bg-emerald-50 border-emerald-200 text-emerald-900'
             }`}>
               <div className="flex items-start gap-2.5">
                 {toast.type === 'error' ? (
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 ) : (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                 )}
                 <div>
                   <div className="font-bold">{toast.title}</div>
@@ -1806,7 +2014,7 @@ export default function App() {
         )}
 
         {/* Viewport Content */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 overflow-y-auto">
           <div className="max-w-7xl mx-auto">
             {currentTab === 'portal' && (
               <PublicPortalView
@@ -1823,6 +2031,9 @@ export default function App() {
                 quotes={state.quotes}
                 inventory={state.inventory}
                 finance={state.finance}
+                clients={state.clients}
+                partners={partners}
+                suppliers={suppliers}
                 onSelectTab={setCurrentTab}
                 onOpenNewOrderModal={() => {
                   setEditingOrder(null);
@@ -1834,6 +2045,7 @@ export default function App() {
                   setFocusedScheduleOrderId(order.id);
                   setCurrentTab('orders');
                 }}
+                onSendViaCentralWhatsApp={handleSendReportViaWhatsApp}
               />
             )}
 
@@ -1898,6 +2110,7 @@ export default function App() {
                 summary={suppliersSummary}
                 inventory={state.inventory}
                 orders={state.orders}
+                profile={state.profile}
                 preselectedReplenish={preselectedReplenish}
                 onClearPreselectedReplenish={() => setPreselectedReplenish(null)}
                 onSaveSupplier={handleSaveSupplier}
@@ -1907,6 +2120,7 @@ export default function App() {
                 onReceivePurchaseOrder={handleReceivePurchaseOrder}
                 onGeneratePurchaseOrderPayable={handleGeneratePurchaseOrderPayable}
                 onOpenSupplierWhatsApp={handleOpenSupplierWhatsApp}
+                onSendViaCentralWhatsApp={canUseCentralWhatsApp ? handleSendReportViaWhatsApp : undefined}
                 onNavigateTab={setCurrentTab}
               />
             )}
@@ -1918,12 +2132,14 @@ export default function App() {
                 forecast={partnerForecast}
                 inventory={state.inventory}
                 orders={state.orders}
+                profile={state.profile}
                 onSavePartner={handleSavePartner}
                 onDeletePartner={handleDeletePartner}
                 onDispatchCustody={handleDispatchPartnerCustody}
                 onReturnCustody={handleReturnPartnerCustody}
                 onCreatePartnerProvision={handleCreatePartnerProvision}
                 onOpenWhatsApp={handleOpenPartnerWhatsApp}
+                onSendViaCentralWhatsApp={canUseCentralWhatsApp ? handleSendReportViaWhatsApp : undefined}
                 onNavigateTab={setCurrentTab}
               />
             )}
@@ -1932,6 +2148,7 @@ export default function App() {
               <ClientsView
                 clients={state.clients}
                 leads={leads}
+                profile={state.profile}
                 onSaveClient={handleSaveClient}
                 onDeleteClient={handleDeleteClient}
                 onSelectClientForQuote={(client) => {
@@ -1940,6 +2157,7 @@ export default function App() {
                   setIsNewQuoteModalOpen(true);
                 }}
                 onOpenWhatsApp={handleOpenClientWhatsApp}
+                onSendViaCentralWhatsApp={canUseCentralWhatsApp ? handleSendReportViaWhatsApp : undefined}
                 onUpdateLeadStatus={handleUpdateLeadStatus}
                 onNavigateTab={setCurrentTab}
               />
@@ -1950,6 +2168,7 @@ export default function App() {
                 profile={state.profile}
                 transactions={state.finance}
                 orders={state.orders}
+                clients={state.clients}
                 partners={partners}
                 suppliers={suppliers}
                 partnerForecast={partnerForecast}
@@ -1958,7 +2177,26 @@ export default function App() {
                 onConfirmPaymentWithVoucher={handleConfirmPaymentWithVoucher}
                 onReverseTransaction={handleReverseTransaction}
                 onSendTransactionWhatsApp={handleSendTransactionWhatsApp}
+                onSendViaCentralWhatsApp={canUseCentralWhatsApp ? handleSendReportViaWhatsApp : undefined}
                 onNavigateTab={setCurrentTab}
+              />
+            )}
+
+            {currentTab === 'reports' && (
+              <ReportsView
+                profile={state.profile}
+                orders={state.orders}
+                quotes={state.quotes}
+                inventory={state.inventory}
+                transactions={state.finance}
+                clients={state.clients}
+                leads={leads}
+                partners={partners}
+                partnerCustody={partnerCustody}
+                partnerForecast={partnerForecast}
+                suppliers={suppliers}
+                purchaseOrders={purchaseOrders}
+                onSendViaCentralWhatsApp={canUseCentralWhatsApp ? handleSendReportViaWhatsApp : undefined}
               />
             )}
 
@@ -1985,6 +2223,7 @@ export default function App() {
                 onSaveProfile={handleSaveProfile}
                 onRestoreState={handleRestoreState}
                 onResetToDefaults={handleResetToDefaults}
+                onSendViaCentralWhatsApp={canUseCentralWhatsApp ? handleSendReportViaWhatsApp : undefined}
               />
             )}
           </div>
@@ -1995,7 +2234,7 @@ export default function App() {
       {confirmDialog && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+            <div className="px-6 py-4 bg-[#111113] text-white flex items-center justify-between">
               <h3 className="text-sm font-bold">{confirmDialog.title}</h3>
               <button
                 onClick={() => setConfirmDialog(null)}
@@ -2092,6 +2331,20 @@ export default function App() {
           }}
         />
       )}
+      {/* Touch-First Mobile Bottom Navigation Bar (< lg) */}
+      <MobileBottomNav
+        currentTab={currentTab}
+        onSelectTab={setCurrentTab}
+        onOpenDrawer={() => setIsMobileSidebarOpen(true)}
+        overdueOrdersCount={overdueOrdersCount}
+        blockedOrdersCount={blockedOrdersCount}
+        whatsappUnreadCount={whatsappUnreadCount}
+        overdueFinanceCount={overdueFinanceCount}
+        lowStockCount={lowStockCount}
+      />
+
+      {/* PWA Network Connectivity Indicator */}
+      <OfflineIndicator />
     </div>
   );
 }

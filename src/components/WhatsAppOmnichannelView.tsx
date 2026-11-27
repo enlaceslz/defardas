@@ -46,6 +46,50 @@ import { PhoneInputBR } from './FormInputs';
 import { maskPhoneBR } from '../utils/masks';
 import { formatCurrencyBRL, formatDateBR, getStageLabel } from '../utils/formatters';
 
+function renderMessageBodyWithLinks(body: string, isOutbound: boolean): React.ReactNode {
+  if (!body) return null;
+  const regex = /(https?:\/\/[^\s<>"'`]+)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(body)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(body.slice(lastIndex, match.index));
+    }
+    let rawUrl = match[0];
+    let trailing = '';
+    while (rawUrl.length > 0 && /[.,;:!?)]$/.test(rawUrl)) {
+      trailing = rawUrl.slice(-1) + trailing;
+      rawUrl = rawUrl.slice(0, -1);
+    }
+    if (rawUrl) {
+      parts.push(
+        <a
+          key={`${match.index}-${rawUrl.slice(0, 24)}`}
+          href={rawUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`underline font-medium break-all ${
+            isOutbound ? 'text-white hover:text-blue-100' : 'text-[#C8102E] hover:text-[#A60D26]'
+          }`}
+        >
+          {rawUrl}
+        </a>
+      );
+    }
+    if (trailing) {
+      parts.push(trailing);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < body.length) {
+    parts.push(body.slice(lastIndex));
+  }
+  return parts.length > 0 ? parts : body;
+}
+
 interface ChannelDiagnostics {
   configured: boolean;
   deliveryMode: 'live' | 'sandbox';
@@ -288,11 +332,13 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
     };
   }, []);
 
-  // Aplicar handoff vindo de outros módulos (Clientes, Parceiros, Fornecedores, PCs, OPs)
+  // Aplicar handoff vindo de outros módulos (Clientes, Parceiros, Fornecedores, PCs, OPs, Mapas)
   useEffect(() => {
-    if (!initialConversationId) return;
-    setActiveConversationId(initialConversationId);
-    activeConvIdRef.current = initialConversationId;
+    if (!initialConversationId && !initialDraftMessage) return;
+    if (initialConversationId) {
+      setActiveConversationId(initialConversationId);
+      activeConvIdRef.current = initialConversationId;
+    }
     if (initialDraftMessage) {
       setInputMessage(initialDraftMessage);
     }
@@ -464,7 +510,7 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
             ? `${liveConnected.length} Provedores Live Conectados`
             : 'Provedor Live Conectado',
         className: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-        dotClass: 'bg-emerald-500 animate-pulse',
+        dotClass: 'bg-emerald-500',
       };
     }
     if (liveConfigured.length > 0) {
@@ -844,12 +890,12 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
               {providerSummary.label}
             </span>
             {totalUnread > 0 && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-600 text-white">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-[#C8102E] text-white">
                 {totalUnread} não {totalUnread === 1 ? 'lida' : 'lidas'}
               </span>
             )}
           </div>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-sm text-zinc-500 mt-1">
             Atendimento unificado com Clientes, Parceiros e Fornecedores, aprovação de arte, cobrança de sinal e status de OPs.
           </p>
         </div>
@@ -863,7 +909,7 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                 key={ch.id}
                 type="button"
                 onClick={() => handleOpenChannelModal(ch)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-blue-50/60 hover:border-blue-300 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 hover:border-zinc-300 text-xs font-medium text-zinc-700 shadow-2xs transition-colors cursor-pointer"
                 title="Abrir diagnóstico, webhook e reconexão do canal"
               >
                 <span
@@ -871,22 +917,22 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                     ch.status === 'connected' && isLive
                       ? 'bg-emerald-500'
                       : ch.status === 'connecting' || ch.status === 'qr_ready'
-                      ? 'bg-amber-500 animate-pulse'
+                      ? 'bg-amber-500'
                       : isLive
                       ? 'bg-rose-500'
-                      : 'bg-slate-400'
+                      : 'bg-zinc-400'
                   }`}
                 />
                 <span className="font-semibold">
                   {ch.provider === 'meta_cloud' ? 'Meta Cloud' : 'WA-AKG'}:
                 </span>
-                <span className="text-slate-500 font-mono text-[11px]">
+                <span className="text-zinc-500 font-mono text-[11px]">
                   {isLive ? ch.phoneNumber : 'Sandbox'}
                 </span>
                 {ch.provider === 'wa_akg' ? (
-                  <QrCode className="w-3.5 h-3.5 text-blue-600" />
+                  <QrCode className="w-3.5 h-3.5 text-[#C8102E]" />
                 ) : (
-                  <Radio className="w-3.5 h-3.5 text-blue-600" />
+                  <Radio className="w-3.5 h-3.5 text-[#C8102E]" />
                 )}
               </button>
             );
@@ -895,7 +941,7 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
           <button
             type="button"
             onClick={handleOpenNewChatModal}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#C8102E] hover:bg-[#A60D26] text-white text-xs font-semibold rounded-lg transition-colors shadow-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             Nova Conversa
@@ -905,7 +951,7 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
             type="button"
             onClick={() => loadData(false)}
             disabled={isRefreshing}
-            className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors border border-slate-200 disabled:opacity-50 cursor-pointer"
+            className="p-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors border border-zinc-200 disabled:opacity-50 cursor-pointer"
             title="Sincronizar conversas e mensagens"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -914,19 +960,19 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
       </div>
 
       {/* Grid Omnichannel: Lista de Conversas (Esquerda) e Chat Ativo (Direita) */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col md:flex-row h-[700px]">
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-xs overflow-hidden flex flex-col md:flex-row min-h-[620px] md:h-[700px]">
         {/* Painel Esquerdo: Lista de Contatos */}
-        <div className="w-full md:w-80 lg:w-96 border-r border-slate-200 flex flex-col h-full bg-slate-50/50">
+        <div className="w-full md:w-80 lg:w-96 border-b md:border-b-0 md:border-r border-zinc-200 flex flex-col h-[300px] md:h-full bg-zinc-50/50">
           {/* Busca e Filtros */}
-          <div className="p-3 border-b border-slate-200 bg-white">
+          <div className="p-3 border-b border-zinc-200 bg-white">
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-2 text-slate-400" />
+              <Search className="w-4 h-4 absolute left-3 top-2 text-zinc-400" />
               <input
                 type="text"
                 placeholder="Buscar contato ou telefone..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-100 border border-transparent rounded-lg focus:bg-white focus:border-blue-500 focus:outline-hidden transition-colors"
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-zinc-100 border border-transparent rounded-lg focus:bg-white focus:border-[#C8102E] focus:outline-hidden transition-colors"
               />
             </div>
 
@@ -936,8 +982,8 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                 onClick={() => setFilterType('all')}
                 className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
                   filterType === 'all'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#111113] text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                 }`}
               >
                 Todas ({conversations.length})
@@ -947,8 +993,8 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                 onClick={() => setFilterType('clients')}
                 className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
                   filterType === 'clients'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#111113] text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                 }`}
               >
                 Carteira
@@ -958,8 +1004,8 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                 onClick={() => setFilterType('network')}
                 className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
                   filterType === 'network'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#111113] text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                 }`}
               >
                 Parceiros/Forn.
@@ -969,8 +1015,8 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                 onClick={() => setFilterType('unread')}
                 className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
                   filterType === 'unread'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#111113] text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                 }`}
               >
                 Não Lidas {totalUnread > 0 ? `(${totalUnread})` : ''}
@@ -980,8 +1026,8 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                 onClick={() => setFilterType('resolved')}
                 className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
                   filterType === 'resolved'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#111113] text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                 }`}
               >
                 Resolvidas
@@ -1014,8 +1060,8 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                     onClick={() => setActiveConversationId(c.id)}
                     className={`w-full text-left p-3.5 transition-colors flex items-start gap-3 cursor-pointer ${
                       isActive
-                        ? 'bg-blue-50/70 border-l-4 border-l-blue-600'
-                        : 'hover:bg-slate-100/70 border-l-4 border-l-transparent'
+                        ? 'bg-rose-50/70'
+                        : 'hover:bg-zinc-100/80'
                     }`}
                   >
                     <div className="relative w-9 h-9 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs shrink-0">
@@ -1060,7 +1106,7 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                           </span>
                         )}
                         {c.unreadCount > 0 && (
-                          <span className="ml-auto px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-600 text-white shrink-0">
+                          <span className="ml-auto px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#C8102E] text-white shrink-0">
                             {c.unreadCount}
                           </span>
                         )}
@@ -1075,11 +1121,11 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
 
         {/* Painel Direito: Chat Ativo */}
         {activeConversation ? (
-          <div className="flex-1 flex flex-col h-full bg-slate-100/40 min-w-0">
+          <div className="flex-1 flex flex-col h-[460px] md:h-full bg-zinc-100/40 min-w-0">
             {/* Topbar da Conversa */}
-            <div className="px-5 py-3.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <div className="px-5 py-3.5 bg-white border-b border-zinc-200 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+                <div className="w-10 h-10 rounded-full bg-[#111113] text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
                   {activeConversation.customerName.substring(0, 2).toUpperCase()}
                 </div>
                 <div className="min-w-0">
@@ -1226,16 +1272,16 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                             isOutbound
                               ? isFailed
                                 ? 'bg-rose-600 text-white rounded-br-sm'
-                                : 'bg-blue-600 text-white rounded-br-sm'
-                              : 'bg-white text-slate-800 border border-slate-200 rounded-bl-sm'
+                                : 'bg-[#111113] text-white rounded-br-sm'
+                              : 'bg-white text-zinc-800 border border-zinc-200 rounded-bl-sm'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2 mb-1">
                             {!isOutbound && m.senderName && (
-                              <p className="text-[10px] font-bold text-blue-600">{m.senderName}</p>
+                              <p className="text-[10px] font-bold text-[#C8102E]">{m.senderName}</p>
                             )}
                             {isOutbound && m.senderName && (
-                              <p className="text-[10px] font-medium text-blue-100/90">{m.senderName}</p>
+                              <p className="text-[10px] font-medium text-zinc-300">{m.senderName}</p>
                             )}
                             {m.messageType === 'template' && (
                               <span
@@ -1297,7 +1343,9 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                             </div>
                           )}
 
-                          <p className="break-words">{m.body}</p>
+                          <p className="break-words whitespace-pre-wrap">
+                            {renderMessageBodyWithLinks(m.body, isOutbound)}
+                          </p>
 
                           {isFailed && (
                             <div className="mt-2 pt-1.5 border-t border-rose-400/40 flex items-center justify-between gap-2 text-[10px] text-rose-100">
@@ -1414,12 +1462,12 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
             {/* Formulário de Envio */}
             <form
               onSubmit={handleSendMessage}
-              className="p-3.5 bg-white border-t border-slate-200 flex items-center gap-2"
+              className="p-3.5 bg-white border-t border-slate-200 flex items-end gap-2"
             >
               <button
                 type="button"
                 onClick={() => setShowAttachmentBar((prev) => !prev)}
-                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                className={`p-2 rounded-xl border transition-colors cursor-pointer shrink-0 ${
                   showAttachmentBar
                     ? 'bg-blue-50 border-blue-300 text-blue-600'
                     : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-800'
@@ -1432,19 +1480,27 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                   <Paperclip className="w-4 h-4" />
                 )}
               </button>
-              <input
-                type="text"
+              <textarea
+                rows={inputMessage.includes('\n') ? Math.min(6, Math.max(2, inputMessage.split('\n').length)) : 1}
                 maxLength={4096}
                 disabled={isSending}
-                placeholder="Escreva uma mensagem no WhatsApp do contato..."
+                placeholder="Escreva uma mensagem no WhatsApp do contato... (Enter envia · Shift+Enter quebra linha)"
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
-                className="flex-1 px-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-blue-500 focus:outline-hidden transition-colors disabled:opacity-60"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (inputMessage.trim() && !isSending) {
+                      handleSendMessage(e as unknown as React.FormEvent);
+                    }
+                  }
+                }}
+                className="flex-1 px-4 py-2 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:bg-white focus:border-[#C8102E] focus:outline-hidden transition-colors disabled:opacity-60 resize-none leading-relaxed max-h-36 overflow-y-auto"
               />
               <button
                 type="submit"
                 disabled={!inputMessage.trim() || isSending}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                className="px-4 py-2 bg-[#C8102E] hover:bg-[#A60D26] disabled:opacity-50 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer shrink-0"
               >
                 {isSending ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1456,13 +1512,13 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
             </form>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 text-sm gap-3">
-            <MessageSquare className="w-12 h-12 text-slate-300" />
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-zinc-400 text-sm gap-3">
+            <MessageSquare className="w-12 h-12 text-zinc-300" />
             <p>Selecione uma conversa ao lado para visualizar e responder no WhatsApp.</p>
             <button
               type="button"
               onClick={handleOpenNewChatModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#C8102E] hover:bg-[#A60D26] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               Iniciar Nova Conversa
@@ -1542,7 +1598,7 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
               </div>
 
               {selectedChannel.diagnostics?.webhookPath && (
-                <div className="p-3 rounded-xl bg-slate-900 text-slate-100 text-[11px] font-mono">
+                <div className="p-3 rounded-xl bg-[#111113] text-slate-100 text-[11px] font-mono">
                   <div className="text-[10px] uppercase text-slate-400 font-sans font-bold mb-1">
                     Endpoint Webhook Assinado
                   </div>
@@ -1620,20 +1676,20 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                   type="button"
                   disabled={isReconnecting}
                   onClick={handleReconnectChannel}
-                  className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-2 bg-[#C8102E] text-white rounded-xl text-xs font-semibold hover:bg-[#A60D26] disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   {isReconnecting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Testar & Reconectar Canal
                 </button>
               ) : (
-                <div className="flex-1 py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-500 text-center">
+                <div className="flex-1 py-2 px-3 bg-zinc-50 border border-zinc-200 rounded-xl text-[11px] text-zinc-500 text-center">
                   Reconexão restrita a Admin / Gerência Comercial
                 </div>
               )}
               <button
                 type="button"
                 onClick={() => setIsChannelModalOpen(false)}
-                className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition-colors cursor-pointer"
+                className="px-4 py-2 bg-zinc-100 text-zinc-700 rounded-xl text-xs font-semibold hover:bg-zinc-200 transition-colors cursor-pointer"
               >
                 Fechar
               </button>
@@ -1644,20 +1700,20 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
 
       {/* Modal Nova Conversa WhatsApp (Cliente, Parceiro, Fornecedor ou Manual) */}
       {isNewChatModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <form
             onSubmit={handleCreateConversation}
-            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4"
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-zinc-200 space-y-4"
           >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
               <div className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-sm text-slate-900">Iniciar Nova Conversa WhatsApp</h3>
+                <MessageSquare className="w-5 h-5 text-[#C8102E]" />
+                <h3 className="font-bold text-sm text-zinc-900">Iniciar Nova Conversa WhatsApp</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsNewChatModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded cursor-pointer"
+                className="text-zinc-400 hover:text-zinc-600 p-1 rounded cursor-pointer"
                 aria-label="Fechar modal"
               >
                 <X className="w-4 h-4" />
@@ -1683,8 +1739,8 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
                   }}
                   className={`py-1.5 text-[11px] font-semibold rounded-lg border transition-colors cursor-pointer ${
                     newChatEntityType === tab.id
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      ? 'bg-[#111113] text-white border-[#111113]'
+                      : 'bg-zinc-50 text-zinc-600 border-zinc-200 hover:bg-zinc-100'
                   }`}
                 >
                   {tab.label}
@@ -1804,7 +1860,7 @@ export const WhatsAppOmnichannelView: React.FC<WhatsAppOmnichannelViewProps> = (
               <button
                 type="submit"
                 disabled={isCreatingChat}
-                className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                className="flex-1 py-2 bg-[#C8102E] text-white rounded-xl text-xs font-semibold hover:bg-[#A60D26] disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 {isCreatingChat && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Abrir Conversa

@@ -15,6 +15,7 @@ import {
   NewPartnerCustody,
 } from '../db/schema/partners';
 import { PartnerEntity, PartnerCustodyEntity } from '../types/db';
+import { addressMetadataService, extractAddressGeoMetadata } from '../services/addressMetadataService';
 
 export class PartnerRepository {
   // =========================================================================
@@ -25,26 +26,33 @@ export class PartnerRepository {
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(partners).orderBy(desc(partners.createdAt));
-        return rows.map((row) => this.mapPartnerToEntity(row));
+        return addressMetadataService.enrichMany(
+          'partner',
+          rows.map((row) => this.mapPartnerToEntity(row))
+        );
       } catch (err) {
         console.warn('⚠️ [PartnerRepository] Erro ao listar parceiros via Drizzle. Recorrendo à memória.', err);
       }
     }
-    return Array.from(fallbackDb.partners.values()).sort(
+    const list = Array.from(fallbackDb.partners.values()).sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
+    return addressMetadataService.enrichMany('partner', list);
   }
 
   public async findById(id: string): Promise<PartnerEntity | null> {
     if (fallbackDb.isConnected()) {
       try {
         const rows = await drizzleDb.select().from(partners).where(eq(partners.id, id)).limit(1);
-        if (rows.length > 0) return this.mapPartnerToEntity(rows[0]);
+        if (rows.length > 0) {
+          return addressMetadataService.enrich('partner', this.mapPartnerToEntity(rows[0]));
+        }
       } catch (err) {
         console.warn(`⚠️ [PartnerRepository] Erro ao buscar parceiro ${id} via Drizzle.`, err);
       }
     }
-    return fallbackDb.partners.get(id) || null;
+    const mem = fallbackDb.partners.get(id);
+    return mem ? addressMetadataService.enrich('partner', mem) : null;
   }
 
   public async save(partner: PartnerEntity): Promise<PartnerEntity> {
@@ -106,11 +114,13 @@ export class PartnerRepository {
       }
     }
 
+    await addressMetadataService.set('partner', partner.id, extractAddressGeoMetadata(partner));
     return partner;
   }
 
   public async delete(id: string): Promise<boolean> {
     fallbackDb.partners.delete(id);
+    await addressMetadataService.delete('partner', id);
     if (fallbackDb.isConnected()) {
       try {
         await drizzleDb.delete(partners).where(eq(partners.id, id));

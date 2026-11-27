@@ -1360,48 +1360,72 @@ quotesRouter.post('/:id/convert-to-order', requirePermission('quotes:convert_to_
     await orderRepository.save(newOrder);
 
     // Lançamentos Financeiros Idempotentes: Sinal de 50% + Saldo na Entrega
-    const finSinalNumber = await sequenceService.nextFinanceNumberAsync();
-    const finSinal: FinancialTransactionEntity = {
-      id: crypto.randomUUID(),
-      transactionNumber: finSinalNumber,
-      productionOrderId: newOrder.id,
-      quoteId: quote.id,
-      type: 'receber',
-      subType: 'entrada_pedido',
-      description: `Sinal 50% - Proposta ${quote.quoteNumber} (${quote.clientName})`,
-      category: 'Venda de Uniformes',
-      amount: quote.entryAmount,
-      dueDate: todayStr,
-      status: 'pendente',
-      paymentMethod: 'pix',
-      referenceId: newOrder.orderNumber,
-      isDemo: quote.isDemo,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const existingFinance = await financeRepository.findAll();
+    const existingSinal = existingFinance.find(
+      (f) =>
+        f.type === 'receber' &&
+        f.status !== 'estornado' &&
+        f.subType === 'entrada_pedido' &&
+        (f.productionOrderId === newOrder.id || f.quoteId === quote.id || f.referenceId === newOrder.orderNumber)
+    );
+    const existingSaldo = existingFinance.find(
+      (f) =>
+        f.type === 'receber' &&
+        f.status !== 'estornado' &&
+        f.subType === 'saldo_entrega' &&
+        (f.productionOrderId === newOrder.id || f.quoteId === quote.id || f.referenceId === newOrder.orderNumber)
+    );
 
-    const finSaldoNumber = await sequenceService.nextFinanceNumberAsync();
-    const finSaldo: FinancialTransactionEntity = {
-      id: crypto.randomUUID(),
-      transactionNumber: finSaldoNumber,
-      productionOrderId: newOrder.id,
-      quoteId: quote.id,
-      type: 'receber',
-      subType: 'saldo_entrega',
-      description: `Saldo 50% na Entrega - Proposta ${quote.quoteNumber} (${quote.clientName})`,
-      category: 'Venda de Uniformes',
-      amount: quote.balanceAmount,
-      dueDate: newOrder.targetDeliveryDate,
-      status: 'pendente',
-      paymentMethod: 'boleto',
-      referenceId: newOrder.orderNumber,
-      isDemo: quote.isDemo,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const finSinal: FinancialTransactionEntity =
+      existingSinal || {
+        id: crypto.randomUUID(),
+        transactionNumber: await sequenceService.nextFinanceNumberAsync(),
+        productionOrderId: newOrder.id,
+        quoteId: quote.id,
+        clientId: quote.clientId,
+        clientName: quote.clientName,
+        type: 'receber',
+        subType: 'entrada_pedido',
+        description: `Sinal 50% - Proposta ${quote.quoteNumber} (${quote.clientName})`,
+        category: 'Venda de Uniformes',
+        amount: quote.entryAmount,
+        dueDate: todayStr,
+        status: 'pendente',
+        paymentMethod: 'pix',
+        referenceId: newOrder.orderNumber,
+        isDemo: quote.isDemo,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
 
-    await financeRepository.save(finSinal);
-    await financeRepository.save(finSaldo);
+    const finSaldo: FinancialTransactionEntity =
+      existingSaldo || {
+        id: crypto.randomUUID(),
+        transactionNumber: await sequenceService.nextFinanceNumberAsync(),
+        productionOrderId: newOrder.id,
+        quoteId: quote.id,
+        clientId: quote.clientId,
+        clientName: quote.clientName,
+        type: 'receber',
+        subType: 'saldo_entrega',
+        description: `Saldo 50% na Entrega - Proposta ${quote.quoteNumber} (${quote.clientName})`,
+        category: 'Venda de Uniformes',
+        amount: quote.balanceAmount,
+        dueDate: newOrder.targetDeliveryDate,
+        status: 'pendente',
+        paymentMethod: 'boleto',
+        referenceId: newOrder.orderNumber,
+        isDemo: quote.isDemo,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+    if (!existingSinal) {
+      await financeRepository.save(finSinal);
+    }
+    if (!existingSaldo) {
+      await financeRepository.save(finSaldo);
+    }
 
     // Atualizar a proposta como convertida e bloqueada
     quote.commercialStatus = 'convertido_em_pedido';

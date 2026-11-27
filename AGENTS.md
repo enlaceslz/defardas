@@ -3,7 +3,7 @@
 **Projeto:** DE FARDAS — Plataforma Integrada de Gestão Comercial, Produção, Suprimentos, Financeiro e Portfólio Digital  
 **Localização da Empresa:** São Luís, Maranhão  
 **Documento Normativo de Referência:** `PRD_DE_FARDAS_v1.6.md` e seus Adendos (v1.2, v1.3, v1.4, v1.6)  
-**Versão da Base de Código:** `1.6.1`  
+**Versão da Base de Código:** `1.6.2` (Auditada em 2026-11-26)  
 
 ---
 
@@ -24,18 +24,19 @@ Qualquer agente ou engenheiro que trabalhe nesta base de código **DEVE** seguir
    - `financialStatus`: `'entrada_pendente' | 'entrada_confirmada' | 'saldo_em_aberto' | 'quitado'`
    - `stage`: `'aguardando_liberacao' | 'corte' | 'bordado_silk' | 'costura' | 'conferencia_qualidade' | 'retrabalho' | 'expedicao' | 'entregue'`
 4. **Aprovação Comercial Desacoplada da Aprovação de Arte:**  
-   O cliente pode **aprovar comercialmente o orçamento e solicitar revisão de arte** simultaneamente (`artStatus`: `'pendente' | 'em_revisao' | 'aguardando_cliente' | 'aprovada'`). Cada revisão de proposta incrementa `version` mantendo histórico, e cada arquivo/revisão de arte é versionado (`artworkVersions`). A OP pode ser criada, mas permanece retida no Gate A.3.2 até a aprovação formal da arte final.
+   O cliente pode **aprovar comercialmente o orçamento e solicitar revisão de arte** simultaneamente (`artStatus`: `'pendente' | 'enviada_para_cliente' | 'revisao_solicitada' | 'aprovada'`). Cada revisão de proposta incrementa `version` mantendo histórico (`versionHistory`), e cada arquivo/revisão de arte é versionado (`artVersions`). A OP pode ser criada, mas permanece retida no Gate A.3.2 até a aprovação formal da arte final.
 5. **Portões Rígidos de Liberação Fabril (Gate A.3.2):**  
    Uma Ordem de Produção (OP) **não pode avançar para o corte** enquanto:
-   - O sinal de entrada (padrão 50%) não for confirmado no Financeiro com comprovante bancário real e evidência auditável (`entryPaymentConfirmed === false`).
+   - O sinal de entrada (padrão 50%) não for confirmado no Financeiro com comprovante bancário real e evidência auditável (`entryPaymentConfirmed === false`, rejeitando comprovantes fictícios/genéricos via `HTTP 422`).
    - A arte/layout personalizado não tiver sido formalmente aprovada pelo cliente (`artApproved === false`).
+   - Uma OP **não pode ser marcada como `quitado`** ao liquidar o saldo de entrega enquanto `entryPaymentConfirmed === false`.
 6. **Idempotência em Conversões e Lançamentos:**  
-   A conversão de Proposta Comercial (`Quote`) em Ordem de Produção (`ProductionOrder`), a geração de títulos financeiros (`entrada_pedido` / `saldo_entrega`), a geração de Contas a Pagar a partir de Pedidos de Compra (`PC`) e o recebimento de webhooks WhatsApp (`externalId`) devem ser estritamente idempotentes — repetições nunca podem duplicar ordens, títulos ou mensagens.
+   A conversão de Proposta Comercial (`Quote`) em Ordem de Produção (`ProductionOrder`) — incluindo bloqueio de criação manual duplicada de OP para `quoteId` já convertido (`HTTP 409 QUOTE_ALREADY_CONVERTED`), a geração de títulos financeiros (`entrada_pedido` / `saldo_entrega`), a geração de Contas a Pagar e recebimento físico de Pedidos de Compra (`PC`, com trava contra recebimentos simultâneos `HTTP 409 PO_RECEIPT_IN_PROGRESS`) e o recebimento de webhooks WhatsApp (`externalId`) devem ser estritamente idempotentes — repetições nunca podem duplicar ordens, títulos, movimentações de estoque ou mensagens.
 7. **Separação Estrita entre Parceiros/Facções e Fornecedores de Insumos:**  
-   - **Parceiros & Facções (`FAC-YYYY-XXXX`):** prestadores de serviço terceirizado (costura, bordado, silk, corte), com **custódia de tecidos remetidos** e **provisão/previsão de pagamento por OP/cliente**.
-   - **Fornecedores & Compras (`FOR-YYYY-XXXX` / `PC-YYYY-XXXX`):** fornecedores de matéria-prima (tecidos, aviamentos, insumos, embalagens, manutenção), com **Pedidos de Compra**, recebimento parcial/total integrando **Kardex + Custo Médio Ponderado (CMP)** e geração de **Contas a Pagar**.
-8. **Segregação e Privacidade:**  
-   Os dados da DE FARDAS são privados e segregados. Nunca embutir credenciais, telefones de fallback fictícios, dados pessoais ou senhas no código versionado ou no bundle frontend.
+   - **Parceiros & Facções (`FAC-YYYY-XXXX`):** prestadores de serviço terceirizado (costura, bordado, silk, corte, acabamento), com **custódia de tecidos remetidos** (preservando `allocatedStock <= physicalStock`) e **provisão/previsão de pagamento por OP/cliente** (com isolamento RBAC de títulos financeiros no Dossiê 360°).
+   - **Fornecedores & Compras (`FOR-YYYY-XXXX` / `PC-YYYY-XXXX`):** fornecedores de matéria-prima (tecidos, aviamentos, insumos, embalagens, manutenção), com **Pedidos de Compra**, recebimento parcial/total (proibido em status `rascunho`, `HTTP 409 PO_NOT_SENT`) integrando **Kardex + Custo Médio Ponderado (CMP)**, geração idempotente de **Contas a Pagar** e bloqueio de cancelamento quando houver título já liquidado (`HTTP 409 PO_HAS_PAID_PAYABLE`).
+8. **Segregação, Privacidade & Mapas Abertos:**  
+   Os dados da DE FARDAS são privados e segregados. Nunca embutir credenciais, telefones de fallback fictícios, dados pessoais ou senhas no código versionado ou no bundle frontend. Para endereçamento e mapas, utilizar exclusivamente **OpenStreetMap / Nominatim + Leaflet** (proibido habilitar ou depender de Google Maps API).
 
 ---
 
@@ -75,27 +76,29 @@ O custo-base de cada item discrimina:
 - `negotiatedUnitPrice`: Preço final praticado na proposta.
 - `belowSuggestedAuthorized`: Booleano indicando autorização explícita de Administrador caso $\text{Negociado} < \text{Sugerido}$.
 
-Propostas mantêm histórico de versões (`version`, `revisionHistory`) e versionamento de arte (`artStatus`, `artVersionNumber`, `artworkVersions`, `artRevisionNotes`) validados por `server/services/artworkValidation.ts`.
+Propostas mantêm histórico de versões (`version`, `versionHistory`) e versionamento de arte (`artStatus`, `artVersionNumber`, `artVersions`, `artRevisionNotes`) validados por `server/services/artworkValidation.ts`. Exclusões de OPs não iniciadas e sem títulos liquidados liberam automaticamente a proposta vinculada (`convertedOrderId`, `isLocked`) para evitar referências órfãs.
 
 ### 3.2. Estoque, Kardex, Custo Médio Ponderado (CMP) e Custódia de Terceiros
-- Cada insumo distingue **Saldo Físico Próprio**, **Saldo Alocado para OPs** e **Saldo em Poder de Terceiros (Facções)**, além de vínculo estruturado com fornecedor padrão (`supplierId`).
+- Cada insumo distingue **Saldo Físico Próprio**, **Saldo Alocado para OPs** e **Saldo em Poder de Terceiros (Facções)**, além de vínculo estruturado com fornecedor padrão (`supplierId`), mantendo o invariante `allocatedStock <= physicalStock` tanto no Estoque quanto nas remessas de custódia em Parceiros.
 - Materiais enviados para facções permanecem sob custódia rastreada (`PartnerCustody`) até confirmação de devolução, consumo ou perda; retornos acima do saldo em custódia são bloqueados (`HTTP 400`).
 - Ajustes de inventário ocorrem exclusivamente via eventos compensatórios auditáveis no Kardex — nunca por sobrescrita cega de saldo.
-- Entradas via **Recebimento de Pedido de Compra** recalculam automaticamente o **Custo Médio Ponderado (CMP)** no servidor e bloqueiam recebimento acima da quantidade pedida.
+- Entradas via **Recebimento de Pedido de Compra** recalculam automaticamente o **Custo Médio Ponderado (CMP)** no servidor, aplicam trava contra concorrência (`PO_RECEIPT_IN_PROGRESS`) e bloqueiam recebimento acima da quantidade pedida ou em pedidos ainda em `rascunho`.
 
 ### 3.3. Fornecedores & Pedidos de Compra (`FOR-YYYY-XXXX` / `PC-YYYY-XXXX`)
-- Ciclo de vida do Pedido de Compra: `rascunho` → `enviado` → `confirmado` → `recebido_parcial` / `recebido_total` (ou `cancelado`).
+- Ciclo de vida do Pedido de Compra: `rascunho` → `enviado` → `confirmado` → `recebido_parcial` / `recebido_total` (ou `cancelado`). Recebimentos são permitidos apenas a partir de `enviado`/`confirmado`/`recebido_parcial` (`HTTP 409 PO_NOT_SENT` para rascunho).
 - Recebimentos lançam entradas automáticas no Estoque/Kardex com CMP e podem efetivar/gerar o título correspondente em Contas a Pagar (`compra_tecido`) de forma idempotente.
+- Cancelamento de PC com título financeiro já pago (`status === 'pago'`) é bloqueado (`HTTP 409 PO_HAS_PAID_PAYABLE`), exigindo estorno explícito prévio no Financeiro.
 - O Dossiê 360° do Fornecedor (`GET /api/suppliers/:id`) aplica isolamento RBAC para ocultar títulos financeiros de perfis sem alçada financeira.
-- Exclusão de fornecedores com insumos vinculados, PCs abertos ou títulos ativos é bloqueada no servidor.
+- Exclusão de fornecedores com insumos vinculados, PCs abertos ou títulos ativos é bloqueada no servidor (`HTTP 409`).
 
 ### 3.4. Parceiros & Facções (`FAC-YYYY-XXXX`)
-- Gestão de oficinas e terceirizados (`costura`, `bordado`, `silk`, `corte`, `acabamento`) com controle de custódia de materiais e previsão/provisão financeira (`server/services/partnerFinanceService.ts`).
+- Gestão de oficinas e terceirizados (`costura`, `bordado`, `silk_screen`, `corte_externo`, `acabamento`) com controle de custódia de materiais e previsão/provisão financeira (`server/services/partnerFinanceService.ts`).
 - Acompanhamento consolidado de valores **já pagos**, **provisionados/pendentes**, **em atraso** e **saldo restante** por parceiro, com referência explícita de serviço, OP e cliente vinculada ao Financeiro.
+- O Dossiê 360° do Parceiro (`GET /api/partners/:id`) aplica isolamento RBAC para ocultar `payables` de perfis sem `finance:view`.
 
 ### 3.5. Cronograma por Etapa (PCP) & Central de Notificações
 - Cada OP possui cronograma detalhado por etapa (`stageSchedule`, gerenciado por `server/services/productionScheduleService.ts`) com datas planejadas/realizadas, responsável, observações e recálculo proporcional até a data prometida de entrega (`targetDeliveryDate`).
-- O motor centralizado de notificações (`server/services/notificationService.ts` → `GET /api/notifications`) consolida alertas acionáveis de: etapas de OP em atraso ou alerta, entregas vencendo/atrasadas, bloqueios do Gate A.3.2, tecidos abaixo do mínimo, Pedidos de Compra com entrega atrasada, títulos financeiros vencendo/atrasados e custódias abertas — filtrados conforme o RBAC do usuário autenticado.
+- O motor centralizado de notificações (`server/services/notificationService.ts` → `GET /api/notifications`) consolida alertas acionáveis de: etapas de OP em atraso ou alerta, entregas vencendo/atrasadas, bloqueios do Gate A.3.2, tecidos abaixo do mínimo (filtrado por `inventory:view`), Pedidos de Compra com entrega atrasada (filtrado por `suppliers:view`), propostas vencendo (filtrado por `quotes:view`) e títulos financeiros vencendo/atrasados (filtrado por `finance:view`).
 
 ### 3.6. Central WhatsApp Omnichannel (Multiprovedor)
 - Suporte nativo a **Meta WhatsApp Business Cloud API** e **WA-AKG (QR Code)** via `server/services/whatsappService.ts` e `server/routes/communicationRoutes.ts`.
@@ -104,17 +107,27 @@ Propostas mantêm histórico de versões (`version`, `revisionHistory`) e versio
 - **6 Templates ERP Homologados (`/api/communication/send-template`):** `quote_ready`, `downpayment_confirmed`, `art_approval`, `order_stage_update`, `purchase_order` e `payment_reminder`.
 - **Handoff & Não Lidas:** abertura de conversas a partir de qualquer módulo seleciona diretamente a conversa na Central WhatsApp; badge da Sidebar sincronizado via `GET /api/communication/unread-summary`.
 
+### 3.7. Endereçamento Estruturado, Mapas (OpenStreetMap/Leaflet) & Compartilhamento de Rota WhatsApp
+- **Sem Google Maps:** Toda geocodificação e exibição de mapa utiliza exclusivamente **Leaflet + OpenStreetMap / Nominatim** (`server/routes/lookupRoutes.ts`, `server/services/addressMetadataService.ts` e `src/components/StructuredAddressFieldset.tsx`).
+- **Localização por CEP + Número:** Formulários de Clientes, Fornecedores e Parceiros/Facções resolvem logradouro, bairro, cidade, UF e coordenadas geográficas (`latitude`, `longitude`) a partir do CEP e número, com ajuste fino de pino no mapa interativo.
+- **Compartilhamento de Endereço & Rota via WhatsApp (`server/routes/locationsRoutes.ts`, `server/services/locationShareService.ts`, `src/components/WhatsAppLocationShareModal.tsx`):**
+  - Gera link público somente leitura auditável com token CSPRNG (`/api/locations/share/:token` → `#/localizacao/:token`) contendo dados completos do endereço, coordenadas e botões para abrir o mapa traçando rota até o destino.
+  - Suporta **compartilhamento livre via WhatsApp sem exigir digitação de telefone** (`https://api.whatsapp.com/send?text=...`), envio direcionado para um número específico, cópia rápida de mensagem/link e envio pela Central WhatsApp interna.
+
+### 3.8. Central de Relatórios & Links Compartilháveis
+- Geração e revogação de snapshots somente leitura com token CSPRNG e expiração configurável (`server/routes/reportsRoutes.ts`, `server/services/reportShareService.ts`), respeitando rigorosamente o RBAC por domínio (`comercial`, `financeiro`, `parceiros`, `fornecedores`, `executivo`, `producao`, `estoque`).
+
 ---
 
 ## 4. Diretrizes de Implementação Técnica
 
 ### 4.1. Arquitetura Homologada e Fronteiras
-- **Frontend:** React 19 SPA com TypeScript estrito, Vite 8 (`allowedHosts: true` em dev para compatibilidade com previews remotos), Tailwind CSS v4, Lucide React e Motion.
-- **Navegação e Isolamento:** Menu lateral (`Sidebar`) persistente no ERP interno; Portal Público desautenticado isolado sem montagem da navegação interna. Proibido uso de `window.alert`, `window.confirm` e `window.open` (usar notificações Toast e modais in-app).
+- **Frontend:** React 19 SPA com TypeScript estrito, Vite 8 (`allowedHosts: true` em dev para compatibilidade com previews remotos), Tailwind CSS v4, Leaflet (OpenStreetMap), Lucide React, Motion e PWA (`vite-plugin-pwa`).
+- **Navegação e Isolamento:** Menu lateral (`Sidebar`) persistente no ERP interno; Portal Público desautenticado e rotas públicas de visualização somente leitura (`#/localizacao/:token`, `#/relatorio/:token`) isoladas sem montagem da navegação interna. Proibido uso de `window.alert`, `window.confirm` e `window.open` (usar notificações Toast, links `<a target="_blank">` quando aplicável e modais in-app).
 - **Backend:** Node.js + TypeScript + Express (`server.ts` / `api/index.ts` compartilhando `server/app.ts`) com:
-  - **14 rotas modulares** em `server/routes/*` (`auth`, `quotes`, `orders`, `finance`, `inventory`, `leads`, `clients`, `communication`, `audit`, `migration`, `lookups`, `partners`, `suppliers`, `notifications`).
-  - **8 serviços de domínio** em `server/services/*` (`pricingEngine`, `artworkValidation`, `productionScheduleService`, `partnerFinanceService`, `notificationService`, `whatsappService`, `sequenceService`, `auditService`).
-  - **10 repositórios tipados** em `server/repositories/*`.
+  - **16 rotas modulares** em `server/routes/*` (`auth`, `quotes`, `orders`, `finance`, `inventory`, `leads`, `clients`, `communication`, `audit`, `migration`, `lookups`, `partners`, `suppliers`, `notifications`, `locations`, `reports`).
+  - **11 serviços de domínio** em `server/services/*` (`pricingEngine`, `artworkValidation`, `productionScheduleService`, `partnerFinanceService`, `notificationService`, `whatsappService`, `sequenceService`, `auditService`, `addressMetadataService`, `locationShareService`, `reportShareService`).
+  - **9 repositórios tipados** em `server/repositories/*` (exportados via `index.ts`).
 - **Banco de Produção (Fonte Única de Verdade):** PostgreSQL próprio da DE FARDAS com **Drizzle ORM** e migrações via **Drizzle Kit** (`drizzle/`), estruturado nos schemas `core`, `crm`, `producao`, `estoque`, `financeiro` e `communication`. Proibido introduzir Prisma, Sequelize ou TypeORM no domínio do ERP.
 - **Armazenamento Privado:** Provedor compatível com S3 para artes, fichas técnicas e comprovantes bancários com evidência auditável (`receiptEvidenceUrl`).
 - **Infraestrutura:** Docker multi-stage (`Dockerfile`) + Docker Compose (`compose.yaml` / `compose.dev.yaml`) com PostgreSQL 16, Redis 7, ERP e WA-AKG, Vercel Full-Stack Serverless (`api/index.ts` + `vercel.json`) e scripts de backup/restore SHA-256 (`scripts/backup.sh`, `scripts/restore.sh`).

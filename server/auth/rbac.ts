@@ -80,7 +80,9 @@ export const PERMISSIONS: Record<string, UserRole[]> = {
   'communication:manage_channels': ['admin', 'gerente_comercial'],
   'communication:send_template': ['admin', 'gerente_comercial', 'vendedor', 'financeiro'],
   
-  // Auditoria e Migração
+  // Auditoria, Relatórios e Migração
+  'reports:view': ['admin', 'gerente_comercial', 'vendedor', 'pcp_producao', 'expedicao_qualidade', 'financeiro'],
+  'reports:share': ['admin', 'gerente_comercial', 'vendedor', 'pcp_producao', 'expedicao_qualidade', 'financeiro'],
   'system:view_audit': ['admin'],
   'system:import_data': ['admin'],
 };

@@ -442,7 +442,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           {canManageItems && (
             <button
               onClick={openNewModal}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 shadow-sm transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#C8102E] rounded-lg hover:bg-[#A60D26] shadow-sm transition-colors cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
               <span>Cadastrar Tecido / Insumo</span>
@@ -539,9 +539,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('stock')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
               activeTab === 'stock'
-                ? 'border-blue-600 text-blue-700'
+                ? 'border-[#C8102E] text-[#C8102E]'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -551,9 +551,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('kardex')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
               activeTab === 'kardex'
-                ? 'border-blue-600 text-blue-700'
+                ? 'border-[#C8102E] text-[#C8102E]'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -937,7 +937,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       {isModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <h3 className="text-base font-bold">
                 {editingItem ? `Editar Insumo [${editingItem.code}]` : 'Cadastrar Matéria-Prima no Estoque'}
               </h3>
@@ -1123,7 +1123,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <button
                   type="submit"
                   disabled={isSavingItem}
-                  className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 cursor-pointer disabled:opacity-60"
+                  className="px-5 py-2 bg-[#C8102E] text-white font-semibold rounded-lg hover:bg-[#A60D26] transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
                 >
                   {isSavingItem ? 'Salvando...' : editingItem ? 'Salvar Alterações' : 'Cadastrar Insumo'}
                 </button>
@@ -1137,7 +1137,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       {movementItem && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white">
+            <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white">
               <div>
                 <h3 className="text-base font-bold">Movimentação Auditada de Estoque</h3>
                 <p className="text-[11px] text-slate-400 font-mono">
@@ -1295,7 +1295,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <button
                   type="submit"
                   disabled={isSubmittingMovement}
-                  className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 disabled:opacity-60 cursor-pointer"
+                  className="px-5 py-2 bg-[#C8102E] text-white font-semibold rounded-lg hover:bg-[#A60D26] transition-colors disabled:opacity-60 cursor-pointer whitespace-nowrap"
                 >
                   {isSubmittingMovement ? 'Registrando...' : 'Registrar Evento'}
                 </button>

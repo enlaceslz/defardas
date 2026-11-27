@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutDashboard,
   Factory,
@@ -10,8 +10,10 @@ import {
   AlertTriangle,
   Shirt,
   Plus,
-  ChevronLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
   ChevronRight,
+  ChevronDown,
   X,
   HelpCircle,
   MessageSquare,
@@ -20,9 +22,13 @@ import {
   Handshake,
   CalendarClock,
   Truck,
+  Search,
+  FileBarChart2,
 } from 'lucide-react';
 import { CompanyProfile } from '../types/erp';
 import { useAuth } from '../api/authContext';
+import { DEFAULT_BRAND_LOGO_URL } from '../data/initialData';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface SidebarProps {
   currentTab: string;
@@ -50,19 +56,50 @@ interface SidebarProps {
   onOpenHelpManual: () => void;
 }
 
+type IndicatorTone = 'neutral' | 'danger' | 'warning' | 'success';
+
 interface SidebarNavItem {
   id: string;
   label: string;
+  keywords: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge: string | null;
-  badgeStyle: string;
-  isAlertDot?: boolean;
-  dotColor?: string;
+  indicatorText: string | null;
+  indicatorTone: IndicatorTone;
+  detailTooltip?: string;
+  urgentDot?: boolean;
+  dotClass?: string;
 }
 
 interface SidebarNavGroup {
+  id: string;
   groupTitle: string;
   items: SidebarNavItem[];
+}
+
+interface FloatingTooltipState {
+  label: string;
+  detail?: string | null;
+  top: number;
+  left: number;
+}
+
+const ROLE_LABELS_PT: Record<string, string> = {
+  admin: 'Administrador',
+  gerente_comercial: 'Gerente Comercial',
+  vendedor: 'Vendedor',
+  pcp_producao: 'PCP & Produção',
+  expedicao_qualidade: 'Expedição & Qualidade',
+  financeiro: 'Financeiro',
+};
+
+const GROUPS_STORAGE_KEY = 'defardas_sidebar_groups_v2';
+
+function normalizeText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -92,17 +129,64 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { user, logout } = useAuth();
   const role = user?.role || '';
+  const [searchQuery, setSearchQuery] = useState('');
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [floatingTooltip, setFloatingTooltip] = useState<FloatingTooltipState | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(GROUPS_STORAGE_KEY);
+      return saved ? (JSON.parse(saved) as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const node = tooltipRef.current;
+    if (!node || !floatingTooltip) return;
+    node.style.top = `${floatingTooltip.top}px`;
+    node.style.left = `${floatingTooltip.left}px`;
+  }, [floatingTooltip]);
 
   // Permissões alinhadas estritamente com server/auth/rbac.ts
   const canCreateOrder = ['admin', 'gerente_comercial', 'pcp_producao'].includes(role);
   const canCreateQuote = ['admin', 'gerente_comercial', 'vendedor'].includes(role);
   const canViewSuppliers = ['admin', 'pcp_producao', 'financeiro', 'gerente_comercial'].includes(role);
-  const canViewPartners = ['admin', 'gerente_comercial', 'pcp_producao', 'expedicao_qualidade', 'financeiro'].includes(role);
+  const canViewPartners = [
+    'admin',
+    'gerente_comercial',
+    'pcp_producao',
+    'expedicao_qualidade',
+    'financeiro',
+  ].includes(role);
   const canViewFinance = ['admin', 'financeiro', 'gerente_comercial'].includes(role);
   const canViewWhatsApp = ['admin', 'gerente_comercial', 'vendedor', 'financeiro'].includes(role);
   const canViewSettings = role === 'admin';
 
-  // Fechar drawer mobile com tecla Escape e travar scroll do body quando aberto
+  const focusDesktopSearch = useCallback(() => {
+    if (isCollapsed) {
+      onToggleCollapse();
+      window.setTimeout(() => searchInputRef.current?.focus(), 140);
+    } else {
+      searchInputRef.current?.focus();
+    }
+  }, [isCollapsed, onToggleCollapse]);
+
+  // Atalho Ctrl+K / Cmd+K para focar busca rápida de módulos
+  useEffect(() => {
+    const handleShortcut = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        focusDesktopSearch();
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [focusDesktopSearch]);
+
+  // Fechar drawer mobile com Escape e travar scroll do body
   useEffect(() => {
     if (!isMobileOpen) return;
 
@@ -122,514 +206,923 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [isMobileOpen, onCloseMobile]);
 
-  const financeBadge =
-    overdueFinanceCount > 0
-      ? `${overdueFinanceCount} venc.`
-      : pendingDownpaymentsCount > 0
-        ? `${pendingDownpaymentsCount} ${pendingDownpaymentsCount === 1 ? 'sinal' : 'sinais'}`
-        : null;
+  // Limpar tooltip flutuante ao expandir/recolher ou trocar de aba
+  useEffect(() => {
+    setFloatingTooltip(null);
+  }, [isCollapsed, currentTab]);
 
-  const financeBadgeStyle =
-    overdueFinanceCount > 0
-      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold'
-      : 'bg-blue-500/20 text-blue-300 border border-blue-500/30 font-semibold';
+  const rawGroups: SidebarNavGroup[] = useMemo(() => {
+    const financeIndicator =
+      overdueFinanceCount > 0
+        ? `${overdueFinanceCount} venc.`
+        : pendingDownpaymentsCount > 0
+          ? `${pendingDownpaymentsCount} ${pendingDownpaymentsCount === 1 ? 'sinal' : 'sinais'}`
+          : null;
 
-  const rawGroups: SidebarNavGroup[] = [
-    {
-      groupTitle: 'Vitrine Digital & B2B',
-      items: [
-        {
-          id: 'portal',
-          label: 'Site & Catálogo Online',
-          icon: Shirt,
-          badge: null,
-          badgeStyle: '',
-        },
-      ],
-    },
-    {
-      groupTitle: 'PCP & Chão de Fábrica',
-      items: [
-        {
-          id: 'dashboard',
-          label: 'Painel Geral',
-          icon: LayoutDashboard,
-          badge: null,
-          badgeStyle: '',
-        },
-        {
-          id: 'orders',
-          label: 'Ordens de Produção',
-          icon: Factory,
-          badge:
-            overdueOrdersCount > 0
-              ? `${overdueOrdersCount} atras.`
-              : activeOrdersCount > 0
-                ? `${activeOrdersCount} OPs`
+    const financeTone: IndicatorTone =
+      overdueFinanceCount > 0 ? 'danger' : pendingDownpaymentsCount > 0 ? 'warning' : 'neutral';
+
+    return [
+      {
+        id: 'pcp',
+        groupTitle: 'Operação e fábrica',
+        items: [
+          {
+            id: 'dashboard',
+            label: 'Painel Geral',
+            keywords: 'dashboard resumo kpi indicadores inicio home painel',
+            icon: LayoutDashboard,
+            indicatorText: null,
+            indicatorTone: 'neutral',
+          },
+          {
+            id: 'orders',
+            label: 'Ordens de Produção',
+            keywords: 'op pcp producao kanban corte costura cronograma prazo gate entrega',
+            icon: Factory,
+            indicatorText:
+              overdueOrdersCount > 0
+                ? `${overdueOrdersCount} atras.`
+                : activeOrdersCount > 0
+                  ? `${activeOrdersCount}`
+                  : null,
+            indicatorTone:
+              overdueOrdersCount > 0
+                ? 'danger'
+                : blockedOrdersCount > 0
+                  ? 'warning'
+                  : 'neutral',
+            detailTooltip:
+              overdueOrdersCount > 0
+                ? `${overdueOrdersCount} em atraso · ${activeOrdersCount} ativas`
+                : blockedOrdersCount > 0
+                  ? `${blockedOrdersCount} no Gate A.3.2 · ${activeOrdersCount} ativas`
+                  : activeOrdersCount > 0
+                    ? `${activeOrdersCount} ativas`
+                    : undefined,
+            urgentDot: overdueOrdersCount > 0 || blockedOrdersCount > 0,
+            dotClass: overdueOrdersCount > 0 ? 'bg-rose-500' : 'bg-amber-400',
+          },
+          {
+            id: 'inventory',
+            label: 'Estoque & Tecidos',
+            keywords: 'tecidoteca insumo kardex cmp aviamento malha brim estoque',
+            icon: Boxes,
+            indicatorText: lowStockCount > 0 ? `${lowStockCount} crít.` : null,
+            indicatorTone: lowStockCount > 0 ? 'warning' : 'neutral',
+            detailTooltip:
+              lowStockCount > 0
+                ? `${lowStockCount} ${lowStockCount === 1 ? 'item abaixo do mínimo' : 'itens abaixo do mínimo'}`
+                : undefined,
+            urgentDot: lowStockCount > 0,
+            dotClass: 'bg-amber-400',
+          },
+          ...(canViewSuppliers
+            ? [
+                {
+                  id: 'suppliers',
+                  label: 'Fornecedores & Compras',
+                  keywords: 'fornecedor compra pedido pc materia prima tecido suprimentos',
+                  icon: Truck,
+                  indicatorText:
+                    delayedPurchaseOrdersCount > 0
+                      ? `${delayedPurchaseOrdersCount} atras.`
+                      : openPurchaseOrdersCount > 0
+                        ? `${openPurchaseOrdersCount} ${openPurchaseOrdersCount === 1 ? 'PC' : 'PCs'}`
+                        : null,
+                  indicatorTone: delayedPurchaseOrdersCount > 0 ? 'danger' : 'neutral',
+                  detailTooltip:
+                    delayedPurchaseOrdersCount > 0
+                      ? `${delayedPurchaseOrdersCount} PC em atraso`
+                      : openPurchaseOrdersCount > 0
+                        ? `${openPurchaseOrdersCount} pedidos em aberto`
+                        : undefined,
+                  urgentDot: delayedPurchaseOrdersCount > 0,
+                  dotClass: 'bg-rose-500',
+                } as SidebarNavItem,
+              ]
+            : []),
+          ...(canViewPartners
+            ? [
+                {
+                  id: 'partners',
+                  label: 'Parceiros & Facções',
+                  keywords: 'faccao terceirizado oficina costura bordado silk custodia parceiro',
+                  icon: Handshake,
+                  indicatorText: openCustodyCount > 0 ? `${openCustodyCount} cust.` : null,
+                  indicatorTone: 'neutral',
+                  detailTooltip:
+                    openCustodyCount > 0
+                      ? `${openCustodyCount} remessas em custódia`
+                      : undefined,
+                } as SidebarNavItem,
+              ]
+            : []),
+        ],
+      },
+      {
+        id: 'comercial',
+        groupTitle: 'Comercial e atendimento',
+        items: [
+          {
+            id: 'quotes',
+            label: 'Orçamentos & Preços',
+            keywords: 'orcamento proposta markup preco arte aprovacao venda comercial',
+            icon: FileText,
+            indicatorText: pendingQuotesCount > 0 ? `${pendingQuotesCount}` : null,
+            indicatorTone: 'neutral',
+            detailTooltip:
+              pendingQuotesCount > 0 ? `${pendingQuotesCount} propostas em aberto` : undefined,
+          },
+          {
+            id: 'clients',
+            label: 'Clientes & Leads CRM',
+            keywords: 'cliente crm empresa cnpj lead funil carteira contato',
+            icon: Users,
+            indicatorText:
+              newLeadsCount > 0
+                ? `${newLeadsCount} ${newLeadsCount === 1 ? 'lead' : 'leads'}`
                 : null,
-          badgeStyle:
-            overdueOrdersCount > 0 || blockedOrdersCount > 0
-              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold'
-              : 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
-          isAlertDot: blockedOrdersCount > 0 || overdueOrdersCount > 0,
-          dotColor: 'bg-rose-400',
-        },
-        {
-          id: 'inventory',
-          label: 'Estoque & Tecidos',
-          icon: Boxes,
-          badge: lowStockCount > 0 ? `${lowStockCount} críticos` : null,
-          badgeStyle: 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold',
-          isAlertDot: lowStockCount > 0,
-          dotColor: 'bg-amber-400',
-        },
-        ...(canViewSuppliers
-          ? [
-              {
-                id: 'suppliers',
-                label: 'Fornecedores & Compras',
-                icon: Truck,
-                badge:
-                  delayedPurchaseOrdersCount > 0
-                    ? `${delayedPurchaseOrdersCount} atras.`
-                    : openPurchaseOrdersCount > 0
-                      ? `${openPurchaseOrdersCount} ${openPurchaseOrdersCount === 1 ? 'PC' : 'PCs'}`
+            indicatorTone: newLeadsCount > 0 ? 'warning' : 'neutral',
+            detailTooltip:
+              newLeadsCount > 0 ? `${newLeadsCount} novos leads` : undefined,
+          },
+          ...(canViewWhatsApp
+            ? [
+                {
+                  id: 'whatsapp',
+                  label: 'Central WhatsApp',
+                  keywords: 'whatsapp chat atendimento mensagem omnichannel zap conversa',
+                  icon: MessageSquare,
+                  indicatorText:
+                    whatsappUnreadCount > 0
+                      ? `${whatsappUnreadCount} ${whatsappUnreadCount === 1 ? 'nova' : 'novas'}`
                       : null,
-                badgeStyle:
-                  delayedPurchaseOrdersCount > 0
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold'
-                    : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold',
-                isAlertDot: delayedPurchaseOrdersCount > 0,
-                dotColor: 'bg-rose-400',
-              },
-            ]
-          : []),
-        ...(canViewPartners
-          ? [
-              {
-                id: 'partners',
-                label: 'Parceiros & Facções',
-                icon: Handshake,
-                badge: openCustodyCount > 0 ? `${openCustodyCount} custódia` : null,
-                badgeStyle: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold',
-              },
-            ]
-          : []),
-      ],
-    },
-    {
-      groupTitle: 'Gestão Comercial',
-      items: [
-        {
-          id: 'quotes',
-          label: 'Orçamentos & Preços',
-          icon: FileText,
-          badge: pendingQuotesCount > 0 ? `${pendingQuotesCount}` : null,
-          badgeStyle: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
-        },
-        {
-          id: 'clients',
-          label: 'Carteira de Clientes',
-          icon: Users,
-          badge: newLeadsCount > 0 ? `${newLeadsCount} ${newLeadsCount === 1 ? 'lead' : 'leads'}` : null,
-          badgeStyle: 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold',
-        },
-        ...(canViewWhatsApp
-          ? [
-              {
-                id: 'whatsapp',
-                label: 'Central WhatsApp',
-                icon: MessageSquare,
-                badge:
-                  whatsappUnreadCount > 0
-                    ? `${whatsappUnreadCount} ${whatsappUnreadCount === 1 ? 'nova' : 'novas'}`
-                    : null,
-                badgeStyle:
-                  'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold',
-                isAlertDot: whatsappUnreadCount > 0,
-                dotColor: 'bg-emerald-400',
-              },
-            ]
-          : []),
-      ],
-    },
-    {
-      groupTitle: 'Controladoria & Sistema',
-      items: [
-        ...(canViewFinance
-          ? [
-              {
-                id: 'finance',
-                label: 'Fluxo Financeiro',
-                icon: Wallet,
-                badge: financeBadge,
-                badgeStyle: financeBadgeStyle,
-                isAlertDot: overdueFinanceCount > 0 || pendingDownpaymentsCount > 0,
-                dotColor: overdueFinanceCount > 0 ? 'bg-rose-400' : 'bg-blue-400',
-              },
-            ]
-          : []),
-        ...(canViewSettings
-          ? [
-              {
-                id: 'settings',
-                label: 'Configurações & Backup',
-                icon: Settings,
-                badge: null,
-                badgeStyle: '',
-              },
-            ]
-          : []),
-        {
-          id: 'help_manual',
-          label: 'Manual Operacional PRD',
-          icon: HelpCircle,
-          badge: 'v1.6',
-          badgeStyle: 'bg-blue-500/15 text-blue-300 border border-blue-500/25',
-          isAlertDot: false,
-        },
-      ],
-    },
-  ];
+                  indicatorTone: whatsappUnreadCount > 0 ? 'success' : 'neutral',
+                  detailTooltip:
+                    whatsappUnreadCount > 0
+                      ? `${whatsappUnreadCount} mensagens não lidas`
+                      : undefined,
+                  urgentDot: whatsappUnreadCount > 0,
+                  dotClass: 'bg-emerald-400',
+                } as SidebarNavItem,
+              ]
+            : []),
+        ],
+      },
+      {
+        id: 'gestao',
+        groupTitle: 'Gestão e sistema',
+        items: [
+          ...(canViewFinance
+            ? [
+                {
+                  id: 'finance',
+                  label: 'Fluxo Financeiro',
+                  keywords: 'financeiro caixa pagar receber sinal 50 comprovante titulo',
+                  icon: Wallet,
+                  indicatorText: financeIndicator,
+                  indicatorTone: financeTone,
+                  detailTooltip:
+                    overdueFinanceCount > 0
+                      ? `${overdueFinanceCount} títulos vencidos`
+                      : pendingDownpaymentsCount > 0
+                        ? `${pendingDownpaymentsCount} sinais pendentes`
+                        : undefined,
+                  urgentDot: overdueFinanceCount > 0 || pendingDownpaymentsCount > 0,
+                  dotClass: overdueFinanceCount > 0 ? 'bg-rose-500' : 'bg-amber-400',
+                } as SidebarNavItem,
+              ]
+            : []),
+          {
+            id: 'reports',
+            label: 'Relatórios & Exportação',
+            keywords: 'relatorio pdf whatsapp exportacao filtro kpi estoque financeiro pcp',
+            icon: FileBarChart2,
+            indicatorText: null,
+            indicatorTone: 'neutral',
+          },
+          {
+            id: 'portal',
+            label: 'Vitrine & Catálogo B2B',
+            keywords: 'portal site publico catalogo vitrine portfolio landing',
+            icon: Shirt,
+            indicatorText: null,
+            indicatorTone: 'neutral',
+          },
+          ...(canViewSettings
+            ? [
+                {
+                  id: 'settings',
+                  label: 'Configurações & Backup',
+                  keywords: 'configuracao empresa perfil logo backup restauracao sistema',
+                  icon: Settings,
+                  indicatorText: null,
+                  indicatorTone: 'neutral',
+                } as SidebarNavItem,
+              ]
+            : []),
+          {
+            id: 'help_manual',
+            label: 'Manual Operacional',
+            keywords: 'ajuda manual prd regras negocio documentacao suporte',
+            icon: HelpCircle,
+            indicatorText: null,
+            indicatorTone: 'neutral',
+          },
+        ],
+      },
+    ];
+  }, [
+    activeOrdersCount,
+    blockedOrdersCount,
+    canViewFinance,
+    canViewPartners,
+    canViewSettings,
+    canViewSuppliers,
+    canViewWhatsApp,
+    delayedPurchaseOrdersCount,
+    lowStockCount,
+    newLeadsCount,
+    openCustodyCount,
+    openPurchaseOrdersCount,
+    overdueFinanceCount,
+    overdueOrdersCount,
+    pendingDownpaymentsCount,
+    pendingQuotesCount,
+    whatsappUnreadCount,
+  ]);
 
-  const menuGroups = rawGroups.filter((g) => g.items.length > 0);
+  // Garante automaticamente que o grupo da aba ativa esteja expandido
+  useEffect(() => {
+    const ownerGroup = rawGroups.find((g) => g.items.some((item) => item.id === currentTab));
+    if (!ownerGroup) return;
+    setCollapsedGroups((prev) => {
+      if (!prev[ownerGroup.id]) return prev;
+      const next = { ...prev, [ownerGroup.id]: false };
+      try {
+        localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Ignorar indisponibilidade de storage
+      }
+      return next;
+    });
+  }, [currentTab, rawGroups]);
 
-  // Cálculo real de ocupação fabril baseado nas peças efetivas em produção (zero estimativa fictícia)
+  const normalizedQuery = normalizeText(searchQuery);
+
+  const menuGroups = useMemo(() => {
+    if (!normalizedQuery) return rawGroups;
+    return rawGroups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter(
+          (item) =>
+            normalizeText(item.label).includes(normalizedQuery) ||
+            normalizeText(item.keywords).includes(normalizedQuery)
+        ),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [rawGroups, normalizedQuery]);
+
+  const flattenedResults = useMemo(
+    () => menuGroups.flatMap((group) => group.items),
+    [menuGroups]
+  );
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [normalizedQuery]);
+
+  const navigateToItem = useCallback(
+    (itemId: string) => {
+      if (itemId === 'help_manual') {
+        onOpenHelpManual();
+      } else {
+        onSelectTab(itemId);
+      }
+      setSearchQuery('');
+      setFloatingTooltip(null);
+      onCloseMobile();
+    },
+    [onCloseMobile, onOpenHelpManual, onSelectTab]
+  );
+
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = { ...prev, [groupId]: !prev[groupId] };
+      try {
+        localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Ignorar indisponibilidade de storage
+      }
+      return next;
+    });
+  };
+
+  // Cálculo real de ocupação fabril baseado nas peças efetivas em produção
   const capacityTotal = profile.productionCapacityPiecesMonth || 5000;
-  const rawCapacityPercent = capacityTotal > 0 ? Math.round((activePiecesCount / capacityTotal) * 100) : 0;
-  const capacityBarPercent = Math.min(100, rawCapacityPercent);
+  const rawCapacityPercent =
+    capacityTotal > 0 ? Math.round((activePiecesCount / capacityTotal) * 100) : 0;
+  const capacityBarPercent = Math.min(100, Math.max(0, rawCapacityPercent));
   const isOverCapacity = activePiecesCount > capacityTotal;
+  const logoSrc = profile.logoUrl || DEFAULT_BRAND_LOGO_URL;
 
-  const sidebarContent = (
-    <div className="flex flex-col h-full justify-between select-none bg-slate-900 text-slate-300">
-      {/* Top Header & Navigation */}
-      <div className="flex flex-col flex-1 min-h-0">
-        {/* Brand Lockup */}
-        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800/90 bg-slate-950/40">
-          <button
-            type="button"
-            onClick={() => {
-              onSelectTab('dashboard');
-              onCloseMobile();
-            }}
-            className="flex items-center gap-3 text-left group min-w-0 cursor-pointer"
-            title="Ir para o Painel Geral"
+  // Alerta operacional consolidado (máximo 1 linha compacta para preservar área de navegação)
+  const primaryAlert = useMemo(() => {
+    const categories = [
+      overdueOrdersCount > 0 ? 'overdue' : null,
+      blockedOrdersCount > 0 ? 'blocked' : null,
+      lowStockCount > 0 ? 'stock' : null,
+    ].filter(Boolean);
+
+    if (categories.length === 0) return null;
+    const extraCount = categories.length - 1;
+
+    if (overdueOrdersCount > 0) {
+      return {
+        tab: 'orders',
+        icon: CalendarClock,
+        text: `${overdueOrdersCount} ${overdueOrdersCount === 1 ? 'OP em atraso' : 'OPs em atraso'}`,
+        extraCount,
+        toneClass:
+          'bg-rose-500/[0.11] hover:bg-rose-500/[0.17] border-rose-500/25 text-rose-200',
+        iconClass: 'text-rose-400',
+      };
+    }
+
+    if (blockedOrdersCount > 0) {
+      return {
+        tab: 'orders',
+        icon: ShieldAlert,
+        text: `${blockedOrdersCount} ${blockedOrdersCount === 1 ? 'OP no Gate A.3.2' : 'OPs no Gate A.3.2'}`,
+        extraCount,
+        toneClass:
+          'bg-white/[0.05] hover:bg-white/[0.09] border-white/[0.09] text-zinc-200',
+        iconClass: 'text-[#E3263E]',
+      };
+    }
+
+    return {
+      tab: 'inventory',
+      icon: AlertTriangle,
+      text: `${lowStockCount} ${lowStockCount === 1 ? 'insumo crítico' : 'insumos críticos'}`,
+      extraCount,
+      toneClass:
+        'bg-amber-500/[0.10] hover:bg-amber-500/[0.16] border-amber-500/25 text-amber-200',
+      iconClass: 'text-amber-400',
+    };
+  }, [blockedOrdersCount, lowStockCount, overdueOrdersCount]);
+
+  const indicatorToneClass = (tone: IndicatorTone, isActive: boolean): string => {
+    if (isActive) {
+      if (tone === 'danger') return 'text-rose-300 font-semibold';
+      if (tone === 'warning') return 'text-amber-300 font-medium';
+      if (tone === 'success') return 'text-emerald-300 font-semibold';
+      return 'text-zinc-200 font-medium';
+    }
+    if (tone === 'danger') return 'text-rose-400 font-semibold';
+    if (tone === 'warning') return 'text-amber-300 font-medium';
+    if (tone === 'success') return 'text-emerald-400 font-semibold';
+    return 'text-zinc-500 group-hover:text-zinc-300 font-medium';
+  };
+
+  const showTooltipForElement = (
+    el: HTMLElement,
+    label: string,
+    detail?: string | null
+  ) => {
+    const rect = el.getBoundingClientRect();
+    setFloatingTooltip({
+      label,
+      detail,
+      top: rect.top + rect.height / 2,
+      left: rect.right + 10,
+    });
+  };
+
+  const renderSidebarBody = (mobileMode: boolean) => {
+    const collapsed = !mobileMode && isCollapsed;
+    const hasBothCreateActions = canCreateOrder && canCreateQuote;
+    const roleLabel = ROLE_LABELS_PT[role] || role.replace(/_/g, ' ');
+
+    return (
+      <div className="flex flex-col h-full justify-between select-none bg-[#101012] text-zinc-300">
+        {/* Seção Superior: Marca, Ações Rápidas, Busca e Navegação */}
+        <div className="flex flex-col flex-1 min-h-0">
+          {/* Cabeçalho da Marca + Controle de Recolher/Fechar */}
+          <div
+            className={`flex items-center border-b border-white/[0.07] bg-[#0B0B0D] ${
+              collapsed ? 'flex-col gap-2 px-2 py-3' : 'justify-between px-3.5 h-16'
+            }`}
           >
-            <div
-              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md transition-transform group-hover:scale-105 overflow-hidden ${
-                profile.logoUrl
-                  ? 'bg-white p-1 shadow-slate-950/50 border border-slate-700/60'
-                  : 'bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 text-white shadow-blue-900/40'
-              }`}
-            >
-              {profile.logoUrl ? (
-                <img
-                  src={profile.logoUrl}
-                  alt={`Logomarca ${profile.tradeName}`}
-                  className="max-h-full max-w-full object-contain"
-                />
-              ) : (
-                <Shirt className="w-5 h-5 text-white" />
-              )}
-            </div>
-            {!isCollapsed && (
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-extrabold tracking-tight text-white block truncate leading-none">
-                    {profile.tradeName || 'DE FARDAS'}
-                  </span>
-                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                    ERP
-                  </span>
-                </div>
-                <span className="text-[10px] font-medium text-slate-400 block truncate mt-1">
-                  {profile.city} — {profile.state}
-                </span>
-              </div>
-            )}
-          </button>
-
-          {/* Mobile close button */}
-          <button
-            type="button"
-            onClick={onCloseMobile}
-            className="lg:hidden p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer hover:bg-slate-800"
-            aria-label="Fechar menu"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Role-Aligned Primary Quick Action */}
-        {(canCreateOrder || canCreateQuote) && (
-          <div className="p-3 border-b border-slate-800/70">
             <button
               type="button"
-              onClick={() => {
-                if (canCreateOrder) {
-                  onOpenNewOrderModal();
-                } else {
-                  onOpenNewQuoteModal();
-                }
-                onCloseMobile();
-              }}
-              className={`w-full inline-flex items-center justify-center gap-2 py-2 text-xs font-semibold text-white bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 rounded-lg shadow-sm shadow-blue-900/30 hover:shadow-md transition-all cursor-pointer whitespace-nowrap active:scale-[0.98] ${
-                isCollapsed ? 'px-0' : 'px-3'
+              onClick={() => navigateToItem('dashboard')}
+              className={`flex items-center gap-2.5 text-left group min-w-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8102E] rounded-lg ${
+                collapsed ? 'justify-center' : ''
               }`}
-              title={canCreateOrder ? 'Emitir Nova Ordem de Produção' : 'Criar Nova Proposta Comercial'}
+              title="Ir para o Painel Geral — DE FARDAS"
             >
-              <Plus className="w-4 h-4 shrink-0" />
-              {!isCollapsed && <span>{canCreateOrder ? 'Nova Ordem de Produção' : 'Nova Proposta Comercial'}</span>}
-            </button>
-          </div>
-        )}
-
-        {/* Navigation Menus with Scroll */}
-        <nav aria-label="Navegação principal" className="p-3 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
-          {menuGroups.map((group) => (
-            <div key={group.groupTitle} className="space-y-1">
-              {!isCollapsed && (
-                <div className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center justify-between">
-                  <span>{group.groupTitle}</span>
+              <div className="w-11 h-11 rounded-xl bg-white p-0.5 flex items-center justify-center shrink-0 shadow-sm ring-1 ring-white/20 transition-transform duration-150 group-hover:scale-[1.03] overflow-hidden">
+                <img
+                  src={logoSrc}
+                  alt={`Logomarca ${profile.tradeName || 'DE FARDAS'}`}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              {!collapsed && (
+                <div className="min-w-0">
+                  <div className="text-[14px] font-extrabold tracking-tight text-white leading-none truncate">
+                    DE FARDAS
+                  </div>
+                  <div className="text-[11px] font-medium text-zinc-500 truncate mt-1">
+                    Gestão Fabril · {profile.state || 'MA'}
+                  </div>
                 </div>
               )}
-              {group.items.map((item) => {
-                const Icon = item.icon;
-                const isActive = currentTab === item.id;
+            </button>
 
-                return (
+            {mobileMode ? (
+              <button
+                type="button"
+                onClick={onCloseMobile}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center text-zinc-400 hover:text-white rounded-lg cursor-pointer hover:bg-white/[0.07] transition-colors"
+                aria-label="Fechar menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                aria-expanded={!collapsed}
+                aria-label={collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+                title={collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+                className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-zinc-100 hover:bg-white/[0.07] rounded-lg transition-colors cursor-pointer shrink-0"
+              >
+                {collapsed ? (
+                  <PanelLeftOpen className="w-4 h-4" />
+                ) : (
+                  <PanelLeftClose className="w-4 h-4" />
+                )}
+              </button>
+            )}
+          </div>
+
+          {/* Ações Rápidas + Busca de Módulos (⌘K) */}
+          <div className="px-3 pt-3 pb-2.5 space-y-2 border-b border-white/[0.06]">
+            {(canCreateOrder || canCreateQuote) && (
+              <>
+                {!collapsed && hasBothCreateActions ? (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenNewOrderModal();
+                        onCloseMobile();
+                      }}
+                      className="min-h-[40px] px-2.5 inline-flex items-center justify-center gap-1.5 text-[12px] font-semibold text-white bg-[#C8102E] hover:bg-[#AE0D27] rounded-lg shadow-xs shadow-[#C8102E]/25 transition-colors cursor-pointer whitespace-nowrap active:scale-[0.98]"
+                      title="Emitir Nova Ordem de Produção"
+                    >
+                      <Plus className="w-3.5 h-3.5 shrink-0" />
+                      <span>Nova OP</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenNewQuoteModal();
+                        onCloseMobile();
+                      }}
+                      className="min-h-[40px] px-2.5 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-zinc-200 hover:text-white bg-white/[0.06] hover:bg-white/[0.11] border border-white/[0.08] rounded-lg transition-colors cursor-pointer whitespace-nowrap active:scale-[0.98]"
+                      title="Criar Nova Proposta Comercial"
+                    >
+                      <Plus className="w-3.5 h-3.5 shrink-0 text-zinc-400" />
+                      <span>Orçamento</span>
+                    </button>
+                  </div>
+                ) : (
                   <button
-                    key={item.id}
                     type="button"
-                    aria-current={isActive ? 'page' : undefined}
                     onClick={() => {
-                      if (item.id === 'help_manual') {
-                        onOpenHelpManual();
+                      if (canCreateOrder) {
+                        onOpenNewOrderModal();
                       } else {
-                        onSelectTab(item.id);
+                        onOpenNewQuoteModal();
                       }
                       onCloseMobile();
                     }}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-all cursor-pointer text-left relative group ${
-                      isActive
-                        ? 'bg-blue-600 text-white font-semibold shadow-xs'
-                        : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
+                    onMouseEnter={(e) => {
+                      if (!collapsed) return;
+                      showTooltipForElement(
+                        e.currentTarget,
+                        canCreateOrder ? 'Nova Ordem de Produção' : 'Nova Proposta Comercial'
+                      );
+                    }}
+                    onMouseLeave={() => collapsed && setFloatingTooltip(null)}
+                    className={`w-full min-h-[40px] inline-flex items-center justify-center gap-2 text-[12px] font-semibold text-white bg-[#C8102E] hover:bg-[#AE0D27] rounded-lg shadow-xs shadow-[#C8102E]/25 transition-colors cursor-pointer whitespace-nowrap active:scale-[0.98] ${
+                      collapsed ? 'px-0' : 'px-3'
                     }`}
-                    title={isCollapsed ? `${item.label}${item.badge ? ` (${item.badge})` : ''}` : undefined}
+                    aria-label={
+                      canCreateOrder ? 'Emitir Nova Ordem de Produção' : 'Criar Nova Proposta Comercial'
+                    }
                   >
-                    {/* Active left indicator bar */}
-                    {isActive && (
-                      <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-white rounded-r-full" />
-                    )}
-
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <Icon
-                        className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-110 ${
-                          isActive ? 'text-white' : 'text-slate-400'
-                        }`}
-                      />
-                      {!isCollapsed && <span className="truncate">{item.label}</span>}
-                    </div>
-
-                    {!isCollapsed && item.badge && (
-                      <span className={`text-[10px] font-mono font-medium px-1.5 py-0.5 rounded shrink-0 ${item.badgeStyle}`}>
-                        {item.badge}
+                    <Plus className="w-4 h-4 shrink-0" />
+                    {!collapsed && (
+                      <span>
+                        {canCreateOrder ? 'Nova Ordem de Produção' : 'Nova Proposta Comercial'}
                       </span>
                     )}
-
-                    {/* Collapsed alert dot ONLY for genuine operational alerts */}
-                    {isCollapsed && item.isAlertDot && (
-                      <span
-                        className={`absolute top-2 right-2 w-2 h-2 rounded-full ring-2 ring-slate-900 ${
-                          item.dotColor || 'bg-amber-400'
-                        }`}
-                      />
-                    )}
                   </button>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
-      </div>
+                )}
+              </>
+            )}
 
-      {/* Bottom Footer Section: Real Capacity, Gate Alerts & Identity */}
-      <div className="p-3 border-t border-slate-800/90 bg-slate-950/60 space-y-2.5 shrink-0">
-        {/* Real Factory Capacity Utilization Meter (Expanded only) */}
-        {!isCollapsed && (
-          <div className="p-2.5 rounded-lg bg-slate-800/60 border border-slate-700/60 space-y-1.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-                <Factory className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                <span>Ocupação Fabril</span>
-              </span>
-              <span
-                className={`font-mono text-[10px] font-bold ${
-                  isOverCapacity ? 'text-rose-400' : rawCapacityPercent > 85 ? 'text-amber-300' : 'text-blue-300'
-                }`}
+            {collapsed ? (
+              <button
+                type="button"
+                onClick={focusDesktopSearch}
+                onMouseEnter={(e) =>
+                  showTooltipForElement(e.currentTarget, 'Buscar módulo', 'Atalho ⌘K')
+                }
+                onMouseLeave={() => setFloatingTooltip(null)}
+                aria-label="Buscar módulo (Ctrl+K)"
+                className="w-full h-9 flex items-center justify-center rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
               >
-                {rawCapacityPercent}%
-              </span>
-            </div>
-            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  isOverCapacity || rawCapacityPercent > 90
-                    ? 'bg-rose-500'
-                    : rawCapacityPercent > 70
-                      ? 'bg-amber-500'
-                      : 'bg-emerald-500'
-                }`}
-                style={{ width: `${capacityBarPercent}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
-              <span>{activePiecesCount.toLocaleString('pt-BR')} pçs reais</span>
-              <span>{capacityTotal.toLocaleString('pt-BR')} pçs/mês</span>
-            </div>
+                <Search className="w-4 h-4" />
+              </button>
+            ) : (
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  ref={mobileMode ? undefined : searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSearchQuery('');
+                      (e.currentTarget as HTMLInputElement).blur();
+                      return;
+                    }
+                    if (e.key === 'ArrowDown' && flattenedResults.length > 0) {
+                      e.preventDefault();
+                      setHighlightedIndex((prev) => (prev + 1) % flattenedResults.length);
+                      return;
+                    }
+                    if (e.key === 'ArrowUp' && flattenedResults.length > 0) {
+                      e.preventDefault();
+                      setHighlightedIndex(
+                        (prev) => (prev - 1 + flattenedResults.length) % flattenedResults.length
+                      );
+                      return;
+                    }
+                    if (e.key === 'Enter' && flattenedResults.length > 0) {
+                      e.preventDefault();
+                      const chosen =
+                        flattenedResults[highlightedIndex] || flattenedResults[0];
+                      if (chosen) {
+                        navigateToItem(chosen.id);
+                      }
+                    }
+                  }}
+                  placeholder="Ir para módulo..."
+                  aria-label="Filtrar módulos do menu"
+                  className="w-full h-8.5 pl-8 pr-11 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-white/25 focus:bg-white/[0.06] transition-colors"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-white cursor-pointer"
+                    aria-label="Limpar busca"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <kbd className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-[10px] font-mono text-zinc-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                    ⌘K
+                  </kbd>
+                )}
+              </div>
+            )}
           </div>
-        )}
 
-        {/* Overdue Production Orders Callout (Expanded only) */}
-        {!isCollapsed && overdueOrdersCount > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              onSelectTab('orders');
-              onCloseMobile();
-            }}
-            className="w-full p-2 bg-rose-950/60 border border-rose-700/70 rounded-lg text-xs cursor-pointer hover:bg-rose-900/50 transition-colors text-left"
+          {/* Lista de Navegação Agrupada */}
+          <nav
+            aria-label="Navegação principal"
+            onScroll={() => collapsed && setFloatingTooltip(null)}
+            className={`py-2.5 overflow-y-auto flex-1 custom-scrollbar ${
+              collapsed ? 'px-2 space-y-2' : 'px-2.5 space-y-3.5'
+            }`}
           >
-            <div className="flex items-center justify-between font-bold text-rose-200 text-[11px]">
-              <div className="flex items-center gap-1.5">
-                <CalendarClock className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                <span>
-                  {overdueOrdersCount} {overdueOrdersCount === 1 ? 'OP em atraso' : 'OPs em atraso'}
-                </span>
+            {menuGroups.length === 0 ? (
+              <div className="px-3 py-6 text-center space-y-1">
+                <p className="text-xs text-zinc-400">
+                  Nenhum módulo para &ldquo;{searchQuery}&rdquo;.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="text-[11px] font-medium text-[#E3263E] hover:underline cursor-pointer"
+                >
+                  Limpar filtro
+                </button>
               </div>
-              <span className="text-[10px] text-rose-400">&rarr;</span>
-            </div>
-          </button>
-        )}
+            ) : (
+              menuGroups.map((group, groupIdx) => {
+                const isGroupCollapsed =
+                  !normalizedQuery && !collapsed && Boolean(collapsedGroups[group.id]);
 
-        {/* Gate A.3.2 Blocked Orders Callout (Expanded only) */}
-        {!isCollapsed && blockedOrdersCount > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              onSelectTab('orders');
-              onCloseMobile();
-            }}
-            className="w-full p-2 bg-rose-950/40 border border-rose-800/60 rounded-lg text-xs cursor-pointer hover:bg-rose-900/40 transition-colors text-left"
-          >
-            <div className="flex items-center justify-between font-bold text-rose-300 text-[11px]">
-              <div className="flex items-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                <span>
-                  {blockedOrdersCount} {blockedOrdersCount === 1 ? 'OP no Gate A.3.2' : 'OPs no Gate A.3.2'}
-                </span>
-              </div>
-              <span className="text-[10px] text-rose-400">&rarr;</span>
-            </div>
-          </button>
-        )}
+                return (
+                  <div key={group.id} className="space-y-0.5">
+                    {collapsed ? (
+                      groupIdx > 0 && (
+                        <div className="h-px bg-white/[0.07] mx-2 mb-2" aria-hidden="true" />
+                      )
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(group.id)}
+                        className="w-full px-2.5 py-1 text-[11px] font-medium text-zinc-500 hover:text-zinc-300 flex items-center justify-between transition-colors cursor-pointer rounded-md"
+                        aria-expanded={!isGroupCollapsed}
+                      >
+                        <span>{group.groupTitle}</span>
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 text-zinc-600 transition-transform duration-150 ${
+                            isGroupCollapsed ? '-rotate-90' : ''
+                          }`}
+                        />
+                      </button>
+                    )}
 
-        {/* Low Stock Callout (Expanded only) */}
-        {!isCollapsed && lowStockCount > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              onSelectTab('inventory');
-              onCloseMobile();
-            }}
-            className="w-full p-2 bg-amber-950/40 border border-amber-800/60 rounded-lg text-xs cursor-pointer hover:bg-amber-900/40 transition-colors text-left"
-          >
-            <div className="flex items-center justify-between font-bold text-amber-300 text-[11px]">
-              <div className="flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>{lowStockCount} tecidos críticos</span>
-              </div>
-              <span className="text-[10px] text-amber-400">&rarr;</span>
-            </div>
-          </button>
-        )}
+                    {!isGroupCollapsed && (
+                      <div className="space-y-0.5">
+                        {group.items.map((item) => {
+                          const Icon = item.icon;
+                          const isActive = currentTab === item.id;
+                          const flatIdx = normalizedQuery
+                            ? flattenedResults.findIndex((r) => r.id === item.id)
+                            : -1;
+                          const isSearchHighlighted =
+                            Boolean(normalizedQuery) && flatIdx === highlightedIndex;
 
-        {/* Mobile Session Identity & Logout (visible on screens < xl where Header hides user info) */}
-        {!isCollapsed && user && (
-          <div className="xl:hidden pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold text-white truncate">{user.fullName}</div>
-              <div className="text-[9px] font-mono uppercase text-blue-400 font-bold truncate">{user.role}</div>
-            </div>
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              aria-current={isActive ? 'page' : undefined}
+                              onClick={() => navigateToItem(item.id)}
+                              onMouseEnter={(e) => {
+                                if (!collapsed) return;
+                                showTooltipForElement(
+                                  e.currentTarget,
+                                  item.label,
+                                  item.detailTooltip || item.indicatorText
+                                );
+                              }}
+                              onMouseLeave={() => collapsed && setFloatingTooltip(null)}
+                              onFocus={(e) => {
+                                if (!collapsed) return;
+                                showTooltipForElement(
+                                  e.currentTarget,
+                                  item.label,
+                                  item.detailTooltip || item.indicatorText
+                                );
+                              }}
+                              onBlur={() => collapsed && setFloatingTooltip(null)}
+                              title={!collapsed ? item.detailTooltip : undefined}
+                              className={`w-full ${
+                                mobileMode ? 'min-h-[44px]' : 'min-h-[40px]'
+                              } flex items-center ${
+                                collapsed ? 'justify-center px-0' : 'justify-between px-2.5'
+                              } py-2 rounded-lg text-[13px] transition-colors duration-150 cursor-pointer text-left relative group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8102E]/80 ${
+                                isActive
+                                  ? 'bg-white/[0.11] text-white font-semibold ring-1 ring-white/[0.09]'
+                                  : isSearchHighlighted
+                                    ? 'bg-white/[0.07] text-white font-medium ring-1 ring-white/15'
+                                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.05] font-medium'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <Icon
+                                  className={`w-[17px] h-[17px] shrink-0 transition-colors ${
+                                    isActive
+                                      ? 'text-[#E3263E]'
+                                      : 'text-zinc-500 group-hover:text-zinc-200'
+                                  }`}
+                                />
+                                {!collapsed && (
+                                  <span className="truncate leading-snug">{item.label}</span>
+                                )}
+                              </div>
+
+                              {!collapsed && item.indicatorText && (
+                                <span
+                                  className={`text-[11px] font-mono tabular-nums shrink-0 ml-2 whitespace-nowrap ${indicatorToneClass(
+                                    item.indicatorTone,
+                                    isActive
+                                  )}`}
+                                >
+                                  {item.indicatorText}
+                                </span>
+                              )}
+
+                              {collapsed && item.urgentDot && (
+                                <span
+                                  className={`absolute top-1.5 right-2 w-1.5 h-1.5 rounded-full ${
+                                    item.dotClass || 'bg-amber-400'
+                                  }`}
+                                  aria-hidden="true"
+                                />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </nav>
+        </div>
+
+        {/* Rodapé Operacional Compacto */}
+        <div className="px-3 py-2.5 border-t border-white/[0.07] bg-[#0B0B0D] space-y-2 shrink-0 pb-safe">
+          {/* Linha Única de Alerta Prioritário (evita empilhar cards e esmagar o menu) */}
+          {!collapsed && primaryAlert && (
             <button
               type="button"
-              onClick={() => {
-                onCloseMobile();
-                logout();
-              }}
-              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer shrink-0"
-              title="Encerrar sessão"
-              aria-label="Encerrar sessão"
+              onClick={() => navigateToItem(primaryAlert.tab)}
+              className={`w-full px-2.5 py-1.5 border rounded-lg text-[11px] font-medium flex items-center justify-between gap-2 cursor-pointer transition-colors ${primaryAlert.toneClass}`}
             >
-              <LogOut className="w-4 h-4" />
+              <span className="flex items-center gap-1.5 min-w-0">
+                <primaryAlert.icon className={`w-3.5 h-3.5 shrink-0 ${primaryAlert.iconClass}`} />
+                <span className="truncate">{primaryAlert.text}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 shrink-0 font-mono tabular-nums text-[10px] opacity-85">
+                {primaryAlert.extraCount > 0 && <span>+{primaryAlert.extraCount}</span>}
+                <ChevronRight className="w-3.5 h-3.5" />
+              </span>
             </button>
-          </div>
-        )}
+          )}
 
-        {/* Company Identity & Collapse Toggle */}
-        <div className="flex items-center justify-between pt-1">
-          {!isCollapsed && (
-            <div className="text-[10px] text-slate-400 min-w-0 pr-2">
-              <div className="font-medium text-slate-300 truncate">{profile.tradeName}</div>
-              <div className="text-[9px] font-mono text-slate-500 truncate">CNPJ {profile.cnpj}</div>
+          {/* Medidor Interativo de Ocupação Fabril */}
+          {!collapsed && (
+            <button
+              type="button"
+              onClick={() => navigateToItem('orders')}
+              className="w-full text-left px-2.5 py-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] space-y-1.5 transition-colors cursor-pointer group"
+              title="Abrir Ordens de Produção para ver a carga fabril"
+            >
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-medium text-zinc-400 group-hover:text-zinc-200 transition-colors">
+                  Ocupação fabril
+                </span>
+                <span
+                  className={`font-mono tabular-nums text-[11px] font-semibold ${
+                    isOverCapacity
+                      ? 'text-rose-400'
+                      : rawCapacityPercent > 85
+                        ? 'text-amber-300'
+                        : 'text-zinc-100'
+                  }`}
+                >
+                  {rawCapacityPercent}%
+                </span>
+              </div>
+
+              <svg
+                className="w-full h-1.5 block rounded-full overflow-hidden"
+                viewBox="0 0 100 4"
+                preserveAspectRatio="none"
+                role="progressbar"
+                aria-label="Ocupação da capacidade fabril mensal"
+                aria-valuenow={rawCapacityPercent}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <rect x="0" y="0" width="100" height="4" rx="2" className="fill-zinc-800/90" />
+                <rect
+                  x="0"
+                  y="0"
+                  width={capacityBarPercent}
+                  height="4"
+                  rx="2"
+                  className={
+                    isOverCapacity || rawCapacityPercent > 90
+                      ? 'fill-[#C8102E]'
+                      : rawCapacityPercent > 70
+                        ? 'fill-amber-500'
+                        : 'fill-emerald-500'
+                  }
+                />
+              </svg>
+
+              <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono tabular-nums">
+                <span>{activePiecesCount.toLocaleString('pt-BR')} peças</span>
+                <span>{capacityTotal.toLocaleString('pt-BR')}/mês</span>
+              </div>
+            </button>
+          )}
+
+          {/* Gatilho Discreto de Instalação PWA */}
+          <PWAInstallButton variant={collapsed ? 'sidebar-collapsed' : 'sidebar'} />
+
+          {/* Sessão do Usuário em Telas Menores (< xl) */}
+          {!collapsed && user && (
+            <div className="xl:hidden pt-2 border-t border-white/[0.07] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-white/[0.09] border border-white/[0.12] text-white text-[11px] font-semibold flex items-center justify-center shrink-0">
+                  {(user.fullName || 'DF')
+                    .split(' ')
+                    .map((n) => n[0])
+                    .slice(0, 2)
+                    .join('')
+                    .toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-white truncate">{user.fullName}</div>
+                  <div className="text-[11px] text-zinc-400 truncate">{roleLabel}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onCloseMobile();
+                  logout();
+                }}
+                className="min-w-[40px] min-h-[40px] flex items-center justify-center text-zinc-400 hover:text-rose-400 hover:bg-white/[0.06] rounded-lg transition-colors cursor-pointer shrink-0"
+                title="Encerrar sessão"
+                aria-label="Encerrar sessão"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           )}
 
-          {/* Collapse toggle (Desktop only) */}
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            aria-expanded={!isCollapsed}
-            aria-label={isCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
-            className="hidden lg:flex p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer shrink-0 ml-auto"
-            title={isCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
-          >
-            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-          </button>
+          {/* Assinatura Institucional Discreta (Desktop Expandido) */}
+          {!collapsed && (
+            <div className="hidden lg:flex items-center justify-between pt-1 text-[10px] text-zinc-500">
+              <span className="truncate">
+                {profile.city} · {profile.state}
+              </span>
+              <span className="font-mono tabular-nums shrink-0 pl-2 text-zinc-600">
+                {profile.cnpj}
+              </span>
+            </div>
+          )}
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <>
-      {/* Desktop Sticky Sidebar */}
+      {/* Desktop Sticky Rail */}
       <aside
-        className={`hidden lg:flex flex-col h-screen sticky top-0 transition-all duration-200 z-30 shrink-0 no-print border-r border-slate-800/90 ${
-          isCollapsed ? 'w-20' : 'w-64'
+        className={`hidden lg:flex flex-col h-screen sticky top-0 transition-[width] duration-200 ease-out z-30 shrink-0 no-print border-r border-white/[0.07] ${
+          isCollapsed ? 'w-[72px]' : 'w-[260px]'
         }`}
       >
-        {sidebarContent}
+        {renderSidebarBody(false)}
       </aside>
 
-      {/* Mobile Drawer (Overlay backdrop + slide-over) */}
+      {/* Tooltip Flutuante (Desktop Recolhido — nunca cortado pelo overflow do nav) */}
+      {isCollapsed && floatingTooltip && (
+        <div
+          ref={tooltipRef}
+          role="tooltip"
+          className="hidden lg:block fixed z-50 pointer-events-none -translate-y-1/2"
+        >
+          <div className="px-2.5 py-1.5 rounded-lg bg-[#18181B] border border-white/[0.12] shadow-xl text-white whitespace-nowrap">
+            <div className="text-xs font-semibold leading-tight">{floatingTooltip.label}</div>
+            {floatingTooltip.detail && (
+              <div className="text-[11px] font-mono tabular-nums text-zinc-400 mt-0.5 leading-tight">
+                {floatingTooltip.detail}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Slide-Over Drawer */}
       {isMobileOpen && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Menu principal"
+          aria-label="Menu principal DE FARDAS"
           className="fixed inset-0 z-50 lg:hidden flex"
         >
-          {/* Backdrop */}
           <div
             onClick={onCloseMobile}
-            className="fixed inset-0 bg-black/75 backdrop-blur-xs transition-opacity"
+            className="fixed inset-0 bg-black/70 backdrop-blur-xs transition-opacity"
             aria-hidden="true"
           />
 
-          {/* Drawer Content */}
-          <aside className="relative w-72 max-w-[85vw] h-full shadow-2xl flex flex-col z-10 border-r border-slate-800">
-            {sidebarContent}
+          <aside className="relative w-[292px] max-w-[85vw] h-full shadow-2xl flex flex-col z-10 border-r border-white/[0.08]">
+            {renderSidebarBody(true)}
           </aside>
         </div>
       )}

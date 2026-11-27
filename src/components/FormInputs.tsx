@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Calendar, CheckCircle2, Loader2, Search, AlertCircle } from 'lucide-react';
 import { api } from '../api/client';
+import { GeoPrecision } from '../types/erp';
 import {
   dateBRToIso,
   formatCurrencyInputBRL,
@@ -265,6 +266,11 @@ export interface CnpjAutoFillData {
   segment: string;
   foundedYear?: number;
   situation?: string;
+  latitude?: number;
+  longitude?: number;
+  geoPrecision?: GeoPrecision;
+  geoSource?: string;
+  geoDisplayName?: string;
   source: string;
 }
 
@@ -417,6 +423,10 @@ export interface CepAutoFillData {
   neighborhood: string;
   city: string;
   state: string;
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+  };
   source: string;
 }
 

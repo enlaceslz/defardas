@@ -15,8 +15,9 @@ import {
   FileText,
   Shirt,
   Loader2,
+  Navigation,
 } from 'lucide-react';
-import { CompanyProfile } from '../types/erp';
+import { CompanyProfile, LocationSharePayload, StructuredAddressValue } from '../types/erp';
 import {
   ERPState,
   exportERPStateAsJSON,
@@ -24,10 +25,19 @@ import {
 } from '../utils/storage';
 import { useAuth } from '../api/authContext';
 import {
-  CepLookupInput,
   CnpjLookupInput,
   PhoneInputBR,
 } from './FormInputs';
+import { DEFAULT_BRAND_LOGO_URL } from '../data/initialData';
+import {
+  applyCnpjAddressUpdate,
+  buildCompanyLocationPayload,
+  buildStructuredAddressFromEntity,
+  composeAddressLine,
+  isValidCoordinates,
+} from '../utils/addressUtils';
+import { StructuredAddressFieldset } from './StructuredAddressFieldset';
+import { WhatsAppLocationShareModal } from './WhatsAppLocationShareModal';
 
 interface SettingsViewProps {
   profile: CompanyProfile;
@@ -35,6 +45,11 @@ interface SettingsViewProps {
   onSaveProfile: (profile: CompanyProfile) => void;
   onRestoreState: (state: ERPState) => Promise<{ syncedToServer: boolean; summary?: string } | void> | void;
   onResetToDefaults: (preserveLogo?: boolean) => void;
+  onSendViaCentralWhatsApp?: (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => Promise<void> | void;
 }
 
 const MAX_LOGO_FILE_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -111,12 +126,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSaveProfile,
   onRestoreState,
   onResetToDefaults,
+  onSendViaCentralWhatsApp,
 }) => {
   const { user } = useAuth();
   const role = user?.role || '';
   const isAdmin = role === 'admin';
 
   const [formData, setFormData] = useState<CompanyProfile>(profile);
+  const [addressSyncKey, setAddressSyncKey] = useState(0);
+  const [locationShareTarget, setLocationShareTarget] = useState<LocationSharePayload | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [logoError, setLogoError] = useState('');
   const [isProcessingLogo, setIsProcessingLogo] = useState(false);
@@ -171,6 +189,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const handleRestoreOfficialLogo = () => {
+    setLogoError('');
+    const nextProfile: CompanyProfile = { ...formData, logoUrl: DEFAULT_BRAND_LOGO_URL };
+    setFormData(nextProfile);
+    onSaveProfile(nextProfile);
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 3000);
+  };
+
   const handleRemoveLogo = () => {
     setLogoError('');
     const nextProfile: CompanyProfile = { ...formData, logoUrl: undefined };
@@ -188,8 +215,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       tradeName: formData.tradeName.trim(),
       cnpj: formData.cnpj.trim(),
       ie: formData.ie.trim(),
+      address: formData.address.trim(),
+      street: formData.street?.trim() || undefined,
+      addressNumber: formData.addressNumber?.trim() || undefined,
+      complement: formData.complement?.trim() || undefined,
+      neighborhood: formData.neighborhood.trim(),
       city: formData.city.trim() || 'São Luís',
       state: (formData.state.trim().toUpperCase().slice(0, 2)) || 'MA',
+      cep: formData.cep.trim(),
+      latitude: isValidCoordinates(formData.latitude, formData.longitude) ? formData.latitude : undefined,
+      longitude: isValidCoordinates(formData.latitude, formData.longitude) ? formData.longitude : undefined,
       productionCapacityPiecesMonth: Math.max(1, Number(formData.productionCapacityPiecesMonth) || 5000),
       foundedYear: Math.max(1900, Math.min(new Date().getFullYear(), Number(formData.foundedYear) || 2005)),
     };
@@ -197,6 +232,47 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     onSaveProfile(sanitized);
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
+  };
+
+  const factoryAddressValue: StructuredAddressValue = buildStructuredAddressFromEntity({
+    cep: formData.cep,
+    street: formData.street,
+    number: formData.addressNumber,
+    complement: formData.complement,
+    neighborhood: formData.neighborhood,
+    address: formData.address,
+    city: formData.city,
+    state: formData.state,
+    latitude: formData.latitude,
+    longitude: formData.longitude,
+    geoPrecision: formData.geoPrecision,
+    geoSource: formData.geoSource,
+  });
+
+  const handleFactoryAddressChange = (next: StructuredAddressValue) => {
+    const line =
+      composeAddressLine({
+        street: next.street,
+        number: next.number,
+        complement: next.complement,
+        neighborhood: next.neighborhood,
+      }) || next.address;
+
+    setFormData((prev) => ({
+      ...prev,
+      cep: next.cep,
+      street: next.street,
+      address: line,
+      addressNumber: next.number,
+      complement: next.complement,
+      neighborhood: next.neighborhood,
+      city: next.city,
+      state: next.state,
+      latitude: next.latitude,
+      longitude: next.longitude,
+      geoPrecision: next.geoPrecision,
+      geoSource: next.geoSource,
+    }));
   };
 
   const handleExportBackup = () => {
@@ -337,12 +413,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             {/* Dark Preview (ERP Sidebar) */}
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-900 text-white flex flex-col justify-between gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <div className="p-4 rounded-xl border border-zinc-800 bg-[#111113] text-white flex flex-col justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
                 Prévia no Menu Lateral ERP
               </span>
-              <div className="h-24 bg-slate-950/70 border border-slate-800 rounded-lg flex items-center justify-center gap-3 px-4">
-                <div className="w-11 h-11 rounded-xl bg-white/95 flex items-center justify-center p-1.5 shrink-0 overflow-hidden">
+              <div className="h-24 bg-[#0C0C0E] border border-zinc-800 rounded-lg flex items-center justify-center gap-3 px-4">
+                <div className="w-11 h-11 rounded-xl bg-white flex items-center justify-center p-1 shrink-0 overflow-hidden">
                   {formData.logoUrl ? (
                     <img
                       src={formData.logoUrl}
@@ -350,32 +426,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       className="max-h-full max-w-full object-contain"
                     />
                   ) : (
-                    <Shirt className="w-5 h-5 text-blue-700" />
+                    <Shirt className="w-5 h-5 text-[#C8102E]" />
                   )}
                 </div>
                 <div className="min-w-0">
                   <div className="font-extrabold text-sm truncate">{formData.tradeName || 'DE FARDAS'}</div>
-                  <div className="text-[10px] text-slate-400 truncate">
+                  <div className="text-[10px] text-zinc-400 truncate">
                     {formData.city || 'São Luís'} — {formData.state || 'MA'}
                   </div>
                 </div>
               </div>
-              <span className="text-[10px] text-slate-400">
-                Sidebar Interna & Vitrine Pública
+              <span className="text-[10px] text-zinc-400">
+                Sidebar Interna, Login & Vitrine Pública
               </span>
             </div>
 
             {/* Upload Actions & Coverage */}
-            <div className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col justify-between gap-3">
+            <div className="p-4 rounded-xl border border-zinc-200 bg-white flex flex-col justify-between gap-3">
               <div className="space-y-1.5">
-                <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-blue-600" />
+                <div className="font-bold text-zinc-900 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-[#C8102E]" />
                   <span>Incorporação Automática</span>
                 </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
+                <p className="text-[11px] text-zinc-600 leading-relaxed">
                   A logomarca carregada é aplicada automaticamente no cabeçalho de:
                 </p>
-                <ul className="text-[11px] text-slate-700 space-y-0.5 font-medium">
+                <ul className="text-[11px] text-zinc-700 space-y-0.5 font-medium">
                   <li>• Orçamentos & Propostas Comerciais</li>
                   <li>• Pedidos / Fichas de Produção (OP)</li>
                   <li>• Recibos Financeiros de Quitação</li>
@@ -395,7 +471,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   type="button"
                   disabled={isProcessingLogo}
                   onClick={() => logoInputRef.current?.click()}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-semibold rounded-lg transition-colors cursor-pointer"
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-[#C8102E] hover:bg-[#A60D26] disabled:opacity-60 text-white font-semibold rounded-lg transition-colors cursor-pointer"
                 >
                   {isProcessingLogo ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -404,6 +480,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   )}
                   <span>{formData.logoUrl ? 'Trocar Logo' : 'Inserir Logo'}</span>
                 </button>
+
+                {formData.logoUrl !== DEFAULT_BRAND_LOGO_URL && (
+                  <button
+                    type="button"
+                    onClick={handleRestoreOfficialLogo}
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-800 font-semibold rounded-lg transition-colors cursor-pointer"
+                    title="Restaurar logomarca oficial DE FARDAS"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Oficial</span>
+                  </button>
+                )}
 
                 {formData.logoUrl && (
                   <button
@@ -469,21 +557,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 value={formData.cnpj}
                 onChange={(masked) => setFormData({ ...formData, cnpj: masked })}
                 onCnpjFound={(data) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    cnpj: data.cnpj || prev.cnpj,
-                    name: data.companyName || prev.name,
-                    tradeName: data.tradeName || prev.tradeName,
-                    email: data.email || prev.email,
-                    phone: data.phone || prev.phone,
-                    whatsapp: prev.whatsapp || data.phone || prev.whatsapp,
-                    cep: data.cep || prev.cep,
-                    address: data.addressLine || prev.address,
-                    neighborhood: data.neighborhood || prev.neighborhood,
-                    city: data.city || prev.city,
-                    state: data.state || prev.state,
-                    foundedYear: data.foundedYear || prev.foundedYear,
-                  }));
+                  setFormData((prev) => {
+                    const nextAddr = applyCnpjAddressUpdate(
+                      buildStructuredAddressFromEntity({
+                        cep: prev.cep,
+                        street: prev.street,
+                        number: prev.addressNumber,
+                        complement: prev.complement,
+                        neighborhood: prev.neighborhood,
+                        address: prev.address,
+                        city: prev.city,
+                        state: prev.state,
+                        latitude: prev.latitude,
+                        longitude: prev.longitude,
+                        geoPrecision: prev.geoPrecision,
+                        geoSource: prev.geoSource,
+                      }),
+                      data
+                    );
+                    return {
+                      ...prev,
+                      cnpj: data.cnpj || prev.cnpj,
+                      name: data.companyName || prev.name,
+                      tradeName: data.tradeName || prev.tradeName,
+                      email: data.email || prev.email,
+                      phone: data.phone || prev.phone,
+                      whatsapp: prev.whatsapp || data.phone || prev.whatsapp,
+                      cep: nextAddr.cep,
+                      street: nextAddr.street,
+                      addressNumber: nextAddr.number,
+                      complement: nextAddr.complement,
+                      address: nextAddr.address,
+                      neighborhood: nextAddr.neighborhood,
+                      city: nextAddr.city,
+                      state: nextAddr.state,
+                      latitude: nextAddr.latitude,
+                      longitude: nextAddr.longitude,
+                      geoPrecision: nextAddr.geoPrecision,
+                      geoSource: nextAddr.geoSource,
+                      foundedYear: data.foundedYear || prev.foundedYear,
+                    };
+                  });
+                  setAddressSyncKey((k) => k + 1);
                 }}
               />
             </div>
@@ -558,71 +673,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-6 gap-4">
-            <div className="sm:col-span-2">
-              <label className="block font-semibold text-slate-700 mb-1">
-                CEP <span className="font-normal text-slate-400">(busca automática)</span>
-              </label>
-              <CepLookupInput
-                value={formData.cep}
-                onChange={(masked) => setFormData({ ...formData, cep: masked })}
-                onCepFound={(data) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    cep: data.cep || prev.cep,
-                    address: data.street || prev.address,
-                    neighborhood: data.neighborhood || prev.neighborhood,
-                    city: data.city || prev.city,
-                    state: data.state || prev.state,
-                  }));
-                }}
-              />
-            </div>
+          <StructuredAddressFieldset
+            title="Endereço & Localização GPS da Fábrica / Matriz (CEP + Número)"
+            entityLabel={formData.tradeName || 'Fábrica DE FARDAS'}
+            value={factoryAddressValue}
+            onChange={handleFactoryAddressChange}
+            externalSyncKey={addressSyncKey}
+            mapHeightClass="h-60"
+            onShareLocationClick={(resolved) =>
+              setLocationShareTarget(
+                buildCompanyLocationPayload(
+                  resolved
+                    ? {
+                        ...formData,
+                        cep: resolved.cep,
+                        street: resolved.street,
+                        addressNumber: resolved.number,
+                        complement: resolved.complement,
+                        neighborhood: resolved.neighborhood,
+                        city: resolved.city,
+                        state: resolved.state,
+                        address: resolved.address,
+                        latitude: resolved.latitude,
+                        longitude: resolved.longitude,
+                        geoPrecision: resolved.geoPrecision,
+                      }
+                    : formData
+                )
+              )
+            }
+          />
 
-            <div className="sm:col-span-2">
-              <label className="block font-semibold text-slate-700 mb-1">Endereço da Fábrica / Galpão</label>
-              <input
-                type="text"
-                value={formData.address}
-                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="block font-semibold text-slate-700 mb-1">Bairro / Polo Industrial</label>
-              <input
-                type="text"
-                value={formData.neighborhood}
-                onChange={(e) => setFormData({ ...formData, neighborhood: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="block font-semibold text-slate-700 mb-1">Cidade</label>
-              <input
-                type="text"
-                required
-                value={formData.city}
-                onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900"
-              />
-            </div>
-
-            <div className="sm:col-span-1">
-              <label className="block font-semibold text-slate-700 mb-1">UF</label>
-              <input
-                type="text"
-                required
-                maxLength={2}
-                value={formData.state}
-                onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono uppercase text-slate-900"
-              />
-            </div>
-
-            <div className="sm:col-span-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
               <label className="block font-semibold text-slate-700 mb-1">Horário de Atendimento</label>
               <input
                 type="text"
@@ -632,16 +715,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 placeholder="Ex: Seg a Sex: 08:00 às 18:00"
               />
             </div>
-          </div>
 
-          <div className="pt-2 flex justify-end">
-            <button
-              type="submit"
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-500 transition-colors shadow-sm cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              <span>Salvar Informações Cadastrais</span>
-            </button>
+            <div className="flex items-end justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setLocationShareTarget(buildCompanyLocationPayload(formData))}
+                disabled={!isValidCoordinates(factoryAddressValue.latitude, factoryAddressValue.longitude)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                <Navigation className="w-4 h-4" />
+                <span>Compartilhar Localização via WhatsApp</span>
+              </button>
+
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#C8102E] text-white font-semibold rounded-lg hover:bg-[#A60D26] transition-colors shadow-xs cursor-pointer whitespace-nowrap"
+              >
+                <Save className="w-4 h-4" />
+                <span>Salvar Informações Cadastrais</span>
+              </button>
+            </div>
           </div>
         </div>
       </form>
@@ -795,6 +888,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           )}
         </div>
       </div>
+
+      {locationShareTarget && (
+        <WhatsAppLocationShareModal
+          location={locationShareTarget}
+          onSendViaCentralWhatsApp={onSendViaCentralWhatsApp}
+          onClose={() => setLocationShareTarget(null)}
+        />
+      )}
     </div>
   );
 };

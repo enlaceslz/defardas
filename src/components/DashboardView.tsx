@@ -28,12 +28,15 @@ import {
   CalendarClock,
 } from 'lucide-react';
 import {
+  Client,
   CompanyProfile,
   FinancialTransaction,
   ProductionOrder,
   Quote,
   InventoryItem,
   OperationalStage,
+  Partner,
+  Supplier,
   UniformCategory,
 } from '../types/erp';
 import { formatCurrencyBRL, formatDateBR, getStageLabel, getPriorityBadge } from '../utils/formatters';
@@ -47,11 +50,19 @@ interface DashboardViewProps {
   quotes: Quote[];
   inventory: InventoryItem[];
   finance?: FinancialTransaction[];
+  clients?: Client[];
+  partners?: Partner[];
+  suppliers?: Supplier[];
   onSelectTab: (tab: string) => void;
   onOpenNewOrderModal: () => void;
   onOpenNewQuoteModal: () => void;
   onSelectOrderForTicket: (order: ProductionOrder) => void;
   onOpenOrderSchedule?: (order: ProductionOrder) => void;
+  onSendViaCentralWhatsApp?: (
+    phone: string,
+    recipientName: string,
+    message: string
+  ) => Promise<void> | void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -60,11 +71,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   quotes,
   inventory,
   finance = [],
+  clients = [],
+  partners = [],
+  suppliers = [],
   onSelectTab,
   onOpenNewOrderModal,
   onOpenNewQuoteModal,
   onSelectOrderForTicket,
   onOpenOrderSchedule,
+  onSendViaCentralWhatsApp,
 }) => {
   const { user } = useAuth();
   // Active filter tab for dashboard views
@@ -236,44 +251,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     <div className="space-y-7">
       
       {/* Top Header Bar & View Selector */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-slate-200">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-zinc-200/90">
         <div>
-          <div className="text-xs font-medium text-slate-500 flex items-center gap-2">
-            <span>DE FARDAS</span>
-            <span aria-hidden="true" className="text-slate-300">/</span>
+          <div className="text-xs font-medium text-zinc-500 flex items-center gap-2">
+            <span className="font-bold text-zinc-800">DE FARDAS</span>
+            <span aria-hidden="true" className="text-zinc-300">/</span>
             <span>São Luís — Maranhão</span>
-            <span aria-hidden="true" className="text-slate-300">/</span>
-            <span className="text-slate-800 font-semibold">Painel Executivo da Fábrica</span>
+            <span aria-hidden="true" className="text-zinc-300">/</span>
+            <span className="text-zinc-900 font-semibold">Painel Executivo</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-950 mt-1">
             Gestão Integrada de Produção & Vendas
           </h1>
         </div>
 
         {/* Action Controls & View Tabs */}
-        <div className="flex items-center gap-2.5 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Segmented Filter Buttons */}
-          <div className="flex items-center gap-1 p-1 bg-slate-200/80 rounded-lg text-xs font-medium text-slate-600">
+          <div className="flex items-center gap-1 p-1 bg-zinc-200/75 rounded-xl text-xs font-medium text-zinc-600">
             <button
+              type="button"
               onClick={() => setDashboardTab('all')}
-              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
-                dashboardTab === 'all' ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'hover:text-slate-900'
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                dashboardTab === 'all' ? 'bg-white text-zinc-950 shadow-2xs font-semibold' : 'hover:text-zinc-950'
               }`}
             >
               Visão 360°
             </button>
             <button
+              type="button"
               onClick={() => setDashboardTab('production')}
-              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
-                dashboardTab === 'production' ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'hover:text-slate-900'
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                dashboardTab === 'production' ? 'bg-white text-zinc-950 shadow-2xs font-semibold' : 'hover:text-zinc-950'
               }`}
             >
               PCP & Fábrica
             </button>
             <button
+              type="button"
               onClick={() => setDashboardTab('commercial')}
-              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
-                dashboardTab === 'commercial' ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'hover:text-slate-900'
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                dashboardTab === 'commercial' ? 'bg-white text-zinc-950 shadow-2xs font-semibold' : 'hover:text-zinc-950'
               }`}
             >
               Comercial
@@ -282,25 +300,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <button
             type="button"
+            onClick={() => onSelectTab('reports')}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-700 bg-white border border-zinc-300/90 hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
+            title="Abrir Central de Relatórios com filtros avançados, PDF e Link WhatsApp"
+          >
+            <Filter className="w-3.5 h-3.5 text-[#C8102E]" />
+            <span>Relatórios</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setIsExecutiveReportOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-2xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-700 bg-white border border-zinc-300/90 hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
+            title="Pré-visualização rápida para PDF ou WhatsApp"
           >
-            <Printer className="w-3.5 h-3.5 text-slate-500" />
-            <span>Relatório Gerencial</span>
+            <Printer className="w-3.5 h-3.5 text-zinc-500" />
+            <span>Imprimir</span>
           </button>
           <button
+            type="button"
             onClick={onOpenNewQuoteModal}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-2xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-700 bg-white border border-zinc-300/90 hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
           >
-            <FileText className="w-3.5 h-3.5 text-slate-500" />
-            <span>+ Orçamento</span>
+            <FileText className="w-3.5 h-3.5 text-zinc-500" />
+            <span>Orçamento</span>
           </button>
           <button
+            type="button"
             onClick={onOpenNewOrderModal}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-sm transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#C8102E] hover:bg-[#A60D26] rounded-lg shadow-xs transition-colors cursor-pointer active:scale-[0.98]"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>+ Nova OP</span>
+            <span>Nova OP</span>
           </button>
         </div>
       </div>
@@ -450,7 +480,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onSelectTab('orders')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer self-start sm:self-auto"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#111113] hover:bg-[#1E1E22] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer self-start sm:self-auto whitespace-nowrap"
             >
               <span>Abrir Cronograma Completo</span>
               <ChevronRight className="w-3.5 h-3.5" />
@@ -1053,8 +1083,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           quotes={quotes}
           inventory={inventory}
           transactions={finance}
+          clients={clients}
+          partners={partners}
+          suppliers={suppliers}
           filterSummary={`Visão selecionada: ${dashboardTab === 'all' ? 'Visão 360°' : dashboardTab === 'production' ? 'PCP & Fábrica' : 'Comercial'}`}
           generatedBy={user?.fullName}
+          onSendViaCentralWhatsApp={onSendViaCentralWhatsApp}
           onClose={() => setIsExecutiveReportOpen(false)}
         />
       )}

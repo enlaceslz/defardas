@@ -6,7 +6,7 @@
  */
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
+import { PERMISSIONS, RequestWithUser, requireAuth, requirePermission } from '../auth/rbac';
 import { clientRepository } from '../repositories/clientRepository';
 import { orderRepository } from '../repositories/orderRepository';
 import { quoteRepository } from '../repositories/quoteRepository';
@@ -14,6 +14,10 @@ import { financeRepository } from '../repositories/financeRepository';
 import { leadRepository } from '../repositories/leadRepository';
 import { sequenceService } from '../services/sequenceService';
 import { auditService } from '../services/auditService';
+import {
+  composeServerAddressLine,
+  sanitizeAddressGeoInput,
+} from '../services/addressMetadataService';
 import { ClientEntity } from '../types/db';
 
 export const clientsRouter = Router();
@@ -197,25 +201,31 @@ clientsRouter.get('/:id/profile', async (req: RequestWithUser, res: Response) =>
 
   const totalPiecesOrdered = orders.reduce((s, o) => s + Number(o.totalPieces || 0), 0);
 
+  const actorRole = req.user!.role;
+  const canViewFinance = (PERMISSIONS['finance:view'] || ['admin']).includes(actorRole);
+  const canViewQuotes = (PERMISSIONS['quotes:view'] || ['admin']).includes(actorRole);
+
   return res.json({
     client: {
       ...client,
       isPreliminaryCnpj: isPreliminaryCnpj(client.cnpj),
     },
-    quotes,
+    quotes: canViewQuotes ? quotes : [],
     orders,
-    transactions,
+    transactions: canViewFinance ? transactions : [],
     leads,
     metrics: {
-      quotesCount: quotes.length,
-      openQuotesCount: quotes.filter((q) =>
-        ['rascunho', 'enviado', 'em_negociacao', 'aprovado'].includes(q.commercialStatus)
-      ).length,
+      quotesCount: canViewQuotes ? quotes.length : 0,
+      openQuotesCount: canViewQuotes
+        ? quotes.filter((q) =>
+            ['rascunho', 'enviado', 'em_negociacao', 'aprovado'].includes(q.commercialStatus)
+          ).length
+        : 0,
       ordersCount: orders.length,
       activeOrdersCount: orders.filter((o) => o.stage !== 'entregue').length,
       totalPiecesOrdered,
-      paidReceivablesAmount,
-      pendingReceivablesAmount,
+      paidReceivablesAmount: canViewFinance ? paidReceivablesAmount : 0,
+      pendingReceivablesAmount: canViewFinance ? pendingReceivablesAmount : 0,
     },
   });
 });
@@ -276,6 +286,11 @@ clientsRouter.post('/', requirePermission('crm:manage_clients'), async (req: Req
     return res.status(400).json({ error: 'Informe um endereço de e-mail válido.' });
   }
 
+  const geo = sanitizeAddressGeoInput(payload);
+  const composedAddress = composeServerAddressLine(geo);
+  const resolvedAddress =
+    String(payload.address || '').trim() || composedAddress || 'São Luís - MA';
+
   const code = await sequenceService.nextClientCodeAsync();
   const nowIso = new Date().toISOString();
   const newClient: ClientEntity = {
@@ -288,7 +303,8 @@ clientsRouter.post('/', requirePermission('crm:manage_clients'), async (req: Req
     contactName,
     phone: phone || '(98) 98000-0000',
     email: email || 'contato@empresa.com.br',
-    address: String(payload.address || 'São Luís - MA').trim() || 'São Luís - MA',
+    ...geo,
+    address: resolvedAddress,
     city: String(payload.city || 'São Luís').trim() || 'São Luís',
     state: String(payload.state || 'MA').trim().toUpperCase().slice(0, 2) || 'MA',
     segment: String(payload.segment || 'Corporativo').trim() || 'Corporativo',
@@ -375,6 +391,13 @@ clientsRouter.put('/:id', requirePermission('crm:manage_clients'), async (req: R
     return res.status(400).json({ error: 'Informe um endereço de e-mail válido.' });
   }
 
+  const geo = sanitizeAddressGeoInput(payload, client);
+  const composedAddress = composeServerAddressLine(geo);
+  const resolvedAddress =
+    payload.address !== undefined
+      ? String(payload.address).trim() || composedAddress || client.address
+      : composedAddress || client.address;
+
   const updated: ClientEntity = {
     ...client,
     companyName: nextCompanyName,
@@ -393,10 +416,8 @@ clientsRouter.put('/:id', requirePermission('crm:manage_clients'), async (req: R
         : client.contactName,
     phone: nextPhone || client.phone,
     email: nextEmail || client.email,
-    address:
-      payload.address !== undefined
-        ? String(payload.address).trim() || client.address
-        : client.address,
+    ...geo,
+    address: resolvedAddress,
     city:
       payload.city !== undefined
         ? String(payload.city).trim() || client.city
@@ -477,7 +498,7 @@ clientsRouter.delete('/:id', requirePermission('crm:delete_clients'), async (req
   }
 
   const hasTransactions = transactions.some(
-    (f) => f.referenceId === client.code
+    (f) => f.clientId === client.id || f.referenceId === client.code
   );
   if (hasTransactions) {
     return res.status(409).json({

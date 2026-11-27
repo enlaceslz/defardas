@@ -72,9 +72,9 @@ export const HelpManualModal: React.FC<HelpManualModalProps> = ({
             A formação de preços da DE FARDAS utiliza estritamente o método de <strong>Markup sobre o Custo-Base</strong>. O sistema não utiliza a fórmula de margem sobre receita no cálculo inicial para evitar dupla contagem de encargos.
           </p>
 
-          <div className="p-3 bg-slate-900 text-slate-100 rounded-lg font-mono text-xs space-y-2">
+          <div className="p-3 bg-[#111113] text-slate-100 rounded-lg font-mono text-xs space-y-2">
             <div>
-              <span className="text-blue-400 font-bold">1. Custo-base Direto</span> = (Tecido + Costura Facção + Bordado/Silk + Frete) × (1 + Perdas Técnicas%)
+              <span className="text-[#E3263E] font-bold">1. Custo-base Direto</span> = (Tecido + Costura Facção + Bordado/Silk + Frete) × (1 + Perdas Técnicas%)
             </div>
             <div>
               <span className="text-emerald-400 font-bold">2. Preço Sugerido</span> = Custo-base × (1 + Markup% / 100)
@@ -242,9 +242,9 @@ export const HelpManualModal: React.FC<HelpManualModalProps> = ({
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[85vh]">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#111113] text-white shrink-0">
           <div className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-blue-400" />
+            <BookOpen className="w-5 h-5 text-[#E3263E]" />
             <div>
               <h3 className="text-base font-bold">Manual de Operações & Guia do Usuário</h3>
               <p className="text-[11px] text-slate-400">DE FARDAS — Conforme Diretrizes do PRD v1.6</p>
@@ -273,10 +273,10 @@ export const HelpManualModal: React.FC<HelpManualModalProps> = ({
         </div>
 
         {/* Body Split */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
           
           {/* Left Navigation Topics */}
-          <div className="w-64 border-r border-slate-200 p-3 space-y-1 bg-slate-50/50 overflow-y-auto shrink-0">
+          <div className="w-full md:w-64 max-h-40 md:max-h-none border-b md:border-b-0 md:border-r border-slate-200 p-3 space-y-1 bg-slate-50/50 overflow-y-auto shrink-0">
             {filteredTopics.map((topic) => {
               const Icon = topic.icon;
               const isActive = activeTopic === topic.id;
@@ -287,7 +287,7 @@ export const HelpManualModal: React.FC<HelpManualModalProps> = ({
                   onClick={() => setActiveTopic(topic.id)}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium text-left transition-colors cursor-pointer ${
                     isActive
-                      ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                      ? 'bg-[#111113] text-white font-semibold shadow-xs'
                       : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
@@ -313,7 +313,7 @@ export const HelpManualModal: React.FC<HelpManualModalProps> = ({
           <span>DE FARDAS INDÚSTRIA E CONFECÇÃO LTDA — São Luís, MA</span>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            className="px-4 py-1.5 bg-[#111113] text-white font-semibold rounded-lg hover:bg-[#1E1E22] transition-colors cursor-pointer whitespace-nowrap"
           >
             Fechar Manual
           </button>
